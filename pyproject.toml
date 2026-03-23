@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "jusi"
+version = "0.1.0"
+description = "Standalone backend for Jusivim notebook execution"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Jusi contributors" }
+]
+dependencies = []
+
+[project.scripts]
+jusi = "jusi.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jusi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
