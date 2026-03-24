@@ -45,6 +45,23 @@ class StopSessionCommand:
     session_id: str
 
 
+@dataclass(frozen=True)
+class BindPreparedClientCommand:
+    notebook_id: str
+    session_id: str
+    client_id: str
+    client_bufnr: int
+
+
+@dataclass(frozen=True)
+class ShutdownClientCommand:
+    notebook_id: str
+    session_id: str
+    cell_id: int
+    client_id: str
+    reason: str
+
+
 class SessionEventSink(Protocol):
     def session_updated(self, notebook_id: str, payload: dict) -> None:
         ...
@@ -60,8 +77,8 @@ class KernelRuntime(Protocol):
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         """Return session_id and connection reference."""
 
-    def prepare_client(self, notebook_id: str, session_id: str) -> tuple[str, int]:
-        """Return client_id and editor-facing client buffer reference."""
+    def prepare_client(self, notebook_id: str, session_id: str) -> str:
+        """Return a backend-owned prepared client id."""
 
     def execute_cell(self, session: Session, cell: ExecutableCell, client: CellExecution) -> str:
         """Execute the cell and return the final cell status."""
@@ -71,6 +88,12 @@ class KernelRuntime(Protocol):
 
     def interrupt_handler(self, session: Session, execution: CellExecution) -> str:
         """Interrupt a handler-owned execution and return the resulting cell status."""
+
+    def stop_session(self, session: Session) -> None:
+        """Stop or detach the runtime resources associated with the session."""
+
+    def shutdown_client(self, session: Session, client_id: str, reason: str) -> None:
+        """Tear down a specific client lifecycle if the runtime owns one."""
 
 
 class SessionStore(Protocol):

@@ -2,21 +2,24 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from jusi.application.ports import ExecuteCellCommand, InterruptCellCommand, StartSessionCommand
+from jusi.application.ports import BindPreparedClientCommand, ExecuteCellCommand, InterruptCellCommand, StartSessionCommand
 from jusi.application.ports import DisconnectSessionCommand, ReconnectSessionCommand, StopSessionCommand
-from jusi.application.use_cases import DisconnectSession, ExecuteCell, InterruptCell, ReconnectSession, StopSession, StartSession
+from jusi.application.ports import ShutdownClientCommand
+from jusi.application.use_cases import BindPreparedClient, DisconnectSession, ExecuteCell, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
 from jusi.domain.models import ExecutableCell
-from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore
+from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore, build_runtime
 from jusi.interfaces.protocol import (
     Envelope,
     ProtocolError,
     dump_envelopes,
     error_response,
+    parse_bind_prepared_client,
     parse_disconnect_session,
     parse_envelope,
     parse_execute_cell,
     parse_interrupt_cell,
     parse_reconnect_session,
+    parse_shutdown_client,
     parse_start_session,
     parse_stop_session,
     response_envelope,
@@ -64,7 +67,7 @@ class ProtocolEventSink:
 
 class ProtocolServer:
     def __init__(self, runtime: Optional[InMemoryKernelRuntime] = None) -> None:
-        self._runtime = runtime or InMemoryKernelRuntime()
+        self._runtime = runtime or build_runtime()
         self._store = InMemorySessionStore()
 
     def handle_message(self, raw: str) -> List[str]:
@@ -83,6 +86,10 @@ class ProtocolServer:
             return self._handle_reconnect_session(request)
         if request.type == "stop_session":
             return self._handle_stop_session(request)
+        if request.type == "bind_prepared_client":
+            return self._handle_bind_prepared_client(request)
+        if request.type == "shutdown_client":
+            return self._handle_shutdown_client(request)
         return dump_envelopes([error_response(request, "unknown_request", "Unknown request type")])
 
     def _handle_start_session(self, request: Envelope) -> List[str]:
@@ -179,12 +186,51 @@ class ProtocolServer:
     def _handle_stop_session(self, request: Envelope) -> List[str]:
         stop_request = parse_stop_session(request.payload)
         events = ProtocolEventSink()
-        use_case = StopSession(store=self._store, events=events)
+        use_case = StopSession(runtime=self._runtime, store=self._store, events=events)
         try:
             use_case.execute(
                 StopSessionCommand(
                     notebook_id=stop_request.notebook_id,
                     session_id=stop_request.session_id,
+                )
+            )
+        except ValueError as exc:
+            return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        envelopes = [response_envelope(request, ok=True)]
+        envelopes.extend(events.events)
+        return dump_envelopes(envelopes)
+
+    def _handle_bind_prepared_client(self, request: Envelope) -> List[str]:
+        bind_request = parse_bind_prepared_client(request.payload)
+        events = ProtocolEventSink()
+        use_case = BindPreparedClient(store=self._store, events=events)
+        try:
+            use_case.execute(
+                BindPreparedClientCommand(
+                    notebook_id=bind_request.notebook_id,
+                    session_id=bind_request.session_id,
+                    client_id=bind_request.client_id,
+                    client_bufnr=bind_request.client_bufnr,
+                )
+            )
+        except ValueError as exc:
+            return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        envelopes = [response_envelope(request, ok=True)]
+        envelopes.extend(events.events)
+        return dump_envelopes(envelopes)
+
+    def _handle_shutdown_client(self, request: Envelope) -> List[str]:
+        shutdown_request = parse_shutdown_client(request.payload)
+        events = ProtocolEventSink()
+        use_case = ShutdownClient(runtime=self._runtime, store=self._store, events=events)
+        try:
+            use_case.execute(
+                ShutdownClientCommand(
+                    notebook_id=shutdown_request.notebook_id,
+                    session_id=shutdown_request.session_id,
+                    cell_id=shutdown_request.cell_id,
+                    client_id=shutdown_request.client_id,
+                    reason=shutdown_request.reason,
                 )
             )
         except ValueError as exc:

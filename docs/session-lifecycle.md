@@ -32,6 +32,7 @@ Rules:
 - `failed` should always record a reason
 - `disconnected` is not equivalent to kernel death
 - for externally hosted kernels, `stop_session` should mean "stop this Jusi session binding" rather than "shut down the remote kernel"
+- managed-session transport loss should tear down the session instead of entering `disconnected`
 
 ## Prepared Client
 
@@ -39,14 +40,17 @@ States:
 
 - `missing`
 - `spawning`
+- `binding`
 - `ready`
 
 Transitions:
 
 - `missing -> spawning`: backend begins provisioning a client view
-- `spawning -> ready`: client view is ready for execution handoff
+- `spawning -> binding`: backend-owned prepared client exists but frontend buffer binding is not complete
+- `binding -> ready`: frontend reports a real client-buffer binding for the prepared client
 - `spawning -> missing`: provisioning failed
 - `ready -> spawning`: ready client was consumed by execution; replacement provisioning starts
+- `binding -> missing`: session stop or failure before binding completes
 - `ready -> missing`: session stop or failure
 
 Rules:
@@ -54,6 +58,7 @@ Rules:
 - prepared-client state is notebook-session local
 - only one prepared client is considered current for the notebook at a time
 - execution consumes the current prepared client atomically from the frontend point of view
+- the backend must not claim `ready` until frontend buffer binding is acknowledged
 
 ## Cell Execution
 
@@ -65,6 +70,7 @@ States:
 - `done`
 - `error`
 - `interrupted`
+- `parked`
 
 Transitions:
 
@@ -83,6 +89,24 @@ Rules:
 - the executing cell retains the consumed client reference
 - replacement prepared-client provisioning is independent from the active cell retaining its client
 - a cell remaining in `follow-up` must not block execution of other cells once prepared-client state returns to `ready`
+- `parked` remains a deliberate keep-output state, not a generic shutdown result
+
+## Client Lifecycle
+
+Client lifecycle is separate from cell execution status.
+
+States:
+
+- `active`
+- `shutting_down`
+- `shutdown`
+
+Rules:
+
+- graceful client teardown should be represented through client lifecycle fields where possible
+- prepared-client teardown and cell-client teardown must not overload execution status
+- managed-session transport loss should tear clients down immediately
+- attachable-session transport loss may preserve session identity while client ownership becomes uncertain
 
 ## Execution Ownership
 

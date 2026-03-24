@@ -78,6 +78,7 @@ Behavior:
 - start a managed kernel session for the notebook
 - enter session state `starting`
 - eventually emit session and prepared-client events
+- backend provisioning does not make prepared state `ready` by itself; frontend buffer binding is a separate step
 
 ### `attach_session`
 
@@ -154,6 +155,48 @@ Behavior:
 - prepared-client state becomes unusable immediately
 - active executions become terminal from the Jusi session point of view
 
+### `bind_prepared_client`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "client_id": "client-1",
+  "client_bufnr": 91
+}
+```
+
+Behavior:
+
+- reports that the frontend has bound a backend-owned prepared client to a real Vim client buffer
+- transitions prepared state from `binding` to `ready`
+- the backend must not fabricate Vim buffer numbers without this frontend acknowledgment
+
+### `shutdown_client`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "cell_id": 12,
+  "client_id": "client-1",
+  "reason": "user_close"
+}
+```
+
+Behavior:
+
+- tears down client ownership separately from `interrupt_cell`
+- if the client is the current prepared client, prepared state becomes `missing`
+- if the client is attached to a tracked cell, backend emits client lifecycle updates and clears the client buffer binding without overloading cell `status`
+- valid reasons include:
+  - `user_close`
+  - `cell_deleted`
+  - `session_stop`
+  - `frontend_unload`
+  - `transport_lost`
+  - `healthcheck`
+
 ### `disconnect_session`
 
 ```json
@@ -167,7 +210,8 @@ Behavior:
 Behavior:
 
 - records that the Jusi session lost linkage while the kernel may still be alive
-- moves session state to `disconnected`
+- moves session state to `disconnected` only for attachable sessions
+- managed sessions should tear down immediately instead of entering a reconnectable state
 - prepared-client state becomes unusable until reconnect
 - active executions may remain active but lose trustworthy owner information
 
@@ -260,8 +304,8 @@ Rule:
 Notes:
 
 - `bufnr` exists because the current Vim-side model expects a client buffer number
-- this is the one editor-facing field that likely remains necessary in the event contract
-- if later we can decouple client view identity from Vim buffer number, this field can be replaced
+- the backend may emit `bufnr = -1` while the prepared client exists but is not yet bound to a real Vim buffer
+- the frontend must complete the bind step before prepared state becomes `ready`
 
 ### `cell_updated`
 
@@ -308,6 +352,7 @@ The backend should emit states compatible with the current `jusivim` model where
 
 - `missing`
 - `spawning`
+- `binding`
 - `ready`
 
 ### Cell Statuses
@@ -320,12 +365,28 @@ Initial backend target:
 - `done`
 - `error`
 - `interrupted`
+- `parked`
 
 Notes:
 
 - `follow-up` represents a cell whose kernel execution returned but whose Jusi-specific lifecycle remains active
 - cell status is cell-local and must not by itself block execution of other cells
 - execution gating is driven by prepared-client readiness, not by whether some previous cell reached `done`
+
+### Client Lifecycle State
+
+Prepared and cell updates may carry `client_state` separately from cell `status`.
+
+Current values:
+
+- `active`
+- `shutting_down`
+- `shutdown`
+
+Notes:
+
+- `parked` remains reserved for the deliberate keep-output workflow
+- shutdown lifecycle must not overload `parked`
 
 ### Execution Ownership
 

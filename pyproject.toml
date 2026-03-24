@@ -12,7 +12,10 @@ license = { file = "LICENSE" }
 authors = [
   { name = "Jusi contributors" }
 ]
-dependencies = []
+dependencies = [
+  "jupyter_client>=8,<9",
+  "ipykernel>=6,<7",
+]
 
 [project.scripts]
 jusi = "jusi.__main__:main"

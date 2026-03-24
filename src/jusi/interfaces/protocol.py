@@ -80,6 +80,23 @@ class StopSessionRequest:
     session_id: str
 
 
+@dataclass(frozen=True)
+class BindPreparedClientRequest:
+    notebook_id: str
+    session_id: str
+    client_id: str
+    client_bufnr: int
+
+
+@dataclass(frozen=True)
+class ShutdownClientRequest:
+    notebook_id: str
+    session_id: str
+    cell_id: int
+    client_id: str
+    reason: str
+
+
 def parse_envelope(raw: str) -> Envelope:
     try:
         data = json.loads(raw)
@@ -199,6 +216,50 @@ def parse_stop_session(payload: Mapping[str, Any]) -> StopSessionRequest:
     if not session_id:
         raise ProtocolError("stop_session requires session_id")
     return StopSessionRequest(notebook_id=notebook_id, session_id=session_id)
+
+
+def parse_bind_prepared_client(payload: Mapping[str, Any]) -> BindPreparedClientRequest:
+    notebook_id = str(payload.get("notebook_id", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    client_id = str(payload.get("client_id", "")).strip()
+    client_bufnr = int(payload.get("client_bufnr", -1))
+    if not notebook_id:
+        raise ProtocolError("bind_prepared_client requires notebook_id")
+    if not session_id:
+        raise ProtocolError("bind_prepared_client requires session_id")
+    if not client_id:
+        raise ProtocolError("bind_prepared_client requires client_id")
+    if client_bufnr < 0:
+        raise ProtocolError("bind_prepared_client requires non-negative client_bufnr")
+    return BindPreparedClientRequest(
+        notebook_id=notebook_id,
+        session_id=session_id,
+        client_id=client_id,
+        client_bufnr=client_bufnr,
+    )
+
+
+def parse_shutdown_client(payload: Mapping[str, Any]) -> ShutdownClientRequest:
+    notebook_id = str(payload.get("notebook_id", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    client_id = str(payload.get("client_id", "")).strip()
+    cell_id = int(payload.get("cell_id", 0))
+    reason = str(payload.get("reason", "")).strip() or "unknown"
+    if not notebook_id:
+        raise ProtocolError("shutdown_client requires notebook_id")
+    if not session_id:
+        raise ProtocolError("shutdown_client requires session_id")
+    if not client_id:
+        raise ProtocolError("shutdown_client requires client_id")
+    if cell_id < 0:
+        raise ProtocolError("shutdown_client requires non-negative cell_id")
+    return ShutdownClientRequest(
+        notebook_id=notebook_id,
+        session_id=session_id,
+        cell_id=cell_id,
+        client_id=client_id,
+        reason=reason,
+    )
 
 
 def response_envelope(request: Envelope, ok: bool, payload: Optional[Dict[str, Any]] = None) -> Envelope:
