@@ -90,6 +90,7 @@ Rules:
 - replacement prepared-client provisioning is independent from the active cell retaining its client
 - a cell remaining in `follow-up` must not block execution of other cells once prepared-client state returns to `ready`
 - `parked` remains a deliberate keep-output state, not a generic shutdown result
+- a managed runtime may emit the initial `busy` cell update immediately and the terminal `done`/`error`/`follow-up` cell update later as a separate event while execution output is still being accumulated
 
 ## Client Lifecycle
 

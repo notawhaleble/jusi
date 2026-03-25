@@ -117,6 +117,7 @@ Behavior:
 - requires prepared client in `ready` state
 - consumes the prepared client for the target cell
 - starts replacement prepared-client provisioning separately
+- for runtimes with live async execution, the initial response may include only the accepted/busy transition and replacement prepared-client updates; the terminal `cell_updated` may arrive later as a normal event while the request loop remains available for other requests such as `inspect_client`
 
 Notes:
 
@@ -213,6 +214,7 @@ Behavior:
 - does not change session, prepared, or cell state
 - is intended for backend/runtime introspection while the client runtime vertical slice is still stabilizing
 - includes a monotonic `revision` field so polling consumers can detect view changes cheaply
+- becomes especially useful while a managed execution is still `busy`, because the backend may continue advancing the client transcript/view before the terminal `cell_updated` arrives
 
 Notes:
 

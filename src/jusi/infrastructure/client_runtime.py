@@ -148,7 +148,7 @@ class ProcessClientHandle:
     def append_execution_event(self, event: dict) -> None:
         event_copy = dict(event)
         self._send_command({"kind": "execution_event", "event": event_copy})
-        self._wait_for_status(lambda snapshot: snapshot.get("transcript", [])[-1:] == [event_copy])
+        self._wait_for_status(lambda snapshot: event_copy in snapshot.get("transcript", []))
         self.transcript.append(event_copy)
         self.view_revision += 1
         event_type = str(event_copy.get("type", "")).strip() or "event"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 
 from jusi.interfaces.server import ProtocolServer
 
@@ -27,6 +28,18 @@ def _send(server: ProtocolServer, request_id: str, request_type: str, payload: d
     if not response.get("ok", False):
         raise RuntimeError(f"{request_type} failed: {response.get('error', {})}")
     return envelopes
+
+
+def _drain(server: ProtocolServer, timeout: float = 2.0) -> list[dict]:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        messages = server.drain_pending_messages()
+        if messages:
+            for message in messages:
+                print(message)
+            return [json.loads(message) for message in messages]
+        time.sleep(0.02)
+    raise RuntimeError("timed out waiting for pending backend events")
 
 
 def main() -> int:
@@ -77,10 +90,12 @@ def main() -> int:
     )
     if envelopes[3]["payload"]["cell"]["status"] != "busy":
         raise RuntimeError("execute_cell did not emit busy state first")
-    if envelopes[5]["payload"]["cell"]["status"] != "done":
-        raise RuntimeError("execute_cell did not finish with done state")
     active_client_id = envelopes[3]["payload"]["cell"]["client_id"]
     next_prepared_client_id = envelopes[4]["payload"]["prepared"]["id"]
+
+    envelopes = _drain(server)
+    if envelopes[0]["type"] != "cell_updated" or envelopes[0]["payload"]["cell"]["status"] != "done":
+        raise RuntimeError("managed execute did not emit terminal done state asynchronously")
 
     envelopes = _send(
         server,

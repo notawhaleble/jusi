@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import unittest
 from queue import Empty
 from shlex import quote as shlex_quote
@@ -8,6 +9,8 @@ from unittest.mock import patch
 
 from jusi.domain.models import CellExecution, ExecutableCell, Session
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, ManagedClientHandle, ManagedKernelRuntime, RuntimeDependencyError, build_runtime
+from jusi.interfaces.protocol import parse_envelope
+from jusi.interfaces.server import ProtocolServer
 
 
 class FakeClient:
@@ -64,6 +67,51 @@ class FakeClient:
 
     def stop_channels(self) -> None:
         self.channels_stopped = True
+
+
+class SlowIdleClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "stream",
+                "content": {"name": "stdout", "text": "tick\n"},
+            },
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "status",
+                "content": {"execution_state": "idle"},
+            },
+        ]
+
+    def get_iopub_msg(self, timeout: int = 0) -> dict:
+        if len(self.messages) == 1:
+            time.sleep(0.1)
+        return super().get_iopub_msg(timeout=timeout)
+
+
+class InterruptibleIdleClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "stream",
+                "content": {"name": "stdout", "text": "tick\n"},
+            },
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "status",
+                "content": {"execution_state": "idle"},
+            },
+        ]
+        self.interrupted = False
+
+    def get_iopub_msg(self, timeout: int = 0) -> dict:
+        if len(self.messages) == 1 and not self.interrupted:
+            time.sleep(0.2)
+        return super().get_iopub_msg(timeout=timeout)
 
 
 class FakeManager:
@@ -463,6 +511,144 @@ class ManagedRuntimeTest(unittest.TestCase):
             runtime.read_client_view(session, prepared_client_id),
         )
         runtime.stop_session(session)
+
+    def test_protocol_server_managed_execute_completes_via_pending_event_queue(self) -> None:
+        manager = FakeManager()
+        client = SlowIdleClient()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            start_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+            start_envelopes = [parse_envelope(message) for message in start_messages]
+            session_id = start_envelopes[2].payload["session"]["id"]
+            client_id = start_envelopes[4].payload["prepared"]["id"]
+
+            bind_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
+                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + client_id
+                    + '", "client_bufnr": 91}}'
+                )
+            )
+            bind_envelopes = [parse_envelope(message) for message in bind_messages]
+            self.assertTrue(bind_envelopes[0].ok)
+
+            execute_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "execute_cell", '
+                    '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["print(1)"]}}}'
+                )
+            )
+            execute_envelopes = [parse_envelope(message) for message in execute_messages]
+            self.assertEqual(["response", "event", "event", "event", "event"], [envelope.kind for envelope in execute_envelopes])
+            self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+            self.assertEqual("binding", execute_envelopes[4].payload["prepared"]["state"])
+
+            delayed_messages: list[str] = []
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not delayed_messages:
+                delayed_messages = server.drain_pending_messages()
+                if not delayed_messages:
+                    time.sleep(0.02)
+            self.assertTrue(delayed_messages)
+            delayed_envelopes = [parse_envelope(message) for message in delayed_messages]
+            self.assertEqual(1, len(delayed_envelopes))
+            self.assertEqual("cell_updated", delayed_envelopes[0].type)
+            self.assertEqual("done", delayed_envelopes[0].payload["cell"]["status"])
+
+            stop_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "stop_session", '
+                    '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '"}}'
+                )
+            )
+            stop_envelopes = [parse_envelope(message) for message in stop_messages]
+            self.assertTrue(stop_envelopes[0].ok)
+
+    def test_protocol_server_managed_interrupt_does_not_finish_as_done(self) -> None:
+        manager = FakeManager()
+        client = InterruptibleIdleClient()
+
+        def interrupt_and_mark() -> None:
+            manager.interrupted = True
+            client.interrupted = True
+
+        manager.interrupt_kernel = interrupt_and_mark  # type: ignore[method-assign]
+
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            start_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+            start_envelopes = [parse_envelope(message) for message in start_messages]
+            session_id = start_envelopes[2].payload["session"]["id"]
+            client_id = start_envelopes[4].payload["prepared"]["id"]
+
+            bind_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
+                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + client_id
+                    + '", "client_bufnr": 91}}'
+                )
+            )
+            bind_envelopes = [parse_envelope(message) for message in bind_messages]
+            self.assertTrue(bind_envelopes[0].ok)
+
+            execute_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "execute_cell", '
+                    '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["print(1)"]}}}'
+                )
+            )
+            execute_envelopes = [parse_envelope(message) for message in execute_messages]
+            self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+
+            interrupt_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "interrupt_cell", '
+                    '"request_id": "req-interrupt", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell_id": 12}}'
+                )
+            )
+            interrupt_envelopes = [parse_envelope(message) for message in interrupt_messages]
+            self.assertTrue(interrupt_envelopes[0].ok)
+            self.assertEqual("interrupted", interrupt_envelopes[2].payload["cell"]["status"])
+
+            delayed_messages: list[str] = []
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not delayed_messages:
+                delayed_messages = server.drain_pending_messages()
+                if not delayed_messages:
+                    time.sleep(0.02)
+            self.assertTrue(delayed_messages)
+            delayed_envelopes = [parse_envelope(message) for message in delayed_messages]
+            self.assertEqual("cell_updated", delayed_envelopes[0].type)
+            self.assertEqual("interrupted", delayed_envelopes[0].payload["cell"]["status"])
+
+            stop_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "stop_session", '
+                    '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '"}}'
+                )
+            )
+            stop_envelopes = [parse_envelope(message) for message in stop_messages]
+            self.assertTrue(stop_envelopes[0].ok)
 
     def test_managed_runtime_uses_configured_client_command(self) -> None:
         manager = FakeManager()

@@ -87,7 +87,7 @@ class ExecuteCell:
         self._store = store
         self._events = events
 
-    def execute(self, command: ExecuteCellCommand) -> CellExecution:
+    def begin_execute(self, command: ExecuteCellCommand) -> tuple[Session, CellExecution]:
         session = self._store.get_by_notebook(command.notebook_id)
         if session is None or session.session_id != command.session_id:
             raise ValueError("Unknown notebook session")
@@ -121,11 +121,17 @@ class ExecuteCell:
         session.prepared = PreparedClient(state="binding", client_id=client_id, client_bufnr=-1, client_state="active")
         self._store.save(session)
         self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
+        return session, current_client
 
+    def finish_execute(self, command: ExecuteCellCommand, session: Session, current_client: CellExecution) -> CellExecution:
         current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
         self._store.save_execution(command.notebook_id, current_client)
         self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
         return current_client
+
+    def execute(self, command: ExecuteCellCommand) -> CellExecution:
+        session, current_client = self.begin_execute(command)
+        return self.finish_execute(command, session, current_client)
 
 
 class InterruptCell:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from queue import SimpleQueue
+from threading import Thread
 from typing import List, Optional
 
 from jusi.application.ports import BindPreparedClientCommand, ExecuteCellCommand, InterruptCellCommand, StartSessionCommand
@@ -70,6 +72,18 @@ class ProtocolServer:
     def __init__(self, runtime: Optional[InMemoryKernelRuntime] = None) -> None:
         self._runtime = runtime or build_runtime()
         self._store = InMemorySessionStore()
+        self._pending_events: SimpleQueue[Envelope] = SimpleQueue()
+
+    def drain_pending_messages(self) -> List[str]:
+        envelopes: List[Envelope] = []
+        while True:
+            try:
+                envelopes.append(self._pending_events.get_nowait())
+            except Exception:
+                break
+        if not envelopes:
+            return []
+        return dump_envelopes(envelopes)
 
     def handle_message(self, raw: str) -> List[str]:
         request = parse_envelope(raw)
@@ -167,24 +181,49 @@ class ProtocolServer:
         events = ProtocolEventSink()
         use_case = ExecuteCell(runtime=self._runtime, store=self._store, events=events)
         try:
-            use_case.execute(
-                ExecuteCellCommand(
-                    notebook_id=execute_request.notebook_id,
-                    session_id=execute_request.session_id,
-                    cell=ExecutableCell(
-                        cell_id=execute_request.cell_id,
-                        kind=execute_request.kind,
-                        syntax=execute_request.syntax,
-                        main_lines=execute_request.main_lines,
-                        keep_running=execute_request.keep_running,
-                    ),
-                )
+            command = ExecuteCellCommand(
+                notebook_id=execute_request.notebook_id,
+                session_id=execute_request.session_id,
+                cell=ExecutableCell(
+                    cell_id=execute_request.cell_id,
+                    kind=execute_request.kind,
+                    syntax=execute_request.syntax,
+                    main_lines=execute_request.main_lines,
+                    keep_running=execute_request.keep_running,
+                ),
             )
+            if self._supports_background_execute():
+                session, current_client = use_case.begin_execute(command)
+                self._spawn_execute_completion(command, session, current_client)
+            else:
+                use_case.execute(command)
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
         envelopes = [response_envelope(request, ok=True)]
         envelopes.extend(events.events)
         return dump_envelopes(envelopes)
+
+    def _supports_background_execute(self) -> bool:
+        method = getattr(self._runtime, "supports_background_execute", None)
+        if not callable(method):
+            return False
+        try:
+            return bool(method())
+        except Exception:
+            return False
+
+    def _spawn_execute_completion(self, command: ExecuteCellCommand, session, current_client) -> None:  # type: ignore[no-untyped-def]
+        def _run() -> None:
+            events = ProtocolEventSink()
+            use_case = ExecuteCell(runtime=self._runtime, store=self._store, events=events)
+            try:
+                use_case.finish_execute(command, session, current_client)
+            except Exception:
+                return
+            for event in events.events:
+                self._pending_events.put(event)
+
+        Thread(target=_run, daemon=True).start()
 
     def _handle_stop_session(self, request: Envelope) -> List[str]:
         stop_request = parse_stop_session(request.payload)

@@ -317,10 +317,13 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         super().__init__()
         self._sessions: dict[str, Any] = {}
 
+    def supports_background_execute(self) -> bool:
+        return True
+
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         km, kc = _start_new_kernel(kernel_name=kernel_name)
         session_id = f"managed:{id(km)}"
-        self._sessions[session_id] = SimpleNamespace(manager=km, client=kc)
+        self._sessions[session_id] = SimpleNamespace(manager=km, client=kc, interrupted_client_ids=set())
         return session_id, str(getattr(km, "connection_file", ""))
 
     def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str) -> RuntimeClientHandle:
@@ -378,14 +381,14 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                 continue
             if message.get("parent_header", {}).get("msg_id") != msg_id:
                 continue
-            result = self._handle_iopub_message(session, client.client_id, message, status)
+            result = self._handle_iopub_message(runtime_session, session, client.client_id, message, status)
             if result is None:
                 continue
             status = result
             if message.get("msg_type", "") == "status" and message.get("content", {}).get("execution_state") == "idle":
                 return status
 
-    def _handle_iopub_message(self, session: Session, client_id: str, message: dict, status: str) -> str | None:
+    def _handle_iopub_message(self, runtime_session: Any, session: Session, client_id: str, message: dict, status: str) -> str | None:
         msg_type = message.get("msg_type", "")
         if msg_type == "stream":
             self.append_client_execution_event(
@@ -487,6 +490,9 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             )
             return None
         if msg_type == "status" and message.get("content", {}).get("execution_state") == "idle":
+            if client_id in getattr(runtime_session, "interrupted_client_ids", set()):
+                status = "interrupted"
+                runtime_session.interrupted_client_ids.discard(client_id)
             self.update_client_execution_status(session, client_id, status)
             self.append_client_execution_event(
                 session,
@@ -519,6 +525,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def interrupt_kernel(self, session: Session, execution: CellExecution) -> str:
         runtime_session = self._require_session(session.session_id)
         runtime_session.manager.interrupt_kernel()
+        runtime_session.interrupted_client_ids.add(execution.client_id)
         self.update_client_execution_status(session, execution.client_id, "interrupted")
         self.append_client_execution_event(
             session,
@@ -528,6 +535,8 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         return "interrupted"
 
     def interrupt_handler(self, session: Session, execution: CellExecution) -> str:
+        runtime_session = self._require_session(session.session_id)
+        runtime_session.interrupted_client_ids.add(execution.client_id)
         self.update_client_execution_status(session, execution.client_id, "interrupted")
         self.append_client_execution_event(
             session,
@@ -566,27 +575,35 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
 
 class InMemorySessionStore:
     def __init__(self) -> None:
+        from threading import RLock
+
+        self._lock = RLock()
         self._sessions: dict[str, Session] = {}
         self._executions: dict[tuple[str, int], CellExecution] = {}
 
     def save(self, session: Session) -> None:
-        self._sessions[session.notebook_id] = session
+        with self._lock:
+            self._sessions[session.notebook_id] = session
 
     def get_by_notebook(self, notebook_id: str) -> Session | None:
-        return self._sessions.get(notebook_id)
+        with self._lock:
+            return self._sessions.get(notebook_id)
 
     def save_execution(self, notebook_id: str, execution: CellExecution) -> None:
-        self._executions[(notebook_id, execution.cell_id)] = execution
+        with self._lock:
+            self._executions[(notebook_id, execution.cell_id)] = execution
 
     def get_execution(self, notebook_id: str, cell_id: int) -> CellExecution | None:
-        return self._executions.get((notebook_id, cell_id))
+        with self._lock:
+            return self._executions.get((notebook_id, cell_id))
 
     def list_executions(self, notebook_id: str) -> list[CellExecution]:
-        return [
-            execution
-            for (stored_notebook_id, _cell_id), execution in self._executions.items()
-            if stored_notebook_id == notebook_id
-        ]
+        with self._lock:
+            return [
+                execution
+                for (stored_notebook_id, _cell_id), execution in self._executions.items()
+                if stored_notebook_id == notebook_id
+            ]
 
 
 def build_runtime() -> InMemoryKernelRuntime | ManagedKernelRuntime:
