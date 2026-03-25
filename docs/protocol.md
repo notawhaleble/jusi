@@ -197,6 +197,28 @@ Behavior:
   - `transport_lost`
   - `healthcheck`
 
+### `inspect_client`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "client_id": "client-1"
+}
+```
+
+Behavior:
+
+- returns the current backend-owned client view snapshot for inspection
+- does not change session, prepared, or cell state
+- is intended for backend/runtime introspection while the client runtime vertical slice is still stabilizing
+- includes a monotonic `revision` field so polling consumers can detect view changes cheaply
+
+Notes:
+
+- this is not yet a signal for `jusivim` to start consuming backend-rendered client views as part of normal integration
+- the returned snapshot is derived from backend-owned client runtime state rather than Vim-local rendering state
+
 ### `disconnect_session`
 
 ```json
@@ -268,6 +290,27 @@ Rule:
 
 - request acceptance does not imply completion
 - authoritative state changes arrive through events
+- inspection-style requests may return synchronous payload data when they do not change backend state
+
+`inspect_client` success example:
+
+```json
+{
+  "version": 1,
+  "kind": "response",
+  "type": "inspect_client",
+  "request_id": "req-789",
+  "ok": true,
+  "payload": {
+    "client": {
+      "title": "cell 12: done",
+      "lines": ["started cell 12 [code:python]", "finished: done"],
+      "execution_status": "done",
+      "active_cell_id": 12
+    }
+  }
+}
+```
 
 ## Events
 

@@ -107,6 +107,8 @@ Rules:
 - prepared-client teardown and cell-client teardown must not overload execution status
 - managed-session transport loss should tear clients down immediately
 - attachable-session transport loss may preserve session identity while client ownership becomes uncertain
+- client runtime may maintain an internal derived view snapshot from lifecycle and execution data, but that view model does not define session or cell state by itself
+- the derived client view snapshot may also expose a monotonic backend-owned `revision` for polling consumers; that revision is not a session/cell lifecycle state
 
 ## Execution Ownership
 

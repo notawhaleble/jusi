@@ -17,6 +17,7 @@ from jusi.interfaces.protocol import (
     parse_disconnect_session,
     parse_envelope,
     parse_execute_cell,
+    parse_inspect_client,
     parse_interrupt_cell,
     parse_reconnect_session,
     parse_shutdown_client,
@@ -90,6 +91,8 @@ class ProtocolServer:
             return self._handle_bind_prepared_client(request)
         if request.type == "shutdown_client":
             return self._handle_shutdown_client(request)
+        if request.type == "inspect_client":
+            return self._handle_inspect_client(request)
         return dump_envelopes([error_response(request, "unknown_request", "Unknown request type")])
 
     def _handle_start_session(self, request: Envelope) -> List[str]:
@@ -127,7 +130,7 @@ class ProtocolServer:
     def _handle_disconnect_session(self, request: Envelope) -> List[str]:
         disconnect_request = parse_disconnect_session(request.payload)
         events = ProtocolEventSink()
-        use_case = DisconnectSession(store=self._store, events=events)
+        use_case = DisconnectSession(runtime=self._runtime, store=self._store, events=events)
         try:
             use_case.execute(
                 DisconnectSessionCommand(
@@ -203,7 +206,7 @@ class ProtocolServer:
     def _handle_bind_prepared_client(self, request: Envelope) -> List[str]:
         bind_request = parse_bind_prepared_client(request.payload)
         events = ProtocolEventSink()
-        use_case = BindPreparedClient(store=self._store, events=events)
+        use_case = BindPreparedClient(runtime=self._runtime, store=self._store, events=events)
         try:
             use_case.execute(
                 BindPreparedClientCommand(
@@ -238,3 +241,14 @@ class ProtocolServer:
         envelopes = [response_envelope(request, ok=True)]
         envelopes.extend(events.events)
         return dump_envelopes(envelopes)
+
+    def _handle_inspect_client(self, request: Envelope) -> List[str]:
+        inspect_request = parse_inspect_client(request.payload)
+        session = self._store.get_by_notebook(inspect_request.notebook_id)
+        if session is None or session.session_id != inspect_request.session_id:
+            return dump_envelopes([error_response(request, "invalid_state", "Unknown notebook session")])
+        try:
+            client_view = self._runtime.read_client_view(session, inspect_request.client_id)
+        except ValueError as exc:
+            return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        return dump_envelopes([response_envelope(request, ok=True, payload={"client": client_view})])

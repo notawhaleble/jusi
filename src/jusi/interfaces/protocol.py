@@ -97,6 +97,13 @@ class ShutdownClientRequest:
     reason: str
 
 
+@dataclass(frozen=True)
+class InspectClientRequest:
+    notebook_id: str
+    session_id: str
+    client_id: str
+
+
 def parse_envelope(raw: str) -> Envelope:
     try:
         data = json.loads(raw)
@@ -259,6 +266,23 @@ def parse_shutdown_client(payload: Mapping[str, Any]) -> ShutdownClientRequest:
         cell_id=cell_id,
         client_id=client_id,
         reason=reason,
+    )
+
+
+def parse_inspect_client(payload: Mapping[str, Any]) -> InspectClientRequest:
+    notebook_id = str(payload.get("notebook_id", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    client_id = str(payload.get("client_id", "")).strip()
+    if not notebook_id:
+        raise ProtocolError("inspect_client requires notebook_id")
+    if not session_id:
+        raise ProtocolError("inspect_client requires session_id")
+    if not client_id:
+        raise ProtocolError("inspect_client requires client_id")
+    return InspectClientRequest(
+        notebook_id=notebook_id,
+        session_id=session_id,
+        client_id=client_id,
     )
 
 

@@ -1,15 +1,228 @@
 from __future__ import annotations
 
 import os
+from queue import Empty
+from dataclasses import dataclass, field
 from itertools import count
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Protocol
 
 from jusi.domain.models import CellExecution, ExecutableCell, Session
+from jusi.infrastructure.client_view import build_client_view
+from jusi.infrastructure.client_runtime import ProcessClientHandle
 
 
 class RuntimeDependencyError(RuntimeError):
     """Raised when an optional runtime dependency is required but unavailable."""
+
+
+class RuntimeClientHandle(Protocol):
+    def bind(self, client_bufnr: int) -> None:
+        ...
+
+    def activate(self, cell_id: int) -> None:
+        ...
+
+    def update_execution_status(self, status: str) -> None:
+        ...
+
+    def append_execution_event(self, event: dict) -> None:
+        ...
+
+    def read_view(self) -> dict:
+        ...
+
+    def shutdown(self, reason: str) -> None:
+        ...
+
+
+@dataclass
+class InMemoryClientHandle:
+    client_id: str
+    notebook_id: str
+    session_id: str
+    client_bufnr: int = -1
+    active_cell_id: int | None = None
+    execution_status: str = ""
+    shutdown_reason: str = ""
+    view_revision: int = 0
+    lifecycle: list[str] = field(default_factory=list)
+    transcript: list[dict] = field(default_factory=list)
+
+    def bind(self, client_bufnr: int) -> None:
+        self.client_bufnr = client_bufnr
+        self.view_revision += 1
+        self.lifecycle.append(f"bind:{client_bufnr}")
+
+    def activate(self, cell_id: int) -> None:
+        self.active_cell_id = cell_id
+        self.view_revision += 1
+        self.lifecycle.append(f"activate:{cell_id}")
+
+    def update_execution_status(self, status: str) -> None:
+        if self.execution_status == status:
+            return
+        self.execution_status = status
+        self.view_revision += 1
+        self.lifecycle.append(f"status:{status}")
+
+    def append_execution_event(self, event: dict) -> None:
+        self.transcript.append(dict(event))
+        self.view_revision += 1
+        event_type = str(event.get("type", "")).strip() or "event"
+        self.lifecycle.append(f"event:{event_type}")
+
+    def read_view(self) -> dict:
+        view = build_client_view(
+            client_id=self.client_id,
+            session_id=self.session_id,
+            client_bufnr=self.client_bufnr,
+            active_cell_id=self.active_cell_id,
+            execution_status=self.execution_status,
+            transcript=self.transcript,
+        )
+        view["revision"] = self.view_revision
+        return view
+
+    def shutdown(self, reason: str) -> None:
+        self.shutdown_reason = reason
+        self.client_bufnr = -1
+        self.view_revision += 1
+        self.lifecycle.append(f"shutdown:{reason}")
+
+
+@dataclass
+class ManagedClientHandle(ProcessClientHandle):
+    runtime_kind: str = "managed"
+
+
+@dataclass
+class RuntimeClient:
+    client_id: str
+    notebook_id: str
+    session_id: str
+    handle: RuntimeClientHandle
+    state: str = "prepared"
+    client_bufnr: int = -1
+    cell_id: int | None = None
+    shutdown_reason: str = ""
+
+
+@dataclass
+class RuntimeSessionClients:
+    clients: dict[str, RuntimeClient] = field(default_factory=dict)
+    prepared_client_id: str = ""
+
+
+class ClientRegistryRuntime:
+    def __init__(self) -> None:
+        self._client_counter = count(1)
+        self._session_clients: dict[str, RuntimeSessionClients] = {}
+
+    def prepare_client(self, notebook_id: str, session_id: str) -> str:
+        session_clients = self._ensure_session_clients(session_id)
+        client_id = self._next_client_id(session_id)
+        session_clients.clients[client_id] = RuntimeClient(
+            client_id=client_id,
+            notebook_id=notebook_id,
+            session_id=session_id,
+            handle=self._build_client_handle(client_id, notebook_id, session_id),
+        )
+        session_clients.prepared_client_id = client_id
+        return client_id
+
+    def bind_prepared_client(self, session: Session, client_id: str, client_bufnr: int) -> None:
+        runtime_client = self._require_client(session.session_id, client_id)
+        if runtime_client.state != "prepared":
+            raise ValueError("Prepared client is no longer awaiting binding")
+        runtime_client.handle.bind(client_bufnr)
+        runtime_client.client_bufnr = client_bufnr
+
+    def activate_client(self, session: Session, client_id: str, cell_id: int) -> None:
+        session_clients = self._ensure_session_clients(session.session_id)
+        runtime_client = self._require_client(session.session_id, client_id)
+        if session_clients.prepared_client_id != client_id:
+            raise ValueError("Prepared client id does not match runtime state")
+        if runtime_client.client_bufnr < 0:
+            raise ValueError("Prepared client is not bound")
+        runtime_client.handle.activate(cell_id)
+        runtime_client.state = "active"
+        runtime_client.cell_id = cell_id
+        session_clients.prepared_client_id = ""
+
+    def update_client_execution_status(self, session: Session, client_id: str, status: str) -> None:
+        runtime_client = self._require_client(session.session_id, client_id)
+        runtime_client.handle.update_execution_status(status)
+
+    def append_client_execution_event(self, session: Session, client_id: str, event: dict) -> None:
+        runtime_client = self._require_client(session.session_id, client_id)
+        runtime_client.handle.append_execution_event(event)
+
+    def read_client_view(self, session: Session, client_id: str) -> dict:
+        runtime_client = self._require_client(session.session_id, client_id)
+        return runtime_client.handle.read_view()
+
+    def shutdown_client(self, session: Session, client_id: str, reason: str) -> None:
+        session_clients = self._session_clients.get(session.session_id)
+        if session_clients is None:
+            return
+        runtime_client = session_clients.clients.get(client_id)
+        if runtime_client is None:
+            return
+        runtime_client.handle.shutdown(reason)
+        runtime_client.state = "shutdown"
+        runtime_client.shutdown_reason = reason
+        runtime_client.client_bufnr = -1
+        if session_clients.prepared_client_id == client_id:
+            session_clients.prepared_client_id = ""
+        session_clients.clients.pop(client_id, None)
+
+    def release_session_clients(self, session_id: str, reason: str) -> None:
+        session_clients = self._session_clients.pop(session_id, None)
+        if session_clients is None:
+            return
+        for runtime_client in session_clients.clients.values():
+            runtime_client.handle.shutdown(reason)
+            runtime_client.state = "shutdown"
+            runtime_client.shutdown_reason = reason
+            runtime_client.client_bufnr = -1
+
+    def get_client(self, session_id: str, client_id: str) -> RuntimeClient | None:
+        session_clients = self._session_clients.get(session_id)
+        if session_clients is None:
+            return None
+        return session_clients.clients.get(client_id)
+
+    def list_clients(self, session_id: str) -> list[RuntimeClient]:
+        session_clients = self._session_clients.get(session_id)
+        if session_clients is None:
+            return []
+        return list(session_clients.clients.values())
+
+    def _next_client_id(self, session_id: str) -> str:
+        _ = session_id
+        ident = next(self._client_counter)
+        return f"client-{ident}"
+
+    def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str) -> RuntimeClientHandle:
+        return InMemoryClientHandle(
+            client_id=client_id,
+            notebook_id=notebook_id,
+            session_id=session_id,
+        )
+
+    def _ensure_session_clients(self, session_id: str) -> RuntimeSessionClients:
+        session_clients = self._session_clients.get(session_id)
+        if session_clients is None:
+            session_clients = RuntimeSessionClients()
+            self._session_clients[session_id] = session_clients
+        return session_clients
+
+    def _require_client(self, session_id: str, client_id: str) -> RuntimeClient:
+        session_clients = self._session_clients.get(session_id)
+        if session_clients is None or client_id not in session_clients.clients:
+            raise ValueError("Runtime client id does not match current session state")
+        return session_clients.clients[client_id]
 
 
 def _start_new_kernel(kernel_name: str) -> tuple[Any, Any]:
@@ -30,10 +243,10 @@ def _start_new_kernel(kernel_name: str) -> tuple[Any, Any]:
         ) from exc
 
 
-class InMemoryKernelRuntime:
+class InMemoryKernelRuntime(ClientRegistryRuntime):
     def __init__(self) -> None:
+        super().__init__()
         self._session_counter = count(1)
-        self._client_counter = count(1)
 
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         ident = next(self._session_counter)
@@ -41,37 +254,67 @@ class InMemoryKernelRuntime:
         connection = f"inmemory://{kernel_name}/{ident}"
         return session_id, connection
 
-    def prepare_client(self, notebook_id: str, session_id: str) -> str:
-        _ = (notebook_id, session_id)
-        ident = next(self._client_counter)
-        return f"client-{ident}"
-
     def execute_cell(self, session: Session, cell: ExecutableCell, client: CellExecution) -> str:
         _ = (session, cell, client)
+        self.append_client_execution_event(
+            session,
+            client.client_id,
+            {"type": "execution_started", "cell_id": client.cell_id, "kind": cell.kind, "syntax": cell.syntax},
+        )
         if cell.keep_running:
+            self.update_client_execution_status(session, client.client_id, "busy")
+            self.append_client_execution_event(
+                session,
+                client.client_id,
+                {"type": "execution_state", "status": "busy"},
+            )
             return "busy"
         if cell.kind == "magic":
+            self.update_client_execution_status(session, client.client_id, "follow-up")
+            self.append_client_execution_event(
+                session,
+                client.client_id,
+                {"type": "execution_finished", "status": "follow-up"},
+            )
             return "follow-up"
+        self.update_client_execution_status(session, client.client_id, "done")
+        self.append_client_execution_event(
+            session,
+            client.client_id,
+            {"type": "execution_finished", "status": "done"},
+        )
         return "done"
 
     def interrupt_kernel(self, session: Session, execution: CellExecution) -> str:
         _ = (session, execution)
+        self.update_client_execution_status(session, execution.client_id, "interrupted")
+        self.append_client_execution_event(
+            session,
+            execution.client_id,
+            {"type": "execution_interrupted", "status": "interrupted"},
+        )
         return "interrupted"
 
     def interrupt_handler(self, session: Session, execution: CellExecution) -> str:
         _ = (session, execution)
+        self.update_client_execution_status(session, execution.client_id, "interrupted")
+        self.append_client_execution_event(
+            session,
+            execution.client_id,
+            {"type": "execution_interrupted", "status": "interrupted"},
+        )
         return "interrupted"
 
+    def disconnect_session(self, session: Session, reason: str) -> None:
+        self.release_session_clients(session.session_id, reason=reason)
+
     def stop_session(self, session: Session) -> None:
-        _ = session
-
-    def shutdown_client(self, session: Session, client_id: str, reason: str) -> None:
-        _ = (session, client_id, reason)
+        self.release_session_clients(session.session_id, reason="session_stop")
 
 
-class ManagedKernelRuntime:
+class ManagedKernelRuntime(ClientRegistryRuntime):
     def __init__(self) -> None:
-        self._client_counter = count(1)
+        super().__init__()
         self._sessions: dict[str, Any] = {}
 
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
@@ -80,45 +323,224 @@ class ManagedKernelRuntime:
         self._sessions[session_id] = SimpleNamespace(manager=km, client=kc)
         return session_id, str(getattr(km, "connection_file", ""))
 
-    def prepare_client(self, notebook_id: str, session_id: str) -> str:
-        _ = notebook_id
-        ident = next(self._client_counter)
-        return f"client-{session_id}-{ident}"
+    def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str) -> RuntimeClientHandle:
+        return ManagedClientHandle(
+            client_id=client_id,
+            notebook_id=notebook_id,
+            session_id=session_id,
+        )
 
     def execute_cell(self, session: Session, cell: ExecutableCell, client: CellExecution) -> str:
-        _ = client
         runtime_session = self._require_session(session.session_id)
         code = "\n".join(cell.main_lines)
+        self.append_client_execution_event(
+            session,
+            client.client_id,
+            {"type": "execution_started", "cell_id": client.cell_id, "kind": cell.kind, "syntax": cell.syntax},
+        )
         if cell.keep_running:
             runtime_session.client.execute(code)
+            self.update_client_execution_status(session, client.client_id, "busy")
+            self.append_client_execution_event(
+                session,
+                client.client_id,
+                {"type": "execution_state", "status": "busy"},
+            )
             return "busy"
         if cell.kind == "magic":
             runtime_session.client.execute(code, store_history=False)
+            self.update_client_execution_status(session, client.client_id, "follow-up")
+            self.append_client_execution_event(
+                session,
+                client.client_id,
+                {"type": "execution_finished", "status": "follow-up"},
+            )
             return "follow-up"
 
         msg_id = runtime_session.client.execute(code)
         status = "done"
         while True:
-            message = runtime_session.client.get_iopub_msg(timeout=5)
+            stdin_message = self._try_get_stdin_request(runtime_session.client, msg_id)
+            if stdin_message is not None:
+                self.append_client_execution_event(
+                    session,
+                    client.client_id,
+                    {
+                        "type": "input_request",
+                        "prompt": str(stdin_message.get("content", {}).get("prompt", "")),
+                        "password": bool(stdin_message.get("content", {}).get("password", False)),
+                    },
+                )
+                return "busy"
+
+            message = self._try_get_iopub_message(runtime_session.client)
+            if message is None:
+                continue
             if message.get("parent_header", {}).get("msg_id") != msg_id:
                 continue
-            msg_type = message.get("msg_type", "")
-            if msg_type == "error":
-                status = "error"
-            if msg_type == "status" and message.get("content", {}).get("execution_state") == "idle":
+            result = self._handle_iopub_message(session, client.client_id, message, status)
+            if result is None:
+                continue
+            status = result
+            if message.get("msg_type", "") == "status" and message.get("content", {}).get("execution_state") == "idle":
                 return status
 
+    def _handle_iopub_message(self, session: Session, client_id: str, message: dict, status: str) -> str | None:
+        msg_type = message.get("msg_type", "")
+        if msg_type == "stream":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "stream",
+                    "name": message.get("content", {}).get("name", ""),
+                    "text": message.get("content", {}).get("text", ""),
+                },
+            )
+            return None
+        if msg_type == "error":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "error",
+                    "ename": message.get("content", {}).get("ename", ""),
+                    "evalue": message.get("content", {}).get("evalue", ""),
+                    "traceback": list(message.get("content", {}).get("traceback", [])),
+                },
+            )
+            return "error"
+        if msg_type == "display_data":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "display_data",
+                    "data": dict(message.get("content", {}).get("data", {})),
+                    "display_id": str(message.get("content", {}).get("transient", {}).get("display_id", "")),
+                },
+            )
+            return None
+        if msg_type == "update_display_data":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "update_display_data",
+                    "data": dict(message.get("content", {}).get("data", {})),
+                    "display_id": str(message.get("content", {}).get("transient", {}).get("display_id", "")),
+                },
+            )
+            return None
+        if msg_type == "execute_result":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "execute_result",
+                    "data": dict(message.get("content", {}).get("data", {})),
+                },
+            )
+            return None
+        if msg_type == "clear_output":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "clear_output",
+                    "wait": bool(message.get("content", {}).get("wait", False)),
+                },
+            )
+            return None
+        if msg_type == "comm_open":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "comm_open",
+                    "comm_id": str(message.get("content", {}).get("comm_id", "")),
+                    "target_name": str(message.get("content", {}).get("target_name", "")),
+                    "data": dict(message.get("content", {}).get("data", {})),
+                },
+            )
+            return None
+        if msg_type == "comm_msg":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "comm_msg",
+                    "comm_id": str(message.get("content", {}).get("comm_id", "")),
+                    "data": dict(message.get("content", {}).get("data", {})),
+                },
+            )
+            return None
+        if msg_type == "comm_close":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "comm_close",
+                    "comm_id": str(message.get("content", {}).get("comm_id", "")),
+                    "data": dict(message.get("content", {}).get("data", {})),
+                },
+            )
+            return None
+        if msg_type == "status" and message.get("content", {}).get("execution_state") == "idle":
+            self.update_client_execution_status(session, client_id, status)
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {"type": "execution_finished", "status": status},
+            )
+            return status
+        return None
+
+    def _try_get_iopub_message(self, kernel_client: Any) -> dict | None:
+        try:
+            return kernel_client.get_iopub_msg(timeout=0.1)
+        except Empty:
+            return None
+
+    def _try_get_stdin_request(self, kernel_client: Any, msg_id: str) -> dict | None:
+        get_stdin_msg = getattr(kernel_client, "get_stdin_msg", None)
+        if get_stdin_msg is None:
+            return None
+        try:
+            message = get_stdin_msg(timeout=0.0)
+        except Empty:
+            return None
+        if message.get("parent_header", {}).get("msg_id") != msg_id:
+            return None
+        if message.get("msg_type", "") != "input_request":
+            return None
+        return message
+
     def interrupt_kernel(self, session: Session, execution: CellExecution) -> str:
-        _ = execution
         runtime_session = self._require_session(session.session_id)
         runtime_session.manager.interrupt_kernel()
+        self.update_client_execution_status(session, execution.client_id, "interrupted")
+        self.append_client_execution_event(
+            session,
+            execution.client_id,
+            {"type": "execution_interrupted", "status": "interrupted"},
+        )
         return "interrupted"
 
     def interrupt_handler(self, session: Session, execution: CellExecution) -> str:
-        _ = (session, execution)
+        self.update_client_execution_status(session, execution.client_id, "interrupted")
+        self.append_client_execution_event(
+            session,
+            execution.client_id,
+            {"type": "execution_interrupted", "status": "interrupted"},
+        )
         return "interrupted"
 
+    def disconnect_session(self, session: Session, reason: str) -> None:
+        self.release_session_clients(session.session_id, reason=reason)
+
     def stop_session(self, session: Session) -> None:
+        self.release_session_clients(session.session_id, reason="session_stop")
         runtime_session = self._sessions.pop(session.session_id, None)
         if runtime_session is None:
             return
@@ -134,9 +556,6 @@ class ManagedKernelRuntime:
             runtime_session.manager.cleanup_resources()
         except Exception:
             pass
-
-    def shutdown_client(self, session: Session, client_id: str, reason: str) -> None:
-        _ = (session, client_id, reason)
 
     def _require_session(self, session_id: str) -> Any:
         try:

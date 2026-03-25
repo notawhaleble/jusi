@@ -114,6 +114,8 @@ class ExecuteCell:
             command.notebook_id, _cell_payload(current_client)
         )
         self._store.save_execution(command.notebook_id, current_client)
+        self._runtime.activate_client(session, current_client.client_id, current_client.cell_id)
+        self._runtime.update_client_execution_status(session, current_client.client_id, current_client.status)
 
         client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
         session.prepared = PreparedClient(state="binding", client_id=client_id, client_bufnr=-1, client_state="active")
@@ -159,7 +161,8 @@ class InterruptCell:
 
 
 class DisconnectSession:
-    def __init__(self, store: SessionStore, events: SessionEventSink) -> None:
+    def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
+        self._runtime = runtime
         self._store = store
         self._events = events
 
@@ -184,11 +187,13 @@ class DisconnectSession:
                     self._store.save_execution(command.notebook_id, execution)
                     self._events.cell_updated(command.notebook_id, _cell_payload(execution))
 
+            self._runtime.stop_session(session)
             session.state = "stopped"
             self._store.save(session)
             self._events.session_updated(command.notebook_id, _session_payload(session))
             return session
 
+        self._runtime.disconnect_session(session, command.reason)
         session.state = "disconnected"
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
@@ -267,7 +272,8 @@ class StopSession:
 
 
 class BindPreparedClient:
-    def __init__(self, store: SessionStore, events: SessionEventSink) -> None:
+    def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
+        self._runtime = runtime
         self._store = store
         self._events = events
 
@@ -286,6 +292,7 @@ class BindPreparedClient:
             client_bufnr=command.client_bufnr,
             client_state="active",
         )
+        self._runtime.bind_prepared_client(session, command.client_id, command.client_bufnr)
         self._store.save(session)
         self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
         return session.prepared

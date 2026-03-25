@@ -80,6 +80,21 @@ class KernelRuntime(Protocol):
     def prepare_client(self, notebook_id: str, session_id: str) -> str:
         """Return a backend-owned prepared client id."""
 
+    def bind_prepared_client(self, session: Session, client_id: str, client_bufnr: int) -> None:
+        """Attach a real frontend buffer binding to a prepared client."""
+
+    def activate_client(self, session: Session, client_id: str, cell_id: int) -> None:
+        """Move a prepared client into active cell ownership."""
+
+    def update_client_execution_status(self, session: Session, client_id: str, status: str) -> None:
+        """Publish the current execution-facing status for an active client."""
+
+    def append_client_execution_event(self, session: Session, client_id: str, event: dict) -> None:
+        """Append a structured execution event to the active client transcript."""
+
+    def read_client_view(self, session: Session, client_id: str) -> dict:
+        """Read the current backend-owned client view snapshot."""
+
     def execute_cell(self, session: Session, cell: ExecutableCell, client: CellExecution) -> str:
         """Execute the cell and return the final cell status."""
 
@@ -88,6 +103,9 @@ class KernelRuntime(Protocol):
 
     def interrupt_handler(self, session: Session, execution: CellExecution) -> str:
         """Interrupt a handler-owned execution and return the resulting cell status."""
+
+    def disconnect_session(self, session: Session, reason: str) -> None:
+        """Release runtime-owned client resources for a recoverable disconnect."""
 
     def stop_session(self, session: Session) -> None:
         """Stop or detach the runtime resources associated with the session."""
