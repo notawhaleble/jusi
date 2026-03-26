@@ -16,6 +16,7 @@ from jusi.interfaces.server import ProtocolServer
 class FakeClient:
     def __init__(self) -> None:
         self.executed: list[tuple[str, bool | None]] = []
+        self.input_replies: list[str] = []
         self.channels_stopped = False
         self.messages = [
             {
@@ -54,6 +55,9 @@ class FakeClient:
     def execute(self, code: str, store_history: Optional[bool] = None) -> str:
         self.executed.append((code, store_history))
         return "msg-1"
+
+    def input(self, value: str) -> None:
+        self.input_replies.append(value)
 
     def get_iopub_msg(self, timeout: int = 0) -> dict:
         _ = timeout
@@ -114,6 +118,141 @@ class InterruptibleIdleClient(FakeClient):
         return super().get_iopub_msg(timeout=timeout)
 
 
+class InputRequestClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages = []
+        self.stdin_messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "input_request",
+                "content": {"prompt": "value: ", "password": False},
+            }
+        ]
+
+
+class InputReplyFlowClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "execute_input",
+                "content": {"execution_count": 7, "code": "input('value: ')"},
+            },
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "stream",
+                "content": {"name": "stdout", "text": "typed: answer\n"},
+            },
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "status",
+                "content": {"execution_state": "idle"},
+            },
+        ]
+        self.stdin_messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "input_request",
+                "content": {"prompt": "value: ", "password": False},
+            }
+        ]
+
+
+class TimedMessageClient(FakeClient):
+    def __init__(self, messages: list[dict], delays: list[float]) -> None:
+        super().__init__()
+        self.messages = messages
+        self._delays = delays
+
+    def get_iopub_msg(self, timeout: int = 0) -> dict:
+        index = len(self._delays) - len(self.messages)
+        if 0 <= index < len(self._delays):
+            time.sleep(self._delays[index])
+        return super().get_iopub_msg(timeout=timeout)
+
+
+class LiveDisplayUpdateClient(TimedMessageClient):
+    def __init__(self) -> None:
+        super().__init__(
+            messages=[
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "display_data",
+                    "content": {"data": {"text/plain": "alpha"}, "transient": {"display_id": "disp-1"}},
+                },
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "update_display_data",
+                    "content": {"data": {"text/plain": "beta"}, "transient": {"display_id": "disp-1"}},
+                },
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "status",
+                    "content": {"execution_state": "idle"},
+                },
+            ],
+            delays=[0.0, 0.12, 0.15],
+        )
+
+
+class LiveClearOutputWaitClient(TimedMessageClient):
+    def __init__(self) -> None:
+        super().__init__(
+            messages=[
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "stream",
+                    "content": {"name": "stdout", "text": "before\n"},
+                },
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "clear_output",
+                    "content": {"wait": True},
+                },
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "execute_result",
+                    "content": {"data": {"text/plain": "42"}},
+                },
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "status",
+                    "content": {"execution_state": "idle"},
+                },
+            ],
+            delays=[0.0, 0.0, 0.35, 0.15],
+        )
+
+
+class ErrorClient(TimedMessageClient):
+    def __init__(self) -> None:
+        super().__init__(
+            messages=[
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "error",
+                    "content": {
+                        "ename": "ValueError",
+                        "evalue": "boom",
+                        "traceback": [
+                            "Traceback (most recent call last):",
+                            '  File "<stdin>", line 1, in <module>',
+                            "ValueError: boom",
+                        ],
+                    },
+                },
+                {
+                    "parent_header": {"msg_id": "msg-1"},
+                    "msg_type": "status",
+                    "content": {"execution_state": "idle"},
+                },
+            ],
+            delays=[0.05, 0.1],
+        )
+
+
 class FakeManager:
     def __init__(self) -> None:
         self.connection_file = "/tmp/kernel.json"
@@ -132,6 +271,84 @@ class FakeManager:
 
 
 class ManagedRuntimeTest(unittest.TestCase):
+    def _start_bound_managed_server(self, client: FakeClient) -> tuple[ProtocolServer, str, str]:
+        manager = FakeManager()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            start_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+            start_envelopes = [parse_envelope(message) for message in start_messages]
+            session_id = start_envelopes[2].payload["session"]["id"]
+            client_id = start_envelopes[4].payload["prepared"]["id"]
+
+            bind_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
+                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + client_id
+                    + '", "client_bufnr": 91}}'
+                )
+            )
+            bind_envelopes = [parse_envelope(message) for message in bind_messages]
+            self.assertTrue(bind_envelopes[0].ok)
+            return server, session_id, client_id
+
+    def _inspect_client_view(self, server: ProtocolServer, session_id: str, client_id: str, request_id: str) -> dict:
+        inspect_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "inspect_client", '
+                '"request_id": "'
+                + request_id
+                + '", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "client_id": "'
+                + client_id
+                + '"}}'
+            )
+        )
+        return [parse_envelope(message) for message in inspect_messages][0].payload["client"]
+
+    def _wait_for_view_lines(
+        self,
+        server: ProtocolServer,
+        session_id: str,
+        client_id: str,
+        request_id: str,
+        expected_lines: list[str],
+        timeout: float = 1.0,
+    ) -> dict:
+        deadline = time.time() + timeout
+        last_view: dict = {}
+        while time.time() < deadline:
+            last_view = self._inspect_client_view(server, session_id, client_id, request_id)
+            if last_view.get("lines") == expected_lines:
+                return last_view
+            time.sleep(0.02)
+        self.assertEqual(expected_lines, last_view.get("lines"))
+        return last_view
+
+    def _wait_for_view_predicate(
+        self,
+        server: ProtocolServer,
+        session_id: str,
+        client_id: str,
+        request_id: str,
+        predicate,
+        timeout: float = 1.0,
+    ) -> dict:
+        deadline = time.time() + timeout
+        last_view: dict = {}
+        while time.time() < deadline:
+            last_view = self._inspect_client_view(server, session_id, client_id, request_id)
+            if predicate(last_view):
+                return last_view
+            time.sleep(0.02)
+        self.assertTrue(predicate(last_view), last_view)
+        return last_view
+
     def test_build_runtime_uses_managed_mode(self) -> None:
         with patch.dict(os.environ, {"JUSI_RUNTIME": "managed"}, clear=False):
             runtime = build_runtime()
@@ -350,6 +567,57 @@ class ManagedRuntimeTest(unittest.TestCase):
             runtime.read_client_view(session, client_id),
         )
 
+    def test_shared_view_preserves_full_traceback_lines(self) -> None:
+        session = Session(notebook_id="nb-1", session_id="session-1", connection="", kernel_name="python3")
+        runtime = InMemoryKernelRuntime()
+        client_id = runtime.prepare_client("nb-1", session.session_id)
+        runtime.bind_prepared_client(session, client_id, 91)
+        runtime.activate_client(session, client_id, 12)
+        runtime.update_client_execution_status(session, client_id, "error")
+        runtime.append_client_execution_event(
+            session,
+            client_id,
+            {"type": "execution_started", "cell_id": 12, "kind": "code", "syntax": "python"},
+        )
+        runtime.append_client_execution_event(
+            session,
+            client_id,
+            {
+                "type": "error",
+                "ename": "ValueError",
+                "evalue": "boom",
+                "traceback": [
+                    "Traceback (most recent call last):",
+                    '  File "<stdin>", line 1, in <module>',
+                    "ValueError: boom",
+                ],
+            },
+        )
+        runtime.append_client_execution_event(
+            session,
+            client_id,
+            {"type": "execution_finished", "status": "error"},
+        )
+
+        self.assertEqual(
+            {
+                "title": "cell 12: error",
+                "lines": [
+                    f"meta> client={client_id} session={session.session_id} bufnr=91",
+                    "started cell 12 [code:python]",
+                    "error: ValueError: boom",
+                    "trace> Traceback (most recent call last):",
+                    'trace> File "<stdin>", line 1, in <module>',
+                    "trace> ValueError: boom",
+                    "finished: error",
+                ],
+                "execution_status": "error",
+                "active_cell_id": 12,
+                "revision": 6,
+            },
+            runtime.read_client_view(session, client_id),
+        )
+
     def test_managed_runtime_shutdown_client_drives_handle_lifecycle(self) -> None:
         manager = FakeManager()
         client = FakeClient()
@@ -419,6 +687,61 @@ class ManagedRuntimeTest(unittest.TestCase):
                 "revision": 5,
             },
             runtime.read_client_view(session, prepared_client_id),
+        )
+        runtime.stop_session(session)
+
+    def test_managed_runtime_input_reply_resumes_pending_execution_and_records_execute_input(self) -> None:
+        manager = FakeManager()
+        client = InputReplyFlowClient()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            runtime = ManagedKernelRuntime()
+            session_id, connection = runtime.start_managed("python3")
+
+        session = Session(notebook_id="nb-1", session_id=session_id, connection=connection, kernel_name="python3")
+        prepared_client_id = runtime.prepare_client("nb-1", session_id)
+        runtime.bind_prepared_client(session, prepared_client_id, 91)
+        runtime.activate_client(session, prepared_client_id, 12)
+        runtime.update_client_execution_status(session, prepared_client_id, "busy")
+        execution = CellExecution(cell_id=12, status="busy", owner_kind="kernel", client_id=prepared_client_id)
+
+        initial_status = runtime.execute_cell(
+            session,
+            ExecutableCell(cell_id=12, kind="code", syntax="python", main_lines=["input('value: ')"]),
+            execution,
+        )
+        self.assertEqual("busy", initial_status)
+
+        resumed_status = runtime.reply_input(session, execution, "answer")
+        self.assertEqual("done", resumed_status)
+        self.assertEqual(["answer"], client.input_replies)
+        self.assertEqual(
+            {
+                "title": "cell 12: done",
+                "lines": [
+                    f"meta> client={prepared_client_id} session={session_id} bufnr=91",
+                    "started cell 12 [code:python]",
+                    "input> value: ",
+                    "execute[7]> input('value: ')",
+                    "stdout> typed: answer",
+                    "finished: done",
+                ],
+                "execution_status": "done",
+                "active_cell_id": 12,
+                "revision": 9,
+            },
+            runtime.read_client_view(session, prepared_client_id),
+        )
+        runtime_client = runtime.get_client(session_id, prepared_client_id)
+        self.assertIsNotNone(runtime_client)
+        self.assertEqual(
+            [
+                {"type": "execution_started", "cell_id": 12, "kind": "code", "syntax": "python"},
+                {"type": "input_request", "prompt": "value: ", "password": False},
+                {"type": "execute_input", "execution_count": 7, "code": "input('value: ')"},
+                {"type": "stream", "name": "stdout", "text": "typed: answer\n"},
+                {"type": "execution_finished", "status": "done"},
+            ],
+            runtime_client.handle.read_status()["transcript"],
         )
         runtime.stop_session(session)
 
@@ -547,8 +870,11 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             execute_envelopes = [parse_envelope(message) for message in execute_messages]
             self.assertEqual(["response", "event", "event", "event", "event"], [envelope.kind for envelope in execute_envelopes])
+            active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
             self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+            self.assertEqual(91, execute_envelopes[3].payload["cell"]["client_bufnr"])
             self.assertEqual("binding", execute_envelopes[4].payload["prepared"]["state"])
+            self.assertNotEqual(active_client_id, execute_envelopes[4].payload["prepared"]["id"])
 
             delayed_messages: list[str] = []
             deadline = time.time() + 1.0
@@ -561,6 +887,8 @@ class ManagedRuntimeTest(unittest.TestCase):
             self.assertEqual(1, len(delayed_envelopes))
             self.assertEqual("cell_updated", delayed_envelopes[0].type)
             self.assertEqual("done", delayed_envelopes[0].payload["cell"]["status"])
+            self.assertEqual(active_client_id, delayed_envelopes[0].payload["cell"]["client_id"])
+            self.assertEqual(91, delayed_envelopes[0].payload["cell"]["client_bufnr"])
 
             stop_messages = server.handle_message(
                 (
@@ -572,6 +900,21 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             stop_envelopes = [parse_envelope(message) for message in stop_messages]
             self.assertTrue(stop_envelopes[0].ok)
+            self.assertEqual("session_updated", stop_envelopes[1].type)
+            self.assertEqual("stopping", stop_envelopes[1].payload["session"]["state"])
+            self.assertEqual("prepared_updated", stop_envelopes[2].type)
+            self.assertEqual("missing", stop_envelopes[2].payload["prepared"]["state"])
+
+            stop_pending: list[str] = []
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not stop_pending:
+                stop_pending = server.drain_pending_messages()
+                if not stop_pending:
+                    time.sleep(0.02)
+            self.assertTrue(stop_pending)
+            stop_pending_envelopes = [parse_envelope(message) for message in stop_pending]
+            self.assertEqual("session_updated", stop_pending_envelopes[0].type)
+            self.assertEqual("stopped", stop_pending_envelopes[0].payload["session"]["state"])
 
     def test_protocol_server_managed_interrupt_does_not_finish_as_done(self) -> None:
         manager = FakeManager()
@@ -649,6 +992,491 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             stop_envelopes = [parse_envelope(message) for message in stop_messages]
             self.assertTrue(stop_envelopes[0].ok)
+
+    def test_protocol_server_managed_stop_responds_promptly_after_client_shutdowns(self) -> None:
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(FakeManager(), SlowIdleClient())):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            start_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+            start_envelopes = [parse_envelope(message) for message in start_messages]
+            session_id = start_envelopes[2].payload["session"]["id"]
+            prepared_client_id = start_envelopes[4].payload["prepared"]["id"]
+
+            bind_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
+                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + prepared_client_id
+                    + '", "client_bufnr": 91}}'
+                )
+            )
+            bind_envelopes = [parse_envelope(message) for message in bind_messages]
+            self.assertTrue(bind_envelopes[0].ok)
+
+            execute_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "execute_cell", '
+                    '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["print(1)"]}}}'
+                )
+            )
+            execute_envelopes = [parse_envelope(message) for message in execute_messages]
+            active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+            replacement_prepared_id = execute_envelopes[4].payload["prepared"]["id"]
+
+            delayed_messages: list[str] = []
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not delayed_messages:
+                delayed_messages = server.drain_pending_messages()
+                if not delayed_messages:
+                    time.sleep(0.02)
+            self.assertTrue(delayed_messages)
+
+            active_shutdown = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "shutdown_client", '
+                    '"request_id": "req-shutdown-active", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell_id": 12, "client_id": "'
+                    + active_client_id
+                    + '", "reason": "session_stop"}}'
+                )
+            )
+            self.assertTrue([parse_envelope(message) for message in active_shutdown][0].ok)
+
+            prepared_shutdown = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "shutdown_client", '
+                    '"request_id": "req-shutdown-prepared", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell_id": 0, "client_id": "'
+                    + replacement_prepared_id
+                    + '", "reason": "session_stop"}}'
+                )
+            )
+            self.assertTrue([parse_envelope(message) for message in prepared_shutdown][0].ok)
+
+            stop_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "stop_session", '
+                    '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '"}}'
+                )
+            )
+            stop_envelopes = [parse_envelope(message) for message in stop_messages]
+            self.assertTrue(stop_envelopes[0].ok)
+            self.assertEqual("session_updated", stop_envelopes[1].type)
+            self.assertEqual("stopping", stop_envelopes[1].payload["session"]["state"])
+
+            stop_pending: list[str] = []
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not stop_pending:
+                stop_pending = server.drain_pending_messages()
+                if not stop_pending:
+                    time.sleep(0.02)
+            self.assertTrue(stop_pending)
+            stop_pending_envelopes = [parse_envelope(message) for message in stop_pending]
+            self.assertEqual("session_updated", stop_pending_envelopes[0].type)
+            self.assertEqual("stopped", stop_pending_envelopes[0].payload["session"]["state"])
+
+    def test_protocol_server_managed_input_request_stays_busy_and_updates_view(self) -> None:
+        manager = FakeManager()
+        client = InputRequestClient()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            start_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+            start_envelopes = [parse_envelope(message) for message in start_messages]
+            session_id = start_envelopes[2].payload["session"]["id"]
+            client_id = start_envelopes[4].payload["prepared"]["id"]
+
+            bind_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
+                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + client_id
+                    + '", "client_bufnr": 91}}'
+                )
+            )
+            bind_envelopes = [parse_envelope(message) for message in bind_messages]
+            self.assertTrue(bind_envelopes[0].ok)
+
+            execute_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["input(\\"value: \\")"]}}}'
+            )
+            execute_envelopes = [parse_envelope(message) for message in execute_messages]
+            active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+            self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+
+            delayed_messages: list[str] = []
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not delayed_messages:
+                delayed_messages = server.drain_pending_messages()
+                if not delayed_messages:
+                    time.sleep(0.02)
+            self.assertTrue(delayed_messages)
+            delayed_envelopes = [parse_envelope(message) for message in delayed_messages]
+            self.assertEqual("cell_updated", delayed_envelopes[0].type)
+            self.assertEqual("busy", delayed_envelopes[0].payload["cell"]["status"])
+
+            first_inspect = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "inspect_client", '
+                    '"request_id": "req-inspect-1", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + active_client_id
+                    + '"}}'
+                )
+            )
+            first_view = [parse_envelope(message) for message in first_inspect][0].payload["client"]
+            self.assertEqual("cell 12: busy", first_view["title"])
+            self.assertEqual(
+                [
+                    f"meta> client={active_client_id} session={session_id} bufnr=91",
+                    "started cell 12 [code:python]",
+                    "input> value: ",
+                ],
+                first_view["lines"],
+            )
+            self.assertGreater(first_view["revision"], 0)
+
+            second_inspect = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "inspect_client", '
+                    '"request_id": "req-inspect-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + active_client_id
+                    + '"}}'
+                )
+            )
+            second_view = [parse_envelope(message) for message in second_inspect][0].payload["client"]
+            self.assertEqual(first_view["revision"], second_view["revision"])
+
+            stop_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "stop_session", '
+                    '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '"}}'
+                )
+            )
+            stop_envelopes = [parse_envelope(message) for message in stop_messages]
+            self.assertTrue(stop_envelopes[0].ok)
+
+    def test_protocol_server_managed_input_reply_resumes_execution(self) -> None:
+        manager = FakeManager()
+        client = InputReplyFlowClient()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            start_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+            start_envelopes = [parse_envelope(message) for message in start_messages]
+            session_id = start_envelopes[2].payload["session"]["id"]
+            client_id = start_envelopes[4].payload["prepared"]["id"]
+
+            bind_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
+                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + client_id
+                    + '", "client_bufnr": 91}}'
+                )
+            )
+            self.assertTrue([parse_envelope(message) for message in bind_messages][0].ok)
+
+            execute_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["input(\\"value: \\")"]}}}'
+            )
+            execute_envelopes = [parse_envelope(message) for message in execute_messages]
+            active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+            self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+
+            first_pending: list[str] = []
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not first_pending:
+                first_pending = server.drain_pending_messages()
+                if not first_pending:
+                    time.sleep(0.02)
+            self.assertTrue(first_pending)
+            first_pending_envelopes = [parse_envelope(message) for message in first_pending]
+            self.assertEqual("cell_updated", first_pending_envelopes[0].type)
+            self.assertEqual("busy", first_pending_envelopes[0].payload["cell"]["status"])
+
+            waiting_view = self._wait_for_view_lines(
+                server,
+                session_id,
+                active_client_id,
+                "req-inspect-waiting",
+                [
+                    f"meta> client={active_client_id} session={session_id} bufnr=91",
+                    "started cell 12 [code:python]",
+                    "input> value: ",
+                ],
+            )
+            waiting_revision = waiting_view["revision"]
+
+            input_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "input_reply", '
+                    '"request_id": "req-3", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell_id": 12, "client_id": "'
+                    + active_client_id
+                    + '", "value": "answer"}}'
+                )
+            )
+            input_envelopes = [parse_envelope(message) for message in input_messages]
+            self.assertTrue(input_envelopes[0].ok)
+            self.assertEqual("session_updated", input_envelopes[1].type)
+            self.assertEqual("input_reply", input_envelopes[1].payload["session"]["last_action"])
+
+            resumed_view = self._wait_for_view_predicate(
+                server,
+                session_id,
+                active_client_id,
+                "req-inspect-resumed",
+                lambda view: "execute[7]> input('value: ')" in view["lines"] and "stdout> typed: answer" in view["lines"],
+            )
+            self.assertGreater(resumed_view["revision"], waiting_revision)
+
+            final_pending: list[str] = []
+            deadline = time.time() + 1.0
+            while time.time() < deadline and not final_pending:
+                final_pending = server.drain_pending_messages()
+                if not final_pending:
+                    time.sleep(0.02)
+            self.assertTrue(final_pending)
+            final_pending_envelopes = [parse_envelope(message) for message in final_pending]
+            self.assertEqual("cell_updated", final_pending_envelopes[0].type)
+            self.assertEqual("done", final_pending_envelopes[0].payload["cell"]["status"])
+
+            final_view = self._wait_for_view_predicate(
+                server,
+                session_id,
+                active_client_id,
+                "req-inspect-final",
+                lambda view: view["execution_status"] == "done" and "finished: done" in view["lines"],
+            )
+            self.assertEqual("cell 12: done", final_view["title"])
+
+            stop_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "stop_session", '
+                    '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '"}}'
+                )
+            )
+            self.assertTrue([parse_envelope(message) for message in stop_messages][0].ok)
+
+    def test_protocol_server_managed_display_updates_replace_in_place_while_busy(self) -> None:
+        server, session_id, _ = self._start_bound_managed_server(LiveDisplayUpdateClient())
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["display()"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+        self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+
+        first_view = self._wait_for_view_lines(
+            server,
+            session_id,
+            active_client_id,
+            "req-inspect-1",
+            [
+                f"meta> client={active_client_id} session={session_id} bufnr=91",
+                "started cell 12 [code:python]",
+                "display> alpha",
+            ],
+        )
+        self.assertEqual("cell 12: busy", first_view["title"])
+
+        deadline = time.time() + 1.0
+        second_view = first_view
+        while time.time() < deadline:
+            second_view = self._inspect_client_view(server, session_id, active_client_id, "req-inspect-2")
+            if second_view["revision"] > first_view["revision"]:
+                break
+            time.sleep(0.02)
+        self.assertGreater(second_view["revision"], first_view["revision"])
+        self.assertEqual(
+            [
+                f"meta> client={active_client_id} session={session_id} bufnr=91",
+                "started cell 12 [code:python]",
+                "display> beta",
+            ],
+            second_view["lines"],
+        )
+
+        delayed_messages: list[str] = []
+        deadline = time.time() + 1.0
+        while time.time() < deadline and not delayed_messages:
+            delayed_messages = server.drain_pending_messages()
+            if not delayed_messages:
+                time.sleep(0.02)
+        self.assertTrue(delayed_messages)
+        delayed_envelopes = [parse_envelope(message) for message in delayed_messages]
+        self.assertEqual("cell_updated", delayed_envelopes[0].type)
+        self.assertEqual("done", delayed_envelopes[0].payload["cell"]["status"])
+
+        stop_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "stop_session", '
+                '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        stop_envelopes = [parse_envelope(message) for message in stop_messages]
+        self.assertTrue(stop_envelopes[0].ok)
+
+    def test_protocol_server_managed_clear_output_wait_preserves_then_replaces_live_view(self) -> None:
+        server, session_id, _ = self._start_bound_managed_server(LiveClearOutputWaitClient())
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["clear_then_result()"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+        self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+
+        first_view = self._wait_for_view_lines(
+            server,
+            session_id,
+            active_client_id,
+            "req-inspect-1",
+            [
+                f"meta> client={active_client_id} session={session_id} bufnr=91",
+                "started cell 12 [code:python]",
+                "stdout> before",
+            ],
+        )
+
+        second_view = self._wait_for_view_predicate(
+            server,
+            session_id,
+            active_client_id,
+            "req-inspect-2",
+            lambda view: "result> 42" in view["lines"] and "stdout> before" not in view["lines"],
+        )
+        self.assertGreater(second_view["revision"], first_view["revision"])
+
+        delayed_messages: list[str] = []
+        deadline = time.time() + 1.0
+        while time.time() < deadline and not delayed_messages:
+            delayed_messages = server.drain_pending_messages()
+            if not delayed_messages:
+                time.sleep(0.02)
+        self.assertTrue(delayed_messages)
+        delayed_envelopes = [parse_envelope(message) for message in delayed_messages]
+        self.assertEqual("cell_updated", delayed_envelopes[0].type)
+        self.assertEqual("done", delayed_envelopes[0].payload["cell"]["status"])
+
+        stop_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "stop_session", '
+                '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        stop_envelopes = [parse_envelope(message) for message in stop_messages]
+        self.assertTrue(stop_envelopes[0].ok)
+
+    def test_protocol_server_managed_error_view_shows_full_traceback(self) -> None:
+        server, session_id, _ = self._start_bound_managed_server(ErrorClient())
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["raise ValueError(\\"boom\\")"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+        self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+
+        error_view = self._wait_for_view_predicate(
+            server,
+            session_id,
+            active_client_id,
+            "req-inspect-error",
+            lambda view: "error: ValueError: boom" in view["lines"] and "trace> ValueError: boom" in view["lines"],
+        )
+        self.assertEqual(
+            [
+                f"meta> client={active_client_id} session={session_id} bufnr=91",
+                "started cell 12 [code:python]",
+                "error: ValueError: boom",
+                "trace> Traceback (most recent call last):",
+                'trace> File "<stdin>", line 1, in <module>',
+                "trace> ValueError: boom",
+            ],
+            error_view["lines"],
+        )
+
+        delayed_messages: list[str] = []
+        deadline = time.time() + 1.0
+        while time.time() < deadline and not delayed_messages:
+            delayed_messages = server.drain_pending_messages()
+            if not delayed_messages:
+                time.sleep(0.02)
+        self.assertTrue(delayed_messages)
+        delayed_envelopes = [parse_envelope(message) for message in delayed_messages]
+        self.assertEqual("cell_updated", delayed_envelopes[0].type)
+        self.assertEqual("error", delayed_envelopes[0].payload["cell"]["status"])
+
+        final_view = self._wait_for_view_predicate(
+            server,
+            session_id,
+            active_client_id,
+            "req-inspect-error-final",
+            lambda view: view["execution_status"] == "error" and "finished: error" in view["lines"],
+        )
+        self.assertEqual("cell 12: error", final_view["title"])
+
+        stop_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "stop_session", '
+                '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        stop_envelopes = [parse_envelope(message) for message in stop_messages]
+        self.assertTrue(stop_envelopes[0].ok)
 
     def test_managed_runtime_uses_configured_client_command(self) -> None:
         manager = FakeManager()

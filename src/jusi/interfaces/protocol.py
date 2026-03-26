@@ -104,6 +104,15 @@ class InspectClientRequest:
     client_id: str
 
 
+@dataclass(frozen=True)
+class InputReplyRequest:
+    notebook_id: str
+    session_id: str
+    cell_id: int
+    client_id: str
+    value: str
+
+
 def parse_envelope(raw: str) -> Envelope:
     try:
         data = json.loads(raw)
@@ -283,6 +292,29 @@ def parse_inspect_client(payload: Mapping[str, Any]) -> InspectClientRequest:
         notebook_id=notebook_id,
         session_id=session_id,
         client_id=client_id,
+    )
+
+
+def parse_input_reply(payload: Mapping[str, Any]) -> InputReplyRequest:
+    notebook_id = str(payload.get("notebook_id", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    client_id = str(payload.get("client_id", "")).strip()
+    cell_id = int(payload.get("cell_id", 0))
+    value = str(payload.get("value", ""))
+    if not notebook_id:
+        raise ProtocolError("input_reply requires notebook_id")
+    if not session_id:
+        raise ProtocolError("input_reply requires session_id")
+    if cell_id <= 0:
+        raise ProtocolError("input_reply requires positive cell_id")
+    if not client_id:
+        raise ProtocolError("input_reply requires client_id")
+    return InputReplyRequest(
+        notebook_id=notebook_id,
+        session_id=session_id,
+        cell_id=cell_id,
+        client_id=client_id,
+        value=value,
     )
 
 

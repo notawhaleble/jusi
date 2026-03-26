@@ -33,6 +33,7 @@ Rules:
 - `disconnected` is not equivalent to kernel death
 - for externally hosted kernels, `stop_session` should mean "stop this Jusi session binding" rather than "shut down the remote kernel"
 - managed-session transport loss should tear down the session instead of entering `disconnected`
+- `stop_session` should acknowledge promptly at `stopping`; the later `stopped` event may complete asynchronously after teardown finishes
 
 ## Prepared Client
 
@@ -56,8 +57,11 @@ Transitions:
 Rules:
 
 - prepared-client state is notebook-session local
+- the prepared client is a session-level warm execution resource, not a per-cell reservation
 - only one prepared client is considered current for the notebook at a time
 - execution consumes the current prepared client atomically from the frontend point of view
+- once consumed, that client becomes the executing cell's active client and is no longer part of session prepared state
+- replacement preparation begins only after that consume
 - the backend must not claim `ready` until frontend buffer binding is acknowledged
 
 ## Cell Execution
@@ -87,10 +91,12 @@ Rules:
 
 - busy state is cell-local, not session-global
 - the executing cell retains the consumed client reference
+- terminal `done`, `error`, and `follow-up` updates retain that same client reference unless a later client-lifecycle event tears it down or changes ownership explicitly
 - replacement prepared-client provisioning is independent from the active cell retaining its client
 - a cell remaining in `follow-up` must not block execution of other cells once prepared-client state returns to `ready`
 - `parked` remains a deliberate keep-output state, not a generic shutdown result
 - a managed runtime may emit the initial `busy` cell update immediately and the terminal `done`/`error`/`follow-up` cell update later as a separate event while execution output is still being accumulated
+- a managed runtime may also pause an active `busy` execution on Jupyter `input_request`; `input_reply` resumes that same execution rather than starting a new one
 
 ## Client Lifecycle
 

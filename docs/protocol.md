@@ -78,6 +78,7 @@ Behavior:
 - start a managed kernel session for the notebook
 - enter session state `starting`
 - eventually emit session and prepared-client events
+- the prepared client is a session-scoped execution resource, not a cell-targeted preallocation
 - backend provisioning does not make prepared state `ready` by itself; frontend buffer binding is a separate step
 
 ### `attach_session`
@@ -114,15 +115,16 @@ Behavior:
 Behavior:
 
 - requires connected session
-- requires prepared client in `ready` state
-- consumes the prepared client for the target cell
-- starts replacement prepared-client provisioning separately
+- requires the session's current prepared client in `ready` state
+- consumes that session-level prepared client into the target cell's active client ownership
+- only after that consume does replacement prepared-client provisioning begin for the session
 - for runtimes with live async execution, the initial response may include only the accepted/busy transition and replacement prepared-client updates; the terminal `cell_updated` may arrive later as a normal event while the request loop remains available for other requests such as `inspect_client`
 
 Notes:
 
 - history-region handling remains frontend-local for now
 - the backend only needs the executable cell body
+- the consumed client remains the executing cell's active client until a later lifecycle event explicitly changes that ownership
 
 ### `interrupt_cell`
 
@@ -155,6 +157,8 @@ Behavior:
 - for managed sessions, this represents backend-owned kernel shutdown
 - prepared-client state becomes unusable immediately
 - active executions become terminal from the Jusi session point of view
+- backend should acknowledge the request and emit `session_updated(state=stopping)` promptly on the request path
+- the terminal `session_updated(state=stopped)` may arrive later as a normal event after cleanup completes
 
 ### `bind_prepared_client`
 
@@ -220,6 +224,30 @@ Notes:
 
 - this is not yet a signal for `jusivim` to start consuming backend-rendered client views as part of normal integration
 - the returned snapshot is derived from backend-owned client runtime state rather than Vim-local rendering state
+
+### `input_reply`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "cell_id": 12,
+  "client_id": "client-1",
+  "value": "typed text"
+}
+```
+
+Behavior:
+
+- replies to a pending kernel `input_request` for the active cell/client
+- is valid only while the execution is still waiting on stdin for that same tracked cell/client
+- keeps the cell in `busy` unless the resumed execution reaches a later terminal state
+- for runtimes with live async execution, the request response may return immediately while the later `cell_updated` and `inspect_client` changes arrive asynchronously
+
+Notes:
+
+- this request exists because `input_request` is part of the current managed execution slice, not a distant future capability
+- transcript/view rendering may surface the original prompt and related execution progress; input values themselves should be handled carefully, especially for password prompts
 
 ### `disconnect_session`
 
@@ -351,6 +379,7 @@ Notes:
 - `bufnr` exists because the current Vim-side model expects a client buffer number
 - the backend may emit `bufnr = -1` while the prepared client exists but is not yet bound to a real Vim buffer
 - the frontend must complete the bind step before prepared state becomes `ready`
+- at most one prepared client is authoritative for a session at a time
 
 ### `cell_updated`
 
@@ -368,6 +397,15 @@ Notes:
   }
 }
 ```
+
+Notes:
+
+- `client_id` and `client_bufnr` refer to the consumed active client that now belongs to the cell
+- terminal `done`, `error`, or `follow-up` updates keep that same active client identity unless a later teardown or ownership-change event says otherwise
+- while the cell remains `busy`, `inspect_client` may also surface Jupyter transcript events such as:
+  - `execute_input`
+  - `input_request`
+  - later transcript growth after `input_reply`
 
 ### `backend_error`
 
@@ -391,7 +429,7 @@ The backend should emit states compatible with the current `jusivim` model where
 - `stopping`
 - `stopped`
 - `failed`
-- `detached`
+- `disconnected`
 
 ### Prepared States
 

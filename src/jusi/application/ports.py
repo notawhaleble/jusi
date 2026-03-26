@@ -62,6 +62,15 @@ class ShutdownClientCommand:
     reason: str
 
 
+@dataclass(frozen=True)
+class InputReplyCommand:
+    notebook_id: str
+    session_id: str
+    cell_id: int
+    client_id: str
+    value: str
+
+
 class SessionEventSink(Protocol):
     def session_updated(self, notebook_id: str, payload: dict) -> None:
         ...
@@ -97,6 +106,9 @@ class KernelRuntime(Protocol):
 
     def execute_cell(self, session: Session, cell: ExecutableCell, client: CellExecution) -> str:
         """Execute the cell and return the final cell status."""
+
+    def reply_input(self, session: Session, execution: CellExecution, value: str) -> str:
+        """Resume a pending input_request for the active execution and return the resulting status."""
 
     def interrupt_kernel(self, session: Session, execution: CellExecution) -> str:
         """Interrupt a kernel-owned execution and return the resulting cell status."""

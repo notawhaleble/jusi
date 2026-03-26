@@ -1,4 +1,6 @@
 import io
+import os
+import threading
 import unittest
 
 from jusi.interfaces.protocol import parse_envelope
@@ -23,6 +25,36 @@ class StdioRuntimeTest(unittest.TestCase):
         self.assertTrue(envelopes[0].ok)
         self.assertEqual("session_updated", envelopes[1].type)
         self.assertEqual("prepared_updated", envelopes[3].type)
+
+    def test_process_stream_drains_multiple_buffered_fd_requests(self) -> None:
+        read_fd, write_fd = os.pipe()
+        outstream = io.StringIO()
+
+        def _writer() -> None:
+            os.write(
+                write_fd,
+                (
+                    '{"version": 1, "kind": "request", "type": "start_session", '
+                    '"request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}\n'
+                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
+                    '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "session-1", "client_id": "client-1", "client_bufnr": 91}}\n'
+                    '{"version": 1, "kind": "request", "type": "stop_session", '
+                    '"request_id": "req-3", "payload": {"notebook_id": "nb-1", "session_id": "session-1"}}\n'
+                ).encode("utf-8"),
+            )
+            os.close(write_fd)
+
+        writer = threading.Thread(target=_writer)
+        writer.start()
+        with os.fdopen(read_fd, "r", encoding="utf-8") as instream:
+            rc = process_stream(instream, outstream, server=ProtocolServer())
+        writer.join()
+
+        self.assertEqual(0, rc)
+        lines = [line for line in outstream.getvalue().splitlines() if line.strip()]
+        envelopes = [parse_envelope(line) for line in lines]
+        response_ids = [envelope.request_id for envelope in envelopes if envelope.kind == "response"]
+        self.assertEqual(["req-1", "req-2", "req-3"], response_ids)
 
 
 if __name__ == "__main__":

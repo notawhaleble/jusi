@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from jusi.application.ports import StartSessionCommand
 from jusi.application.use_cases import StartSession
@@ -589,8 +590,30 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("stopping", stop_envelopes[1].payload["session"]["state"])
         self.assertEqual("missing", stop_envelopes[2].payload["prepared"]["state"])
         self.assertEqual("interrupted", stop_envelopes[3].payload["cell"]["status"])
-        self.assertEqual("stopped", stop_envelopes[4].payload["session"]["state"])
+        pending_messages = server.drain_pending_messages()
+        pending_envelopes = [parse_envelope(message) for message in pending_messages]
+        self.assertEqual("stopped", pending_envelopes[0].payload["session"]["state"])
         self.assertEqual([], runtime.list_clients(session_id))
+
+    def test_stop_session_returns_error_response_for_unexpected_backend_failure(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        with patch("jusi.application.use_cases.StopSession.begin_stop", side_effect=RuntimeError("stop exploded")):
+            stop_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "stop_session", '
+                    '"request_id": "req-3", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '"}}'
+                )
+            )
+
+        stop_envelopes = [parse_envelope(message) for message in stop_messages]
+        self.assertFalse(stop_envelopes[0].ok)
+        self.assertEqual("internal_error", stop_envelopes[0].error["code"])
+        self.assertEqual("stop exploded", stop_envelopes[0].error["message"])
 
 
 if __name__ == "__main__":

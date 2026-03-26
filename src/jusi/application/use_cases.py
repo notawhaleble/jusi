@@ -4,6 +4,7 @@ from jusi.application.ports import (
     BindPreparedClientCommand,
     DisconnectSessionCommand,
     ExecuteCellCommand,
+    InputReplyCommand,
     InterruptCellCommand,
     KernelRuntime,
     ReconnectSessionCommand,
@@ -166,6 +167,43 @@ class InterruptCell:
         return execution
 
 
+class InputReply:
+    def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
+        self._runtime = runtime
+        self._store = store
+        self._events = events
+
+    def begin_reply(self, command: InputReplyCommand) -> tuple[Session, CellExecution]:
+        session = self._store.get_by_notebook(command.notebook_id)
+        if session is None or session.session_id != command.session_id:
+            raise ValueError("Unknown notebook session")
+        if session.state != "connected":
+            raise ValueError("Cannot reply to input without a connected session")
+
+        execution = self._store.get_execution(command.notebook_id, command.cell_id)
+        if execution is None:
+            raise ValueError("No tracked execution for cell")
+        if execution.client_id != command.client_id:
+            raise ValueError("Input reply client does not match tracked cell execution")
+        if execution.status != "busy":
+            raise ValueError("Cell is not waiting in a busy execution")
+
+        session.last_action = "input_reply"
+        self._store.save(session)
+        self._events.session_updated(command.notebook_id, _session_payload(session))
+        return session, execution
+
+    def finish_reply(self, command: InputReplyCommand, session: Session, execution: CellExecution) -> CellExecution:
+        execution.status = self._runtime.reply_input(session, execution, command.value)
+        self._store.save_execution(command.notebook_id, execution)
+        self._events.cell_updated(command.notebook_id, _cell_payload(execution))
+        return execution
+
+    def execute(self, command: InputReplyCommand) -> CellExecution:
+        session, execution = self.begin_reply(command)
+        return self.finish_reply(command, session, execution)
+
+
 class DisconnectSession:
     def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
         self._runtime = runtime
@@ -250,7 +288,7 @@ class StopSession:
         self._store = store
         self._events = events
 
-    def execute(self, command: StopSessionCommand) -> Session:
+    def begin_stop(self, command: StopSessionCommand) -> Session:
         session = self._store.get_by_notebook(command.notebook_id)
         if session is None or session.session_id != command.session_id:
             raise ValueError("Unknown notebook session")
@@ -270,11 +308,18 @@ class StopSession:
                 self._store.save_execution(command.notebook_id, execution)
                 self._events.cell_updated(command.notebook_id, _cell_payload(execution))
 
+        return session
+
+    def finish_stop(self, command: StopSessionCommand, session: Session) -> Session:
         self._runtime.stop_session(session)
         session.state = "stopped"
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
         return session
+
+    def execute(self, command: StopSessionCommand) -> Session:
+        session = self.begin_stop(command)
+        return self.finish_stop(command, session)
 
 
 class BindPreparedClient:

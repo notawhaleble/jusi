@@ -79,6 +79,18 @@ def _render_event_lines(event: dict) -> tuple[str | None, list[str]]:
         return None, ["interrupted"]
     if event_type == "execution_state":
         return None, [f"state: {event.get('status', '')}"]
+    if event_type == "execute_input":
+        execution_count = event.get("execution_count")
+        prefix = "execute"
+        if execution_count not in (None, ""):
+            prefix = f"execute[{execution_count}]"
+        code = str(event.get("code", ""))
+        lines: list[str] = []
+        for chunk in code.splitlines() or [code]:
+            text = chunk.rstrip("\n")
+            if text:
+                lines.append(f"{prefix}> {text}")
+        return None, lines or [f"{prefix}>"]
     if event_type == "input_request":
         prompt = str(event.get("prompt", ""))
         prefix = "password" if bool(event.get("password", False)) else "input"
@@ -96,7 +108,7 @@ def _render_event_lines(event: dict) -> tuple[str | None, list[str]]:
         return None, lines
     if event_type == "error":
         lines = [f"error: {event.get('ename', '')}: {event.get('evalue', '')}"]
-        for frame in list(event.get("traceback", []))[-3:]:
+        for frame in list(event.get("traceback", [])):
             text = str(frame).strip()
             if text:
                 lines.append(f"trace> {text}")

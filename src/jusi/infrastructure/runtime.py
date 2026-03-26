@@ -37,6 +37,13 @@ class RuntimeClientHandle(Protocol):
 
 
 @dataclass
+class PendingInputRequest:
+    client_id: str
+    cell_id: int
+    msg_id: str
+
+
+@dataclass
 class InMemoryClientHandle:
     client_id: str
     notebook_id: str
@@ -320,10 +327,18 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def supports_background_execute(self) -> bool:
         return True
 
+    def supports_background_stop(self) -> bool:
+        return True
+
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         km, kc = _start_new_kernel(kernel_name=kernel_name)
         session_id = f"managed:{id(km)}"
-        self._sessions[session_id] = SimpleNamespace(manager=km, client=kc, interrupted_client_ids=set())
+        self._sessions[session_id] = SimpleNamespace(
+            manager=km,
+            client=kc,
+            interrupted_client_ids=set(),
+            pending_inputs={},
+        )
         return session_id, str(getattr(km, "connection_file", ""))
 
     def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str) -> RuntimeClientHandle:
@@ -361,10 +376,30 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             return "follow-up"
 
         msg_id = runtime_session.client.execute(code)
-        status = "done"
+        return self._drive_execution(runtime_session, session, client, msg_id)
+
+    def reply_input(self, session: Session, execution: CellExecution, value: str) -> str:
+        runtime_session = self._require_session(session.session_id)
+        pending_input = runtime_session.pending_inputs.get(execution.client_id)
+        if pending_input is None or pending_input.cell_id != execution.cell_id:
+            raise ValueError("No pending input_request for the tracked cell client")
+        reply_input = getattr(runtime_session.client, "input", None)
+        if not callable(reply_input):
+            raise RuntimeError("Managed runtime client does not support stdin replies")
+        reply_input(value)
+        runtime_session.pending_inputs.pop(execution.client_id, None)
+        return self._drive_execution(runtime_session, session, execution, pending_input.msg_id)
+
+    def _drive_execution(self, runtime_session: Any, session: Session, client: CellExecution, msg_id: str) -> str:
+        status = client.status if client.status in {"error", "follow-up", "interrupted"} else "done"
         while True:
             stdin_message = self._try_get_stdin_request(runtime_session.client, msg_id)
             if stdin_message is not None:
+                runtime_session.pending_inputs[client.client_id] = PendingInputRequest(
+                    client_id=client.client_id,
+                    cell_id=client.cell_id,
+                    msg_id=msg_id,
+                )
                 self.append_client_execution_event(
                     session,
                     client.client_id,
@@ -386,10 +421,22 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                 continue
             status = result
             if message.get("msg_type", "") == "status" and message.get("content", {}).get("execution_state") == "idle":
+                runtime_session.pending_inputs.pop(client.client_id, None)
                 return status
 
     def _handle_iopub_message(self, runtime_session: Any, session: Session, client_id: str, message: dict, status: str) -> str | None:
         msg_type = message.get("msg_type", "")
+        if msg_type == "execute_input":
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "execute_input",
+                    "execution_count": message.get("content", {}).get("execution_count"),
+                    "code": str(message.get("content", {}).get("code", "")),
+                },
+            )
+            return None
         if msg_type == "stream":
             self.append_client_execution_event(
                 session,
@@ -526,6 +573,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         runtime_session = self._require_session(session.session_id)
         runtime_session.manager.interrupt_kernel()
         runtime_session.interrupted_client_ids.add(execution.client_id)
+        runtime_session.pending_inputs.pop(execution.client_id, None)
         self.update_client_execution_status(session, execution.client_id, "interrupted")
         self.append_client_execution_event(
             session,
@@ -537,6 +585,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def interrupt_handler(self, session: Session, execution: CellExecution) -> str:
         runtime_session = self._require_session(session.session_id)
         runtime_session.interrupted_client_ids.add(execution.client_id)
+        runtime_session.pending_inputs.pop(execution.client_id, None)
         self.update_client_execution_status(session, execution.client_id, "interrupted")
         self.append_client_execution_event(
             session,
@@ -548,11 +597,19 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def disconnect_session(self, session: Session, reason: str) -> None:
         self.release_session_clients(session.session_id, reason=reason)
 
+    def shutdown_client(self, session: Session, client_id: str, reason: str) -> None:
+        runtime_session = self._sessions.get(session.session_id)
+        if runtime_session is not None:
+            runtime_session.pending_inputs.pop(client_id, None)
+            runtime_session.interrupted_client_ids.discard(client_id)
+        super().shutdown_client(session, client_id, reason)
+
     def stop_session(self, session: Session) -> None:
         self.release_session_clients(session.session_id, reason="session_stop")
         runtime_session = self._sessions.pop(session.session_id, None)
         if runtime_session is None:
             return
+        runtime_session.pending_inputs.clear()
         try:
             runtime_session.client.stop_channels()
         except Exception:

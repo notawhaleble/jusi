@@ -4,10 +4,10 @@ from queue import SimpleQueue
 from threading import Thread
 from typing import List, Optional
 
-from jusi.application.ports import BindPreparedClientCommand, ExecuteCellCommand, InterruptCellCommand, StartSessionCommand
+from jusi.application.ports import BindPreparedClientCommand, ExecuteCellCommand, InputReplyCommand, InterruptCellCommand, StartSessionCommand
 from jusi.application.ports import DisconnectSessionCommand, ReconnectSessionCommand, StopSessionCommand
 from jusi.application.ports import ShutdownClientCommand
-from jusi.application.use_cases import BindPreparedClient, DisconnectSession, ExecuteCell, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
+from jusi.application.use_cases import BindPreparedClient, DisconnectSession, ExecuteCell, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
 from jusi.domain.models import ExecutableCell
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore, build_runtime
 from jusi.interfaces.protocol import (
@@ -19,6 +19,7 @@ from jusi.interfaces.protocol import (
     parse_disconnect_session,
     parse_envelope,
     parse_execute_cell,
+    parse_input_reply,
     parse_inspect_client,
     parse_interrupt_cell,
     parse_reconnect_session,
@@ -89,25 +90,32 @@ class ProtocolServer:
         request = parse_envelope(raw)
         if request.kind != "request":
             raise ProtocolError("Server expects request envelopes")
-        if request.type == "start_session":
-            return self._handle_start_session(request)
-        if request.type == "execute_cell":
-            return self._handle_execute_cell(request)
-        if request.type == "interrupt_cell":
-            return self._handle_interrupt_cell(request)
-        if request.type == "disconnect_session":
-            return self._handle_disconnect_session(request)
-        if request.type == "reconnect_session":
-            return self._handle_reconnect_session(request)
-        if request.type == "stop_session":
-            return self._handle_stop_session(request)
-        if request.type == "bind_prepared_client":
-            return self._handle_bind_prepared_client(request)
-        if request.type == "shutdown_client":
-            return self._handle_shutdown_client(request)
-        if request.type == "inspect_client":
-            return self._handle_inspect_client(request)
-        return dump_envelopes([error_response(request, "unknown_request", "Unknown request type")])
+        try:
+            if request.type == "start_session":
+                return self._handle_start_session(request)
+            if request.type == "execute_cell":
+                return self._handle_execute_cell(request)
+            if request.type == "interrupt_cell":
+                return self._handle_interrupt_cell(request)
+            if request.type == "disconnect_session":
+                return self._handle_disconnect_session(request)
+            if request.type == "reconnect_session":
+                return self._handle_reconnect_session(request)
+            if request.type == "stop_session":
+                return self._handle_stop_session(request)
+            if request.type == "bind_prepared_client":
+                return self._handle_bind_prepared_client(request)
+            if request.type == "shutdown_client":
+                return self._handle_shutdown_client(request)
+            if request.type == "inspect_client":
+                return self._handle_inspect_client(request)
+            if request.type == "input_reply":
+                return self._handle_input_reply(request)
+            return dump_envelopes([error_response(request, "unknown_request", "Unknown request type")])
+        except ProtocolError as exc:
+            return dump_envelopes([error_response(request, "invalid_request", str(exc))])
+        except Exception as exc:
+            return dump_envelopes([error_response(request, "internal_error", str(exc))])
 
     def _handle_start_session(self, request: Envelope) -> List[str]:
         start_request = parse_start_session(request.payload)
@@ -230,17 +238,30 @@ class ProtocolServer:
         events = ProtocolEventSink()
         use_case = StopSession(runtime=self._runtime, store=self._store, events=events)
         try:
-            use_case.execute(
-                StopSessionCommand(
-                    notebook_id=stop_request.notebook_id,
-                    session_id=stop_request.session_id,
-                )
+            command = StopSessionCommand(
+                notebook_id=stop_request.notebook_id,
+                session_id=stop_request.session_id,
             )
+            session = use_case.begin_stop(command)
+            self._spawn_stop_completion(command, session)
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
         envelopes = [response_envelope(request, ok=True)]
         envelopes.extend(events.events)
         return dump_envelopes(envelopes)
+
+    def _spawn_stop_completion(self, command: StopSessionCommand, session) -> None:  # type: ignore[no-untyped-def]
+        def _run() -> None:
+            events = ProtocolEventSink()
+            use_case = StopSession(runtime=self._runtime, store=self._store, events=events)
+            try:
+                use_case.finish_stop(command, session)
+            except Exception:
+                return
+            for event in events.events:
+                self._pending_events.put(event)
+
+        Thread(target=_run, daemon=True).start()
 
     def _handle_bind_prepared_client(self, request: Envelope) -> List[str]:
         bind_request = parse_bind_prepared_client(request.payload)
@@ -291,3 +312,39 @@ class ProtocolServer:
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
         return dump_envelopes([response_envelope(request, ok=True, payload={"client": client_view})])
+
+    def _handle_input_reply(self, request: Envelope) -> List[str]:
+        input_request = parse_input_reply(request.payload)
+        events = ProtocolEventSink()
+        use_case = InputReply(runtime=self._runtime, store=self._store, events=events)
+        try:
+            command = InputReplyCommand(
+                notebook_id=input_request.notebook_id,
+                session_id=input_request.session_id,
+                cell_id=input_request.cell_id,
+                client_id=input_request.client_id,
+                value=input_request.value,
+            )
+            if self._supports_background_execute():
+                session, execution = use_case.begin_reply(command)
+                self._spawn_input_reply_completion(command, session, execution)
+            else:
+                use_case.execute(command)
+        except ValueError as exc:
+            return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        envelopes = [response_envelope(request, ok=True)]
+        envelopes.extend(events.events)
+        return dump_envelopes(envelopes)
+
+    def _spawn_input_reply_completion(self, command: InputReplyCommand, session, execution) -> None:  # type: ignore[no-untyped-def]
+        def _run() -> None:
+            events = ProtocolEventSink()
+            use_case = InputReply(runtime=self._runtime, store=self._store, events=events)
+            try:
+                use_case.finish_reply(command, session, execution)
+            except Exception:
+                return
+            for event in events.events:
+                self._pending_events.put(event)
+
+        Thread(target=_run, daemon=True).start()
