@@ -1,5 +1,8 @@
+import json
 import os
+import signal
 import sys
+import tempfile
 import time
 import unittest
 from queue import Empty
@@ -7,7 +10,7 @@ from shlex import quote as shlex_quote
 from typing import Optional
 from unittest.mock import patch
 
-from jusi.domain.models import CellExecution, ExecutableCell, Session
+from jusi.domain.models import CellExecution, ExecutableCell, Session, SessionTarget
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, ManagedClientHandle, ManagedKernelRuntime, RuntimeDependencyError, build_runtime
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
@@ -18,6 +21,7 @@ class FakeClient:
         self.executed: list[tuple[str, bool | None]] = []
         self.input_replies: list[str] = []
         self.channels_stopped = False
+        self.shutdown_called = False
         self.messages = [
             {
                 "parent_header": {"msg_id": "msg-1"},
@@ -71,6 +75,9 @@ class FakeClient:
 
     def stop_channels(self) -> None:
         self.channels_stopped = True
+
+    def shutdown(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        self.shutdown_called = True
 
 
 class SlowIdleClient(FakeClient):
@@ -466,6 +473,129 @@ class ManagedRuntimeTest(unittest.TestCase):
         self.assertTrue(client.channels_stopped)
         self.assertTrue(manager.shutdown)
         self.assertTrue(manager.cleaned)
+
+    def test_managed_runtime_attach_connection_file_prepares_client_and_detaches_without_kernel_shutdown(self) -> None:
+        client = FakeClient()
+        with patch("jusi.infrastructure.runtime._attach_existing_kernel", return_value=client):
+            runtime = ManagedKernelRuntime()
+            session_id, connection = runtime.attach_target(
+                SessionTarget(source="attach", kind="connection_file", value="/tmp/external-kernel.json")
+            )
+
+        self.assertEqual("/tmp/external-kernel.json", connection)
+        session = Session(notebook_id="nb-1", session_id=session_id, connection=connection)
+        prepared_client_id = runtime.prepare_client("nb-1", session_id)
+        runtime.bind_prepared_client(session, prepared_client_id, 91)
+        runtime.activate_client(session, prepared_client_id, 12)
+        runtime_client = runtime.get_client(session_id, prepared_client_id)
+        self.assertIsNotNone(runtime_client)
+        self.assertTrue(runtime_client.handle.is_running())
+
+        runtime.stop_session(session)
+        self.assertEqual([], runtime.list_clients(session_id))
+        self.assertFalse(runtime_client.handle.is_running())
+        self.assertTrue(client.channels_stopped)
+        self.assertTrue(client.shutdown_called)
+
+    def test_managed_runtime_attach_stop_signals_peer_supervisors(self) -> None:
+        client = FakeClient()
+        peer_signals: list[tuple[int, int]] = []
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection_file = os.path.join(tmpdir, "external-kernel.json")
+            with patch("jusi.infrastructure.runtime._attach_existing_kernel", return_value=client):
+                with patch("jusi.infrastructure.runtime.os.getpid", return_value=1001):
+                    with patch("jusi.infrastructure.runtime._is_live_pid", side_effect=lambda pid: pid in {1001, 1002}):
+                        runtime = ManagedKernelRuntime()
+                        session_id, connection = runtime.attach_target(
+                            SessionTarget(source="attach", kind="connection_file", value=connection_file)
+                        )
+                        with patch("jusi.infrastructure.runtime.os.kill", side_effect=lambda pid, sig: peer_signals.append((pid, sig))):
+                            registry_path = f"{connection}.jusi-attached.json"
+                            with open(registry_path, "w", encoding="utf-8") as handle:
+                                json.dump([1001, 1002], handle)
+                            session = Session(notebook_id="nb-1", session_id=session_id, connection=connection)
+                            runtime.stop_session(session)
+                            self.assertIn((1002, signal.SIGTERM), peer_signals)
+
+    def test_protocol_server_managed_attach_session_uses_connection_file_target(self) -> None:
+        client = FakeClient()
+        with patch("jusi.infrastructure.runtime._attach_existing_kernel", return_value=client):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            attach_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "attach_session", '
+                    '"request_id": "req-1", "payload": {"notebook_id": "nb-1", '
+                    '"target": {"source": "attach", "kind": "connection_file", "value": "/tmp/external-kernel.json"}}}'
+                )
+            )
+            attach_envelopes = [parse_envelope(message) for message in attach_messages]
+
+            self.assertTrue(attach_envelopes[0].ok)
+            self.assertEqual("connected", attach_envelopes[2].payload["session"]["state"])
+            session_id = attach_envelopes[2].payload["session"]["id"]
+            client_id = attach_envelopes[4].payload["prepared"]["id"]
+
+            bind_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
+                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + client_id
+                    + '", "client_bufnr": 91}}'
+                )
+            )
+            bind_envelopes = [parse_envelope(message) for message in bind_messages]
+            self.assertTrue(bind_envelopes[0].ok)
+
+            stop_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "stop_session", '
+                    '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '"}}'
+                )
+            )
+            stop_envelopes = [parse_envelope(message) for message in stop_messages]
+            self.assertTrue(stop_envelopes[0].ok)
+            deadline = time.time() + 1.0
+            pending: list = []
+            while time.time() < deadline and not pending:
+                pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+                if not pending:
+                    time.sleep(0.02)
+            self.assertEqual("stopped", pending[0].payload["session"]["state"])
+            self.assertTrue(client.channels_stopped)
+
+    def test_managed_attached_session_obeys_shared_timeout_deadline(self) -> None:
+        client = FakeClient()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            connection_file = os.path.join(tmpdir, "external-kernel.json")
+            with patch("jusi.infrastructure.runtime._attach_existing_kernel", return_value=client):
+                server = ProtocolServer(runtime=ManagedKernelRuntime())
+                try:
+                    attach_messages = server.handle_message(
+                        (
+                            '{"version": 1, "kind": "request", "type": "attach_session", '
+                            '"request_id": "req-1", "payload": {"notebook_id": "nb-1", '
+                            '"target": {"source": "attach", "kind": "connection_file", "value": "'
+                            + connection_file
+                            + '"}}}'
+                        )
+                    )
+                    session_id = [parse_envelope(message) for message in attach_messages][2].payload["session"]["id"]
+                    registry_path = f"{connection_file}.jusi-attached.json"
+                    with open(registry_path, "w", encoding="utf-8") as handle:
+                        json.dump({"pids": [os.getpid()], "expires_at": 0}, handle)
+
+                    should_exit = server.poll_session_timeouts()
+
+                    self.assertTrue(should_exit)
+                    self.assertEqual([], server._runtime.list_clients(session_id))
+                    self.assertTrue(client.channels_stopped)
+                    self.assertTrue(client.shutdown_called)
+                finally:
+                    server.close()
 
     def test_shared_view_applies_clear_output_immediately_or_on_waited_next_output(self) -> None:
         session = Session(notebook_id="nb-1", session_id="session-1", connection="", kernel_name="python3")

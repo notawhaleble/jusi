@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import time
+
+from jusi.application.errors import SessionExpiredError, SessionNotFoundError, SessionStoppedError
 from jusi.application.ports import (
+    AttachSessionCommand,
     BindPreparedClientCommand,
     DisconnectSessionCommand,
     ExecuteCellCommand,
+    HealthcheckReplyCommand,
     InputReplyCommand,
     InterruptCellCommand,
     KernelRuntime,
@@ -14,7 +19,17 @@ from jusi.application.ports import (
     StopSessionCommand,
     StartSessionCommand,
 )
-from jusi.domain.models import CellExecution, PreparedClient, Session
+from jusi.domain.models import CellExecution, PreparedClient, Session, SessionTarget
+
+
+def _target_payload(target: SessionTarget) -> dict:
+    return {
+        "source": target.source,
+        "alias": target.alias,
+        "kind": target.kind,
+        "value": target.value,
+        "config": dict(target.config),
+    }
 
 
 def _session_payload(session: Session) -> dict:
@@ -23,7 +38,8 @@ def _session_payload(session: Session) -> dict:
         "state": session.state,
         "kernel_name": session.kernel_name,
         "connection": session.connection,
-        "attachable": session.attachable,
+        "target": _target_payload(session.target),
+        "expires_at": session.expires_at,
         "last_error": session.last_error,
         "last_action": session.last_action,
     }
@@ -49,6 +65,16 @@ def _cell_payload(execution: CellExecution) -> dict:
     }
 
 
+SESSION_DISCONNECT_TTL_SECONDS = 300.0
+
+
+def _require_matching_session(store: SessionStore, notebook_id: str, session_id: str) -> Session:
+    session = store.get_by_notebook(notebook_id)
+    if session is None or session.session_id != session_id:
+        raise SessionNotFoundError("Unknown notebook session")
+    return session
+
+
 class StartSession:
     def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
         self._runtime = runtime
@@ -60,15 +86,59 @@ class StartSession:
             notebook_id=command.notebook_id,
             state="starting",
             kernel_name=command.kernel_name,
+            target=command.target,
             last_action="start",
         )
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
 
-        session_id, connection = self._runtime.start_managed(command.kernel_name)
+        session_id, connection = self._runtime.start_target(command.target, command.kernel_name)
         session.session_id = session_id
         session.connection = connection
         session.state = "connected"
+        session.expires_at = None
+        session.frontend_last_ack_at = time.time()
+        session.frontend_healthcheck_id = ""
+        session.frontend_healthcheck_deadline = None
+        session.prepared = PreparedClient(state="spawning", client_state="active")
+        self._store.save(session)
+
+        self._events.session_updated(command.notebook_id, _session_payload(session))
+        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
+
+        client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
+        session.prepared = PreparedClient(state="binding", client_id=client_id, client_bufnr=-1, client_state="active")
+        self._store.save(session)
+        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
+        return session
+
+
+class AttachSession:
+    def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
+        self._runtime = runtime
+        self._store = store
+        self._events = events
+
+    def execute(self, command: AttachSessionCommand) -> Session:
+        if command.target.kind != "connection_file":
+            raise ValueError("attach_session currently supports only target.kind=connection_file")
+        session = Session(
+            notebook_id=command.notebook_id,
+            state="starting",
+            target=command.target,
+            last_action="attach",
+        )
+        self._store.save(session)
+        self._events.session_updated(command.notebook_id, _session_payload(session))
+
+        session_id, connection = self._runtime.attach_target(command.target)
+        session.session_id = session_id
+        session.connection = connection
+        session.state = "connected"
+        session.expires_at = None
+        session.frontend_last_ack_at = time.time()
+        session.frontend_healthcheck_id = ""
+        session.frontend_healthcheck_deadline = None
         session.prepared = PreparedClient(state="spawning", client_state="active")
         self._store.save(session)
 
@@ -89,9 +159,7 @@ class ExecuteCell:
         self._events = events
 
     def begin_execute(self, command: ExecuteCellCommand) -> tuple[Session, CellExecution]:
-        session = self._store.get_by_notebook(command.notebook_id)
-        if session is None or session.session_id != command.session_id:
-            raise ValueError("Unknown notebook session")
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
         if session.state != "connected":
             raise ValueError("Cannot execute cell without a connected session")
         if session.prepared.state != "ready":
@@ -142,9 +210,7 @@ class InterruptCell:
         self._events = events
 
     def execute(self, command: InterruptCellCommand) -> CellExecution:
-        session = self._store.get_by_notebook(command.notebook_id)
-        if session is None or session.session_id != command.session_id:
-            raise ValueError("Unknown notebook session")
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
         execution = self._store.get_execution(command.notebook_id, command.cell_id)
         if execution is None:
             raise ValueError("No tracked execution for cell")
@@ -174,9 +240,7 @@ class InputReply:
         self._events = events
 
     def begin_reply(self, command: InputReplyCommand) -> tuple[Session, CellExecution]:
-        session = self._store.get_by_notebook(command.notebook_id)
-        if session is None or session.session_id != command.session_id:
-            raise ValueError("Unknown notebook session")
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
         if session.state != "connected":
             raise ValueError("Cannot reply to input without a connected session")
 
@@ -211,31 +275,15 @@ class DisconnectSession:
         self._events = events
 
     def execute(self, command: DisconnectSessionCommand) -> Session:
-        session = self._store.get_by_notebook(command.notebook_id)
-        if session is None or session.session_id != command.session_id:
-            raise ValueError("Unknown notebook session")
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
 
         session.last_action = "disconnect"
         session.last_error = command.reason
+        session.expires_at = time.time() + SESSION_DISCONNECT_TTL_SECONDS
+        session.expires_at = self._runtime.sync_disconnect_deadline(session, session.expires_at)
+        session.frontend_healthcheck_id = ""
+        session.frontend_healthcheck_deadline = None
         session.prepared = PreparedClient(state="missing", client_state="shutdown")
-
-        if not session.attachable:
-            self._store.save(session)
-            self._events.session_updated(command.notebook_id, _session_payload(session))
-            self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
-
-            for execution in self._store.list_executions(command.notebook_id):
-                if execution.status in {"busy", "follow-up"}:
-                    execution.client_state = "shutdown"
-                    execution.client_bufnr = -1
-                    self._store.save_execution(command.notebook_id, execution)
-                    self._events.cell_updated(command.notebook_id, _cell_payload(execution))
-
-            self._runtime.stop_session(session)
-            session.state = "stopped"
-            self._store.save(session)
-            self._events.session_updated(command.notebook_id, _session_payload(session))
-            return session
 
         self._runtime.disconnect_session(session, command.reason)
         session.state = "disconnected"
@@ -259,15 +307,22 @@ class ReconnectSession:
         self._events = events
 
     def execute(self, command: ReconnectSessionCommand) -> Session:
-        session = self._store.get_by_notebook(command.notebook_id)
-        if session is None or session.session_id != command.session_id:
-            raise ValueError("Unknown notebook session")
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
+        if session.state == "stopped":
+            raise SessionStoppedError("Session is already stopped")
+        if session.expires_at is not None and session.expires_at <= time.time():
+            raise SessionExpiredError("Session has expired")
         if session.state != "disconnected":
             raise ValueError("Only disconnected sessions can reconnect")
 
         session.state = "starting"
         session.last_action = "reconnect"
         session.last_error = ""
+        session.expires_at = None
+        session.expires_at = self._runtime.sync_disconnect_deadline(session, None)
+        session.frontend_last_ack_at = time.time()
+        session.frontend_healthcheck_id = ""
+        session.frontend_healthcheck_deadline = None
         session.prepared = PreparedClient(state="spawning", client_state="active")
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
@@ -289,14 +344,17 @@ class StopSession:
         self._events = events
 
     def begin_stop(self, command: StopSessionCommand) -> Session:
-        session = self._store.get_by_notebook(command.notebook_id)
-        if session is None or session.session_id != command.session_id:
-            raise ValueError("Unknown notebook session")
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
+        if session.state == "stopped":
+            raise SessionStoppedError("Session is already stopped")
         if session.state not in {"starting", "connected", "disconnected", "stopping"}:
             raise ValueError("Cannot stop a session that is not active")
 
         session.state = "stopping"
         session.last_action = "stop"
+        session.expires_at = None
+        session.frontend_healthcheck_id = ""
+        session.frontend_healthcheck_deadline = None
         session.prepared = PreparedClient(state="missing", client_state="shutdown")
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
@@ -329,9 +387,7 @@ class BindPreparedClient:
         self._events = events
 
     def execute(self, command: BindPreparedClientCommand) -> PreparedClient:
-        session = self._store.get_by_notebook(command.notebook_id)
-        if session is None or session.session_id != command.session_id:
-            raise ValueError("Unknown notebook session")
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
         if session.prepared.client_id != command.client_id:
             raise ValueError("Prepared client id does not match current session state")
         if session.prepared.state not in {"binding", "ready"}:
@@ -356,9 +412,7 @@ class ShutdownClient:
         self._events = events
 
     def execute(self, command: ShutdownClientCommand) -> None:
-        session = self._store.get_by_notebook(command.notebook_id)
-        if session is None or session.session_id != command.session_id:
-            raise ValueError("Unknown notebook session")
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
 
         if session.prepared.client_id == command.client_id:
             session.prepared = PreparedClient(
@@ -387,3 +441,20 @@ class ShutdownClient:
         execution.client_bufnr = -1
         self._store.save_execution(command.notebook_id, execution)
         self._events.cell_updated(command.notebook_id, _cell_payload(execution))
+
+
+class HealthcheckReply:
+    def __init__(self, store: SessionStore) -> None:
+        self._store = store
+
+    def execute(self, command: HealthcheckReplyCommand) -> Session:
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
+        if session.state != "connected":
+            raise ValueError("Cannot accept healthcheck reply without a connected session")
+        if session.frontend_healthcheck_id != command.healthcheck_id:
+            raise ValueError("Healthcheck reply does not match current outstanding check")
+        session.frontend_last_ack_at = time.time()
+        session.frontend_healthcheck_id = ""
+        session.frontend_healthcheck_deadline = None
+        self._store.save(session)
+        return session

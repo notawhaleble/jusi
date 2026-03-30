@@ -213,6 +213,52 @@ class ClientProcessTest(unittest.TestCase):
                 status["lifecycle"],
             )
 
+    def test_client_process_runner_exits_when_supervisor_is_lost(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = os.path.join(tmpdir, "status.json")
+            writes: list[str] = []
+
+            class FakeStdout:
+                def write(self, value: str) -> int:
+                    writes.append(value)
+                    return len(value)
+
+                def flush(self) -> None:
+                    return None
+
+            runner = ClientProcessRunner()
+            runner._control_dir = tmpdir
+            runner._commands_path = os.path.join(tmpdir, "commands.jsonl")
+            runner._status_path = status_path
+            runner._state.client_id = "client-1"
+            runner._state.notebook_id = "nb-1"
+            runner._state.session_id = "sess-1"
+            runner._supervisor_pid = 4242
+
+            original_signal = signal.signal
+
+            def fake_signal(sig: int, handler):  # type: ignore[no-untyped-def]
+                original_signal(sig, handler)
+                return handler
+
+            with patch("sys.stdout", new=FakeStdout()):
+                with patch("signal.signal", side_effect=fake_signal):
+                    with patch("os.getppid", return_value=1):
+                        rc = runner.run()
+
+            self.assertEqual(0, rc)
+            self.assertEqual(["ready\n"], writes)
+            with open(status_path, "r", encoding="utf-8") as handle:
+                status = json.load(handle)
+            self.assertEqual("supervisor_lost", status["shutdown_reason"])
+            self.assertEqual(
+                [
+                    "ready",
+                    "shutdown:supervisor_lost",
+                ],
+                status["lifecycle"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

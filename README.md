@@ -2,6 +2,15 @@
 
 Jusi is the standalone Python backend for notebook-style execution used by Jusivim.
 
+Deployment model:
+
+- Jusi is intended to remain a two-component system:
+  - local Vim plugin (`../jusivim`)
+  - Jusi backend
+- the backend is launched by `jusivim`, not as a separately user-managed service
+- the backend may reside locally or remotely depending on the target/workflow
+- remote support should not require inventing a third user-facing helper component in addition to the plugin and backend
+
 Jusi is responsible for:
 
 - kernel lifecycle management
@@ -9,6 +18,11 @@ Jusi is responsible for:
 - prepared client lifecycle
 - backend-to-editor execution events
 - transport and runtime integration around those capabilities
+
+Current runtime entrypoints:
+
+- backend root process: `python -m jusi`
+- client process: `python -m jusi client-process`
 
 The project is built around:
 

@@ -2,32 +2,28 @@
 
 This document is the shared contract between `jusi` and `jusivim`.
 
-It defines the message schema and state model. The concrete wire transport may use Vim terminal or channel APIs, but the contract itself is transport-agnostic.
+The wire may use Vim terminal/channel APIs, but the protocol stays transport-agnostic.
 
 ## Scope
 
-This draft covers the first backend milestone:
+Current backend slice covers:
 
-- start managed session
-- attach to existing session
-- execute current cell
-- interrupt current execution
-- stop session
-- report async session, prepared-client, and cell updates
-
-## Transport Assumptions
-
-- the frontend launches or connects to a backend process
-- messages are UTF-8 JSON envelopes
-- delivery is full-message based
-- requests and events are versioned
-- the transport may be stdin/stdout over Vim terminal or job/channel APIs
-
-The transport adapter is allowed to carry editor-specific routing metadata. The protocol payloads below are the stable contract and should avoid Vim rendering details such as sign placement.
+- `start_session`
+- `attach_session`
+- `execute_cell`
+- `interrupt_cell`
+- `input_reply`
+- `healthcheck_reply`
+- `disconnect_session`
+- `reconnect_session`
+- `stop_session`
+- `bind_prepared_client`
+- `shutdown_client`
+- `inspect_client`
 
 ## Envelope
 
-All messages use the same envelope:
+All messages use:
 
 ```json
 {
@@ -41,26 +37,53 @@ All messages use the same envelope:
 
 Fields:
 
-- `version`: protocol version
-- `kind`: `request`, `response`, or `event`
-- `type`: operation or event name
-- `request_id`: required for `request` and matching `response`
-- `payload`: object
+- `version`
+- `kind`: `request`, `response`, `event`
+- `type`
+- `request_id`: required for request/response
+- `payload`
 
-## Identity Model
+## Identities
 
-The backend contract should use explicit ids:
-
-- `notebook_id`: frontend-generated runtime id for the notebook buffer binding
-- `session_id`: backend-generated id for a kernel session binding
-- `cell_id`: frontend runtime cell id from the notebook model
-- `client_id`: backend-generated id for a prepared or active client
+- `notebook_id`: frontend notebook runtime id
+- `session_id`: backend-generated durable session id
+- `cell_id`: frontend runtime cell id
+- `client_id`: backend-generated prepared/active client id
 
 Notes:
 
-- `cell_id` is already the stable per-notebook runtime identity in `jusivim`
-- `sign_id` must not appear in the backend protocol
-- buffer numbers may appear in transport-local metadata, but not as core protocol identity
+- `sign_id` is not part of the backend contract
+- history regions stay frontend-local
+- buffer numbers may appear only where client binding requires them
+- current ids are backend-generated high-entropy values with `sess-` prefix
+
+## Session Target
+
+Backend session metadata currently keeps only explicit `target`:
+
+```json
+{
+  "source": "start",
+  "alias": "python3",
+  "kind": "kernel",
+  "value": "",
+  "config": {}
+}
+```
+
+Fields:
+
+- `source`
+- `alias`
+- `kind`
+- `value`
+- `config`
+
+Notes:
+
+- backend sessions are treated as durable/reconnectable by default
+- backend no longer models separate `link` metadata
+- `endpoint`/backend residence remains a frontend transport concern, not core backend session state
 
 ## Requests
 
@@ -69,17 +92,26 @@ Notes:
 ```json
 {
   "notebook_id": "nb-1",
-  "kernel_name": "python3"
+  "kernel_name": "python3",
+  "target": {
+    "source": "start",
+    "alias": "python3",
+    "kind": "kernel",
+    "value": "",
+    "config": {}
+  }
 }
 ```
 
 Behavior:
 
-- start a managed kernel session for the notebook
-- enter session state `starting`
-- eventually emit session and prepared-client events
-- the prepared client is a session-scoped execution resource, not a cell-targeted preallocation
-- backend provisioning does not make prepared state `ready` by itself; frontend buffer binding is a separate step
+- backend is expected to be launched by `jusivim`
+- starts a new durable session for the notebook
+- enters `starting`, then `connected`
+- backend generates a durable `session_id`
+- provisions a session-scoped prepared client
+- prepared state does not become `ready` until frontend binds the real Vim buffer
+- frontend may omit `target`; backend derives the current default target from `kernel_name`
 
 ### `attach_session`
 
@@ -87,15 +119,25 @@ Behavior:
 {
   "notebook_id": "nb-1",
   "target": {
-    "connection_file": "/path/to/kernel.json"
+    "source": "attach",
+    "alias": "",
+    "kind": "connection_file",
+    "value": "/path/to/kernel.json",
+    "config": {}
   }
 }
 ```
 
 Behavior:
 
-- attach to an existing kernel
-- mark session as `attachable`
+- attaches to an existing durable session target
+- backend generates a durable `session_id` for the Jusi-side binding
+- current honest attach slice is intentionally narrow:
+  - `target.kind` must be `connection_file`
+- this path is now real in both the in-memory runtime and the managed runtime
+- attached sessions provision a normal prepared client through the same lifecycle as started sessions
+- managed runtime keeps a small connection-file sidecar registry of attached Jusi root-process PIDs for stop fanout
+- other target kinds may still be recorded as identity, but are not executable attach paths yet
 
 ### `execute_cell`
 
@@ -114,17 +156,11 @@ Behavior:
 
 Behavior:
 
-- requires connected session
-- requires the session's current prepared client in `ready` state
-- consumes that session-level prepared client into the target cell's active client ownership
-- only after that consume does replacement prepared-client provisioning begin for the session
-- for runtimes with live async execution, the initial response may include only the accepted/busy transition and replacement prepared-client updates; the terminal `cell_updated` may arrive later as a normal event while the request loop remains available for other requests such as `inspect_client`
-
-Notes:
-
-- history-region handling remains frontend-local for now
-- the backend only needs the executable cell body
-- the consumed client remains the executing cell's active client until a later lifecycle event explicitly changes that ownership
+- requires `connected` session
+- requires current prepared client in `ready`
+- consumes the session prepared client into the cell's active client
+- only after consume does replacement preparation begin
+- terminal `cell_updated` may arrive later as an async event
 
 ### `interrupt_cell`
 
@@ -138,9 +174,80 @@ Notes:
 
 Behavior:
 
-- represents user intent to interrupt the active execution associated with the cell
-- actual low-level interrupt routing depends on the current execution owner
-- if the backend cannot identify an interruptible owner, the request should fail explicitly
+- routes interrupt by current execution owner
+- fails explicitly if owner is unknown or not interruptible
+
+### `input_reply`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "cell_id": 12,
+  "client_id": "client-7",
+  "value": "typed text"
+}
+```
+
+Behavior:
+
+- valid only while that exact active client is waiting on `input_request`
+- resumes the original execution; does not create a new execution identity
+
+### `healthcheck_reply`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "healthcheck_id": "hc-123"
+}
+```
+
+Behavior:
+
+- valid only while the session is still `connected`
+- acknowledges the current backend-issued `healthcheck` event
+- clears the outstanding frontend-liveness check and refreshes backend liveness tracking
+
+### `disconnect_session`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "reason": "transport_lost"
+}
+```
+
+Behavior:
+
+- moves the session to `disconnected`
+- clears prepared state
+- active execution ownership degrades to `unknown`
+- session identity remains durable for later reconnect
+- session payload exposes `expires_at` as the current disconnect deadline
+- if that deadline passes, backend performs final session teardown without waiting for a reconnect attempt
+- backend may also enter this path after missed frontend healthchecks
+
+### `reconnect_session`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1"
+}
+```
+
+Behavior:
+
+- valid only from `disconnected`
+- restarts prepared-client provisioning
+- does not invent false active execution ownership
+- fails with:
+  - `session_not_found` for unknown notebook/session identity
+  - `session_stopped` for already-stopped sessions
+  - `session_expired` when the disconnect deadline has passed
 
 ### `stop_session`
 
@@ -153,12 +260,14 @@ Behavior:
 
 Behavior:
 
-- stops the current Jusi session cleanly
-- for managed sessions, this represents backend-owned kernel shutdown
-- prepared-client state becomes unusable immediately
-- active executions become terminal from the Jusi session point of view
-- backend should acknowledge the request and emit `session_updated(state=stopping)` promptly on the request path
-- the terminal `session_updated(state=stopped)` may arrive later as a normal event after cleanup completes
+- explicitly tears down the durable Jusi session
+- request acknowledges promptly with `stopping`
+- terminal `stopped` may arrive later as an async event
+- for externally attached `connection_file` sessions, managed runtime now:
+  - sends kernel shutdown through the attached Jupyter client
+  - tears down local Jusi channels and clients
+  - signals peer attached Jusi root processes registered for the same connection file so they shut down too
+- timeout teardown follows that same whole-session rule for attached `connection_file` sessions
 
 ### `bind_prepared_client`
 
@@ -173,9 +282,8 @@ Behavior:
 
 Behavior:
 
-- reports that the frontend has bound a backend-owned prepared client to a real Vim client buffer
+- acknowledges the real Vim buffer for the current prepared client
 - transitions prepared state from `binding` to `ready`
-- the backend must not fabricate Vim buffer numbers without this frontend acknowledgment
 
 ### `shutdown_client`
 
@@ -184,23 +292,16 @@ Behavior:
   "notebook_id": "nb-1",
   "session_id": "sess-1",
   "cell_id": 12,
-  "client_id": "client-1",
+  "client_id": "client-2",
   "reason": "user_close"
 }
 ```
 
 Behavior:
 
-- tears down client ownership separately from `interrupt_cell`
-- if the client is the current prepared client, prepared state becomes `missing`
-- if the client is attached to a tracked cell, backend emits client lifecycle updates and clears the client buffer binding without overloading cell `status`
-- valid reasons include:
-  - `user_close`
-  - `cell_deleted`
-  - `session_stop`
-  - `frontend_unload`
-  - `transport_lost`
-  - `healthcheck`
+- separate from interrupt
+- tears down either a prepared client or active cell client
+- cell status and client lifecycle remain separate concerns
 
 ### `inspect_client`
 
@@ -208,139 +309,14 @@ Behavior:
 {
   "notebook_id": "nb-1",
   "session_id": "sess-1",
-  "client_id": "client-1"
+  "client_id": "client-2"
 }
 ```
 
 Behavior:
 
-- returns the current backend-owned client view snapshot for inspection
-- does not change session, prepared, or cell state
-- is intended for backend/runtime introspection while the client runtime vertical slice is still stabilizing
-- includes a monotonic `revision` field so polling consumers can detect view changes cheaply
-- becomes especially useful while a managed execution is still `busy`, because the backend may continue advancing the client transcript/view before the terminal `cell_updated` arrives
-
-Notes:
-
-- this is not yet a signal for `jusivim` to start consuming backend-rendered client views as part of normal integration
-- the returned snapshot is derived from backend-owned client runtime state rather than Vim-local rendering state
-
-### `input_reply`
-
-```json
-{
-  "notebook_id": "nb-1",
-  "session_id": "sess-1",
-  "cell_id": 12,
-  "client_id": "client-1",
-  "value": "typed text"
-}
-```
-
-Behavior:
-
-- replies to a pending kernel `input_request` for the active cell/client
-- is valid only while the execution is still waiting on stdin for that same tracked cell/client
-- keeps the cell in `busy` unless the resumed execution reaches a later terminal state
-- for runtimes with live async execution, the request response may return immediately while the later `cell_updated` and `inspect_client` changes arrive asynchronously
-
-Notes:
-
-- this request exists because `input_request` is part of the current managed execution slice, not a distant future capability
-- transcript/view rendering may surface the original prompt and related execution progress; input values themselves should be handled carefully, especially for password prompts
-
-### `disconnect_session`
-
-```json
-{
-  "notebook_id": "nb-1",
-  "session_id": "sess-1",
-  "reason": "transport_lost"
-}
-```
-
-Behavior:
-
-- records that the Jusi session lost linkage while the kernel may still be alive
-- moves session state to `disconnected` only for attachable sessions
-- managed sessions should tear down immediately instead of entering a reconnectable state
-- prepared-client state becomes unusable until reconnect
-- active executions may remain active but lose trustworthy owner information
-
-### `reconnect_session`
-
-```json
-{
-  "notebook_id": "nb-1",
-  "session_id": "sess-1"
-}
-```
-
-Behavior:
-
-- attempts to re-establish the notebook-to-session linkage
-- transitions through `starting`
-- provisions a new prepared client if reconnect succeeds
-- does not invent false ownership for executions whose owner cannot be restored
-
-## Responses
-
-Synchronous responses only acknowledge whether the request was accepted.
-
-Success example:
-
-```json
-{
-  "version": 1,
-  "kind": "response",
-  "type": "start_session",
-  "request_id": "req-123",
-  "ok": true,
-  "payload": {}
-}
-```
-
-Failure example:
-
-```json
-{
-  "version": 1,
-  "kind": "response",
-  "type": "execute_cell",
-  "request_id": "req-456",
-  "ok": false,
-  "error": {
-    "code": "prepared_client_missing",
-    "message": "Cannot execute cell without a prepared client"
-  }
-}
-```
-
-Rule:
-
-- request acceptance does not imply completion
-- authoritative state changes arrive through events
-- inspection-style requests may return synchronous payload data when they do not change backend state
-
-`inspect_client` success example:
-
-```json
-{
-  "version": 1,
-  "kind": "response",
-  "type": "inspect_client",
-  "request_id": "req-789",
-  "ok": true,
-  "payload": {
-    "client": {
-      "title": "cell 12: done",
-      "lines": ["started cell 12 [code:python]", "finished: done"],
-      "execution_status": "done",
-      "active_cell_id": 12
-    }
-  }
-}
-```
+- returns a derived backend-owned client view snapshot
+- includes a monotonic `revision` for polling consumers
 
 ## Events
 
@@ -353,8 +329,15 @@ Rule:
     "id": "sess-1",
     "state": "connected",
     "kernel_name": "python3",
-    "connection": "/path/to/kernel.json",
-    "attachable": false,
+    "connection": "inmemory://python3/1",
+    "target": {
+      "source": "start",
+      "alias": "python3",
+      "kind": "kernel",
+      "value": "",
+      "config": {}
+    },
+    "expires_at": null,
     "last_error": "",
     "last_action": "start"
   }
@@ -368,18 +351,12 @@ Rule:
   "notebook_id": "nb-1",
   "prepared": {
     "id": "client-1",
-    "state": "ready",
-    "bufnr": 91
+    "state": "binding",
+    "bufnr": -1,
+    "client_state": "active"
   }
 }
 ```
-
-Notes:
-
-- `bufnr` exists because the current Vim-side model expects a client buffer number
-- the backend may emit `bufnr = -1` while the prepared client exists but is not yet bound to a real Vim buffer
-- the frontend must complete the bind step before prepared state becomes `ready`
-- at most one prepared client is authoritative for a session at a time
 
 ### `cell_updated`
 
@@ -389,102 +366,33 @@ Notes:
   "cell": {
     "id": 12,
     "status": "busy",
-    "owner": {
-      "kind": "kernel"
-    },
+    "owner": {"kind": "kernel"},
     "client_id": "client-1",
-    "client_bufnr": 91
+    "client_bufnr": 91,
+    "client_state": "active"
   }
 }
 ```
 
-Notes:
-
-- `client_id` and `client_bufnr` refer to the consumed active client that now belongs to the cell
-- terminal `done`, `error`, or `follow-up` updates keep that same active client identity unless a later teardown or ownership-change event says otherwise
-- while the cell remains `busy`, `inspect_client` may also surface Jupyter transcript events such as:
-  - `execute_input`
-  - `input_request`
-  - later transcript growth after `input_reply`
-
-### `backend_error`
+### `healthcheck`
 
 ```json
 {
   "notebook_id": "nb-1",
-  "scope": "session",
-  "message": "Kernel process exited unexpectedly"
+  "session_id": "sess-1",
+  "healthcheck_id": "hc-123"
 }
 ```
 
-## State Mapping
+Behavior:
 
-The backend should emit states compatible with the current `jusivim` model where practical.
+- emitted by backend while a session is `connected`
+- frontend should reply with `healthcheck_reply`
+- if replies stop long enough, backend marks the session `disconnected` and starts the existing disconnect-timeout flow
+- known issue: if Vim is suspended, for example with `Ctrl-Z`, backend may treat the missing reply as link loss
 
-### Session States
+## Current Limitations
 
-- `idle`
-- `starting`
-- `connected`
-- `stopping`
-- `stopped`
-- `failed`
-- `disconnected`
-
-### Prepared States
-
-- `missing`
-- `spawning`
-- `binding`
-- `ready`
-
-### Cell Statuses
-
-Initial backend target:
-
-- `pending`
-- `busy`
-- `follow-up`
-- `done`
-- `error`
-- `interrupted`
-- `parked`
-
-Notes:
-
-- `follow-up` represents a cell whose kernel execution returned but whose Jusi-specific lifecycle remains active
-- cell status is cell-local and must not by itself block execution of other cells
-- execution gating is driven by prepared-client readiness, not by whether some previous cell reached `done`
-
-### Client Lifecycle State
-
-Prepared and cell updates may carry `client_state` separately from cell `status`.
-
-Current values:
-
-- `active`
-- `shutting_down`
-- `shutdown`
-
-Notes:
-
-- `parked` remains reserved for the deliberate keep-output workflow
-- shutdown lifecycle must not overload `parked`
-
-### Execution Ownership
-
-Interrupt routing is determined by execution ownership, not by status alone.
-
-Current owner kinds:
-
-- `kernel`: interruption should target the IPython kernel
-- `handler`: interruption should target a handler-specific cancellation path
-- `unknown`: active work exists but the backend cannot safely resolve the owner
-
-## Compatibility Notes
-
-- preserve MVP behavior where it affects the user workflow
-- do not preserve MVP transport field names blindly
-- the plugin adapter in `jusivim` is responsible for mapping backend events into `jusi#session#callback_*`
-- the frontend owns history-region structure and editing semantics unless a later backend feature explicitly requires that data
-- if this contract changes, update this file first and mirror the implementation status in both repos' `.local/current.md`
+- `start_session` still routes actual start behavior mainly through `kernel_name`
+- `attach_session` is only real for `target.kind=connection_file`
+- durable session metadata is currently in-memory per backend root process; cross-process persistence is still future work

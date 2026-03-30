@@ -1,8 +1,10 @@
 import unittest
 from unittest.mock import patch
+import time
 
-from jusi.application.ports import StartSessionCommand
-from jusi.application.use_cases import StartSession
+from jusi.application.ports import AttachSessionCommand, StartSessionCommand
+from jusi.application.use_cases import AttachSession, StartSession
+from jusi.domain.models import SessionTarget
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore
 from jusi.interfaces.events import CollectingEventSink
 from jusi.interfaces.protocol import parse_envelope
@@ -40,17 +42,31 @@ class StartSessionTest(unittest.TestCase):
         events = CollectingEventSink()
         use_case = StartSession(runtime=InMemoryKernelRuntime(), store=InMemorySessionStore(), events=events)
 
-        session = use_case.execute(StartSessionCommand(notebook_id="nb-1", kernel_name="python3"))
+        session = use_case.execute(
+            StartSessionCommand(
+                notebook_id="nb-1",
+                kernel_name="python3",
+                target=SessionTarget(source="start", alias="python3", kind="kernel"),
+            )
+        )
 
         self.assertEqual("connected", session.state)
-        self.assertEqual("session-1", session.session_id)
+        self.assertTrue(session.session_id.startswith("sess-"))
         self.assertEqual("inmemory://python3/1", session.connection)
+        self.assertEqual("start", session.target.source)
+        self.assertEqual("python3", session.target.alias)
+        self.assertEqual("kernel", session.target.kind)
+        self.assertIsNone(session.expires_at)
         self.assertEqual(
             ["session_updated", "session_updated", "prepared_updated", "prepared_updated"],
             [event["type"] for event in events.events],
         )
         self.assertEqual("starting", events.events[0]["payload"]["state"])
         self.assertEqual("connected", events.events[1]["payload"]["state"])
+        self.assertEqual(
+            {"source": "start", "alias": "python3", "kind": "kernel", "value": "", "config": {}},
+            events.events[1]["payload"]["target"],
+        )
         self.assertEqual("spawning", events.events[2]["payload"]["state"])
         self.assertEqual("binding", events.events[3]["payload"]["state"])
         self.assertEqual(-1, events.events[3]["payload"]["bufnr"])
@@ -72,18 +88,127 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("starting", envelopes[1].payload["session"]["state"])
         self.assertEqual("session_updated", envelopes[2].type)
         self.assertEqual("connected", envelopes[2].payload["session"]["state"])
+        self.assertIsNone(envelopes[2].payload["session"]["expires_at"])
+        self.assertEqual(
+            {"source": "start", "alias": "python3", "kind": "kernel", "value": "", "config": {}},
+            envelopes[2].payload["session"]["target"],
+        )
         self.assertEqual("prepared_updated", envelopes[3].type)
         self.assertEqual("spawning", envelopes[3].payload["prepared"]["state"])
         self.assertEqual("prepared_updated", envelopes[4].type)
         self.assertEqual("binding", envelopes[4].payload["prepared"]["state"])
         self.assertEqual(-1, envelopes[4].payload["prepared"]["bufnr"])
 
+    def test_protocol_server_start_accepts_explicit_target_identity(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "start_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "py", '
+                '"target": {"source": "start", "alias": "py", "kind": "venv", "value": "venv://myenv1", '
+                '"config": {"label": "local venv"}}}}'
+            )
+        )
+        envelopes = [parse_envelope(message) for message in messages]
+
+        self.assertTrue(envelopes[0].ok)
+        self.assertIsNone(envelopes[2].payload["session"]["expires_at"])
+        self.assertEqual(
+            {
+                "source": "start",
+                "alias": "py",
+                "kind": "venv",
+                "value": "venv://myenv1",
+                "config": {"label": "local venv"},
+            },
+            envelopes[2].payload["session"]["target"],
+        )
+
+    def test_attach_session_emits_external_connection_file_connected_and_binding_updates(self) -> None:
+        events = CollectingEventSink()
+        use_case = AttachSession(runtime=InMemoryKernelRuntime(), store=InMemorySessionStore(), events=events)
+
+        session = use_case.execute(
+            AttachSessionCommand(
+                notebook_id="nb-1",
+                target=SessionTarget(source="attach", kind="connection_file", value="/tmp/kernel.json"),
+            )
+        )
+
+        self.assertEqual("connected", session.state)
+        self.assertTrue(session.session_id.startswith("sess-"))
+        self.assertEqual("/tmp/kernel.json", session.connection)
+        self.assertEqual("attach", session.target.source)
+        self.assertEqual("connection_file", session.target.kind)
+        self.assertIsNone(session.expires_at)
+        self.assertEqual(
+            ["session_updated", "session_updated", "prepared_updated", "prepared_updated"],
+            [event["type"] for event in events.events],
+        )
+        self.assertEqual("starting", events.events[0]["payload"]["state"])
+        self.assertEqual("connected", events.events[1]["payload"]["state"])
+        self.assertEqual("spawning", events.events[2]["payload"]["state"])
+        self.assertEqual("binding", events.events[3]["payload"]["state"])
+
+    def test_attach_session_rejects_non_connection_file_target_kind(self) -> None:
+        events = CollectingEventSink()
+        use_case = AttachSession(runtime=InMemoryKernelRuntime(), store=InMemorySessionStore(), events=events)
+
+        with self.assertRaisesRegex(ValueError, "target.kind=connection_file"):
+            use_case.execute(
+                AttachSessionCommand(
+                    notebook_id="nb-1",
+                    target=SessionTarget(source="attach", kind="ssh", value="ssh://user@host1"),
+                )
+            )
+
+    def test_protocol_server_attach_records_explicit_target_and_prepares_client(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "attach_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", '
+                '"target": {"source": "attach", "kind": "connection_file", "value": "/tmp/kernel.json", "config": {"label": "host1"}}}}'
+            )
+        )
+        envelopes = [parse_envelope(message) for message in messages]
+
+        self.assertTrue(envelopes[0].ok)
+        self.assertEqual("starting", envelopes[1].payload["session"]["state"])
+        self.assertEqual("connected", envelopes[2].payload["session"]["state"])
+        self.assertIsNone(envelopes[2].payload["session"]["expires_at"])
+        self.assertEqual(
+            {
+                "source": "attach",
+                "alias": "",
+                "kind": "connection_file",
+                "value": "/tmp/kernel.json",
+                "config": {"label": "host1"},
+            },
+            envelopes[2].payload["session"]["target"],
+        )
+        self.assertEqual("spawning", envelopes[3].payload["prepared"]["state"])
+        self.assertEqual("binding", envelopes[4].payload["prepared"]["state"])
+
+    def test_protocol_server_attach_rejects_non_connection_file_target_kind(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "attach_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", '
+                '"target": {"source": "attach", "kind": "ssh", "value": "ssh://user@host1"}}}'
+            )
+        )
+        envelope = [parse_envelope(message) for message in messages][0]
+        self.assertFalse(envelope.ok)
+        self.assertEqual("invalid_state", envelope.error["code"])
+
     def test_bind_prepared_client_marks_session_ready(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, client_id = self.start_and_bind(server)
 
-        self.assertEqual("session-1", session_id)
+        self.assertTrue(session_id.startswith("sess-"))
         self.assertEqual("client-1", client_id)
         runtime_client = runtime.get_client(session_id, client_id)
         self.assertIsNotNone(runtime_client)
@@ -409,7 +534,7 @@ class StartSessionTest(unittest.TestCase):
         )
         inspect_envelopes = [parse_envelope(message) for message in inspect_messages]
         self.assertFalse(inspect_envelopes[0].ok)
-        self.assertEqual("invalid_state", inspect_envelopes[0].error["code"])
+        self.assertEqual("session_not_found", inspect_envelopes[0].error["code"])
 
     def test_interrupt_handler_owned_execution(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
@@ -466,11 +591,10 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("interrupted", interrupt_envelopes[2].payload["cell"]["status"])
         self.assertEqual("kernel", interrupt_envelopes[2].payload["cell"]["owner"]["kind"])
 
-    def test_attachable_disconnect_marks_active_execution_owner_unknown_and_reconnect_restores_binding_state(self) -> None:
+    def test_disconnect_marks_active_execution_owner_unknown_and_reconnect_restores_binding_state(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, _client_id = self.start_and_bind(server)
-        server._store.get_by_notebook("nb-1").attachable = True
 
         server.handle_message(
             (
@@ -491,6 +615,7 @@ class StartSessionTest(unittest.TestCase):
         disconnect_envelopes = [parse_envelope(message) for message in disconnect_messages]
         self.assertTrue(disconnect_envelopes[0].ok)
         self.assertEqual("disconnected", disconnect_envelopes[1].payload["session"]["state"])
+        self.assertGreater(disconnect_envelopes[1].payload["session"]["expires_at"], 0)
         self.assertEqual("missing", disconnect_envelopes[2].payload["prepared"]["state"])
         self.assertEqual("unknown", disconnect_envelopes[3].payload["cell"]["owner"]["kind"])
         self.assertEqual("follow-up", disconnect_envelopes[3].payload["cell"]["status"])
@@ -507,11 +632,13 @@ class StartSessionTest(unittest.TestCase):
         reconnect_envelopes = [parse_envelope(message) for message in reconnect_messages]
         self.assertTrue(reconnect_envelopes[0].ok)
         self.assertEqual("starting", reconnect_envelopes[1].payload["session"]["state"])
+        self.assertIsNone(reconnect_envelopes[1].payload["session"]["expires_at"])
         self.assertEqual("spawning", reconnect_envelopes[2].payload["prepared"]["state"])
         self.assertEqual("connected", reconnect_envelopes[3].payload["session"]["state"])
+        self.assertIsNone(reconnect_envelopes[3].payload["session"]["expires_at"])
         self.assertEqual("binding", reconnect_envelopes[4].payload["prepared"]["state"])
 
-    def test_managed_disconnect_stops_session_instead_of_becoming_disconnected(self) -> None:
+    def test_disconnect_marks_started_session_disconnected(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, _client_id = self.start_and_bind(server)
@@ -526,15 +653,15 @@ class StartSessionTest(unittest.TestCase):
         )
         disconnect_envelopes = [parse_envelope(message) for message in disconnect_messages]
         self.assertTrue(disconnect_envelopes[0].ok)
-        self.assertEqual("connected", disconnect_envelopes[1].payload["session"]["state"])
+        self.assertEqual("disconnected", disconnect_envelopes[1].payload["session"]["state"])
+        self.assertGreater(disconnect_envelopes[1].payload["session"]["expires_at"], 0)
         self.assertEqual("missing", disconnect_envelopes[2].payload["prepared"]["state"])
-        self.assertEqual("stopped", disconnect_envelopes[3].payload["session"]["state"])
+        self.assertEqual([], disconnect_envelopes[3:])
         self.assertEqual([], runtime.list_clients(session_id))
 
     def test_interrupt_unknown_owner_fails_after_disconnect(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         session_id, _client_id = self.start_and_bind(server)
-        server._store.get_by_notebook("nb-1").attachable = True
 
         server.handle_message(
             (
@@ -563,6 +690,160 @@ class StartSessionTest(unittest.TestCase):
         interrupt_envelopes = [parse_envelope(message) for message in interrupt_messages]
         self.assertFalse(interrupt_envelopes[0].ok)
         self.assertEqual("invalid_state", interrupt_envelopes[0].error["code"])
+
+    def test_reconnect_unknown_session_returns_session_not_found(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+
+        reconnect_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "reconnect_session", '
+                '"request_id": "req-missing", "payload": {"notebook_id": "nb-1", "session_id": "sess-missing"}}'
+            )
+        )
+        reconnect_envelopes = [parse_envelope(message) for message in reconnect_messages]
+        self.assertFalse(reconnect_envelopes[0].ok)
+        self.assertEqual("session_not_found", reconnect_envelopes[0].error["code"])
+
+    def test_reconnect_stopped_session_returns_session_stopped(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        session_id, _client_id = self.start_and_bind(server)
+
+        server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "stop_session", '
+                '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        server.drain_pending_messages()
+
+        reconnect_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "reconnect_session", '
+                '"request_id": "req-reconnect", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        reconnect_envelopes = [parse_envelope(message) for message in reconnect_messages]
+        self.assertFalse(reconnect_envelopes[0].ok)
+        self.assertEqual("session_stopped", reconnect_envelopes[0].error["code"])
+
+    def test_reconnect_expired_session_returns_session_expired(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        session_id, _client_id = self.start_and_bind(server)
+
+        server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "disconnect_session", '
+                '"request_id": "req-disconnect", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "reason": "transport_lost"}}'
+            )
+        )
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        session.expires_at = 0
+
+        reconnect_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "reconnect_session", '
+                '"request_id": "req-reconnect", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        reconnect_envelopes = [parse_envelope(message) for message in reconnect_messages]
+        self.assertFalse(reconnect_envelopes[0].ok)
+        self.assertEqual("session_expired", reconnect_envelopes[0].error["code"])
+
+    def test_poll_session_timeouts_stops_disconnected_session(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "disconnect_session", '
+                '"request_id": "req-disconnect", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "reason": "transport_lost"}}'
+            )
+        )
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        session.expires_at = 0
+
+        should_exit = server.poll_session_timeouts()
+
+        self.assertTrue(should_exit)
+        self.assertEqual([], runtime.list_clients(session_id))
+        self.assertEqual("stopped", session.state)
+        self.assertEqual("timeout", session.last_action)
+
+    def test_poll_frontend_health_emits_healthcheck_for_connected_session(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        session_id, _client_id = self.start_and_bind(server)
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        session.frontend_last_ack_at = 0
+
+        server.poll_frontend_health()
+
+        messages = server.drain_pending_messages()
+        envelopes = [parse_envelope(message) for message in messages]
+        self.assertEqual(["healthcheck"], [envelope.type for envelope in envelopes])
+        self.assertEqual("nb-1", envelopes[0].payload["notebook_id"])
+        self.assertEqual(session_id, envelopes[0].payload["session_id"])
+        self.assertTrue(envelopes[0].payload["healthcheck_id"].startswith("hc-"))
+        self.assertEqual(envelopes[0].payload["healthcheck_id"], session.frontend_healthcheck_id)
+        self.assertGreater(session.frontend_healthcheck_deadline, time.time())
+
+    def test_healthcheck_reply_clears_outstanding_check(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        session_id, _client_id = self.start_and_bind(server)
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        session.frontend_last_ack_at = 0
+
+        server.poll_frontend_health()
+        healthcheck = parse_envelope(server.drain_pending_messages()[0])
+
+        reply_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "healthcheck_reply", '
+                '"request_id": "req-healthcheck", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "healthcheck_id": "'
+                + healthcheck.payload["healthcheck_id"]
+                + '"}}'
+            )
+        )
+        reply = [parse_envelope(message) for message in reply_messages][0]
+        self.assertTrue(reply.ok)
+        self.assertEqual("", session.frontend_healthcheck_id)
+        self.assertIsNone(session.frontend_healthcheck_deadline)
+        self.assertGreater(session.frontend_last_ack_at, 0)
+
+    def test_poll_frontend_health_disconnects_when_reply_times_out(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        session.frontend_healthcheck_id = "hc-stale"
+        session.frontend_healthcheck_deadline = 0
+
+        server.poll_frontend_health()
+
+        messages = server.drain_pending_messages()
+        envelopes = [parse_envelope(message) for message in messages]
+        self.assertEqual(["session_updated", "prepared_updated"], [envelope.type for envelope in envelopes])
+        self.assertEqual("disconnected", session.state)
+        self.assertEqual("frontend_unreachable", session.last_error)
+        self.assertIsNotNone(session.expires_at)
+        self.assertEqual([], runtime.list_clients(session_id))
 
     def test_stop_session_clears_prepared_and_interrupts_active_cells(self) -> None:
         runtime = InMemoryKernelRuntime()

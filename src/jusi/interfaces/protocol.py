@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
+from jusi.domain.models import SessionTarget
+
 PROTOCOL_VERSION = 1
 
 
@@ -41,6 +43,13 @@ class Envelope:
 class StartSessionRequest:
     notebook_id: str
     kernel_name: str
+    target: SessionTarget
+
+
+@dataclass(frozen=True)
+class AttachSessionRequest:
+    notebook_id: str
+    target: SessionTarget
 
 
 @dataclass(frozen=True)
@@ -113,6 +122,13 @@ class InputReplyRequest:
     value: str
 
 
+@dataclass(frozen=True)
+class HealthcheckReplyRequest:
+    notebook_id: str
+    session_id: str
+    healthcheck_id: str
+
+
 def parse_envelope(raw: str) -> Envelope:
     try:
         data = json.loads(raw)
@@ -158,7 +174,34 @@ def parse_start_session(payload: Mapping[str, Any]) -> StartSessionRequest:
     kernel_name = str(payload.get("kernel_name", "")).strip() or "python3"
     if not notebook_id:
         raise ProtocolError("start_session requires notebook_id")
-    return StartSessionRequest(notebook_id=notebook_id, kernel_name=kernel_name)
+    target = _parse_target(payload.get("target"), fallback_source="start", fallback_alias=kernel_name, fallback_kind="kernel")
+    return StartSessionRequest(
+        notebook_id=notebook_id,
+        kernel_name=kernel_name,
+        target=target,
+    )
+
+
+def _parse_target(
+    value: Any,
+    *,
+    fallback_source: str,
+    fallback_alias: str = "",
+    fallback_kind: str = "",
+) -> SessionTarget:
+    if value is None:
+        return SessionTarget(source=fallback_source, alias=fallback_alias, kind=fallback_kind)
+    if not isinstance(value, Mapping):
+        raise ProtocolError("target must be an object when provided")
+    raw_config = value.get("config", {})
+    config = dict(raw_config) if isinstance(raw_config, Mapping) else {}
+    return SessionTarget(
+        source=str(value.get("source", "")).strip() or fallback_source,
+        alias=str(value.get("alias", "")).strip() or fallback_alias,
+        kind=str(value.get("kind", "")).strip() or fallback_kind,
+        value=str(value.get("value", "")).strip(),
+        config=config,
+    )
 
 
 def parse_execute_cell(payload: Mapping[str, Any]) -> ExecuteCellRequest:
@@ -188,6 +231,16 @@ def parse_execute_cell(payload: Mapping[str, Any]) -> ExecuteCellRequest:
         main_lines=list(main_lines),
         keep_running=bool(cell.get("keep_running", False)),
     )
+
+
+def parse_attach_session(payload: Mapping[str, Any]) -> AttachSessionRequest:
+    notebook_id = str(payload.get("notebook_id", "")).strip()
+    if not notebook_id:
+        raise ProtocolError("attach_session requires notebook_id")
+    target = _parse_target(payload.get("target"), fallback_source="attach")
+    if not target.value:
+        raise ProtocolError("attach_session requires target.value")
+    return AttachSessionRequest(notebook_id=notebook_id, target=target)
 
 
 def parse_interrupt_cell(payload: Mapping[str, Any]) -> InterruptCellRequest:
@@ -315,6 +368,23 @@ def parse_input_reply(payload: Mapping[str, Any]) -> InputReplyRequest:
         cell_id=cell_id,
         client_id=client_id,
         value=value,
+    )
+
+
+def parse_healthcheck_reply(payload: Mapping[str, Any]) -> HealthcheckReplyRequest:
+    notebook_id = str(payload.get("notebook_id", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    healthcheck_id = str(payload.get("healthcheck_id", "")).strip()
+    if not notebook_id:
+        raise ProtocolError("healthcheck_reply requires notebook_id")
+    if not session_id:
+        raise ProtocolError("healthcheck_reply requires session_id")
+    if not healthcheck_id:
+        raise ProtocolError("healthcheck_reply requires healthcheck_id")
+    return HealthcheckReplyRequest(
+        notebook_id=notebook_id,
+        session_id=session_id,
+        healthcheck_id=healthcheck_id,
     )
 
 

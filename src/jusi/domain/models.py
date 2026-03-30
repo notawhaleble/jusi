@@ -11,6 +11,15 @@ ExecutionOwnerKind = Literal["kernel", "handler", "unknown"]
 
 
 @dataclass
+class SessionTarget:
+    source: str = ""
+    alias: str = ""
+    kind: str = ""
+    value: str = ""
+    config: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass
 class PreparedClient:
     state: PreparedState = "missing"
     client_id: str = ""
@@ -25,7 +34,11 @@ class Session:
     state: SessionState = "idle"
     kernel_name: str = ""
     connection: str = ""
-    attachable: bool = False
+    target: SessionTarget = field(default_factory=SessionTarget)
+    expires_at: float | None = None
+    frontend_last_ack_at: float | None = None
+    frontend_healthcheck_id: str = ""
+    frontend_healthcheck_deadline: float | None = None
     last_error: str = ""
     last_action: str = ""
     prepared: PreparedClient = field(default_factory=PreparedClient)

@@ -1,19 +1,135 @@
 from __future__ import annotations
 
+import json
 import os
+import signal
 from queue import Empty
 from dataclasses import dataclass, field
 from itertools import count
 from types import SimpleNamespace
 from typing import Any, Protocol
+from uuid import uuid4
 
-from jusi.domain.models import CellExecution, ExecutableCell, Session
+from jusi.domain.models import CellExecution, ExecutableCell, Session, SessionTarget
 from jusi.infrastructure.client_view import build_client_view
 from jusi.infrastructure.client_runtime import ProcessClientHandle
 
 
 class RuntimeDependencyError(RuntimeError):
     """Raised when an optional runtime dependency is required but unavailable."""
+
+
+def _connection_registry_path(connection_file: str) -> str:
+    return f"{connection_file}.jusi-attached.json"
+
+
+def _is_live_pid(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _load_attached_record(connection_file: str) -> dict[str, object]:
+    path = _connection_registry_path(connection_file)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except FileNotFoundError:
+        return {"pids": [], "expires_at": None}
+    except json.JSONDecodeError:
+        return {"pids": [], "expires_at": None}
+    if isinstance(raw, list):
+        raw = {"pids": raw, "expires_at": None}
+    if not isinstance(raw, dict):
+        return {"pids": [], "expires_at": None}
+    pids: list[int] = []
+    for value in raw.get("pids", []):
+        try:
+            pid = int(value)
+        except (TypeError, ValueError):
+            continue
+        if _is_live_pid(pid):
+            pids.append(pid)
+    expires_at = raw.get("expires_at")
+    try:
+        parsed_expires_at = float(expires_at) if expires_at is not None else None
+    except (TypeError, ValueError):
+        parsed_expires_at = None
+    return {"pids": sorted(set(pids)), "expires_at": parsed_expires_at}
+
+
+def _store_attached_record(connection_file: str, *, pids: list[int], expires_at: float | None) -> None:
+    path = _connection_registry_path(connection_file)
+    live_pids = [pid for pid in sorted(set(pids)) if _is_live_pid(pid)]
+    if not live_pids and expires_at is None:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        return
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump({"pids": live_pids, "expires_at": expires_at}, handle)
+
+
+def _register_attached_supervisor(connection_file: str, pid: int) -> None:
+    if pid <= 0:
+        return
+    record = _load_attached_record(connection_file)
+    _store_attached_record(
+        connection_file,
+        pids=list(record["pids"]) + [pid],
+        expires_at=record["expires_at"] if isinstance(record.get("expires_at"), (int, float)) else None,
+    )
+
+
+def _unregister_attached_supervisor(connection_file: str, pid: int) -> None:
+    if pid <= 0:
+        return
+    record = _load_attached_record(connection_file)
+    _store_attached_record(
+        connection_file,
+        pids=[known_pid for known_pid in list(record["pids"]) if known_pid != pid],
+        expires_at=record["expires_at"] if isinstance(record.get("expires_at"), (int, float)) else None,
+    )
+
+
+def _set_attached_expiry(connection_file: str, expires_at: float | None) -> None:
+    record = _load_attached_record(connection_file)
+    _store_attached_record(connection_file, pids=list(record["pids"]), expires_at=expires_at)
+
+
+def _get_attached_expiry(connection_file: str) -> float | None:
+    record = _load_attached_record(connection_file)
+    expires_at = record.get("expires_at")
+    return float(expires_at) if isinstance(expires_at, (int, float)) else None
+
+
+def _signal_attached_supervisors(connection_file: str, *, sig: int, exclude_pid: int) -> None:
+    live_peers: list[int] = []
+    record = _load_attached_record(connection_file)
+    expires_at = record["expires_at"] if isinstance(record.get("expires_at"), (int, float)) else None
+    for pid in list(record["pids"]):
+        if pid == exclude_pid:
+            continue
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            continue
+        except PermissionError:
+            live_peers.append(pid)
+            continue
+        live_peers.append(pid)
+    _store_attached_record(
+        connection_file,
+        pids=live_peers + ([exclude_pid] if _is_live_pid(exclude_pid) else []),
+        expires_at=expires_at,
+    )
 
 
 class RuntimeClientHandle(Protocol):
@@ -206,6 +322,17 @@ class ClientRegistryRuntime:
             return []
         return list(session_clients.clients.values())
 
+    def close(self) -> None:
+        for session_id in list(self._session_clients.keys()):
+            self.release_session_clients(session_id, reason="backend_shutdown")
+
+    def sync_disconnect_deadline(self, session: Session, expires_at: float | None) -> float | None:
+        _ = session
+        return expires_at
+
+    def expire_session(self, session: Session) -> None:
+        self.stop_session(session)
+
     def _next_client_id(self, session_id: str) -> str:
         _ = session_id
         ident = next(self._client_counter)
@@ -250,6 +377,20 @@ def _start_new_kernel(kernel_name: str) -> tuple[Any, Any]:
         ) from exc
 
 
+def _attach_existing_kernel(connection_file: str) -> Any:
+    try:
+        from jupyter_client import BlockingKernelClient
+    except ModuleNotFoundError as exc:
+        raise RuntimeDependencyError(
+            "Managed runtime requires jupyter_client to be installed"
+        ) from exc
+
+    client = BlockingKernelClient()
+    client.load_connection_file(connection_file=connection_file)
+    client.start_channels()
+    return client
+
+
 class InMemoryKernelRuntime(ClientRegistryRuntime):
     def __init__(self) -> None:
         super().__init__()
@@ -257,8 +398,21 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
 
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         ident = next(self._session_counter)
-        session_id = f"session-{ident}"
+        session_id = f"sess-{uuid4().hex}"
         connection = f"inmemory://{kernel_name}/{ident}"
+        return session_id, connection
+
+    def start_target(self, target: SessionTarget, kernel_name: str) -> tuple[str, str]:
+        _ = target
+        session_id, connection = self.start_managed(kernel_name)
+        return session_id, connection
+
+    def attach_target(self, target: SessionTarget) -> tuple[str, str]:
+        if target.kind != "connection_file":
+            raise RuntimeError(f"Attach target kind is not supported yet: {target.kind or 'external'}")
+        ident = next(self._session_counter)
+        session_id = f"sess-{uuid4().hex}"
+        connection = target.value or f"{target.kind or 'external'}://attached/{ident}"
         return session_id, connection
 
     def execute_cell(self, session: Session, cell: ExecutableCell, client: CellExecution) -> str:
@@ -315,6 +469,38 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
     def disconnect_session(self, session: Session, reason: str) -> None:
         self.release_session_clients(session.session_id, reason=reason)
 
+    def sync_disconnect_deadline(self, session: Session, expires_at: float | None) -> float | None:
+        connection_file = str(getattr(session, "connection", "") or "")
+        if session.target.kind != "connection_file" or not connection_file:
+            return expires_at
+        if expires_at is not None:
+            _set_attached_expiry(connection_file, expires_at)
+            return expires_at
+        shared = _get_attached_expiry(connection_file)
+        if shared is not None:
+            return shared
+        _set_attached_expiry(connection_file, None)
+        return None
+
+    def expire_session(self, session: Session) -> None:
+        self.stop_session(session)
+
+    def sync_disconnect_deadline(self, session: Session, expires_at: float | None) -> float | None:
+        connection_file = str(getattr(session, "connection", "") or "")
+        if session.target.kind != "connection_file" or not connection_file:
+            return expires_at
+        if expires_at is not None:
+            _set_attached_expiry(connection_file, expires_at)
+            return expires_at
+        shared = _get_attached_expiry(connection_file)
+        if shared is not None:
+            return shared
+        _set_attached_expiry(connection_file, None)
+        return None
+
+    def expire_session(self, session: Session) -> None:
+        self.stop_session(session)
+
     def stop_session(self, session: Session) -> None:
         self.release_session_clients(session.session_id, reason="session_stop")
 
@@ -330,9 +516,33 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def supports_background_stop(self) -> bool:
         return True
 
+    def start_target(self, target: SessionTarget, kernel_name: str) -> tuple[str, str]:
+        _ = target
+        session_id, connection = self.start_managed(kernel_name)
+        return session_id, connection
+
+    def attach_target(self, target: SessionTarget) -> tuple[str, str]:
+        if target.kind != "connection_file":
+            raise RuntimeError(f"Attach target kind is not supported yet: {target.kind or 'external'}")
+        connection_file = target.value.strip()
+        if not connection_file:
+            raise RuntimeError("Attach target requires a connection file")
+        client = _attach_existing_kernel(connection_file)
+        session_id = f"sess-{uuid4().hex}"
+        _register_attached_supervisor(connection_file, os.getpid())
+        self._sessions[session_id] = SimpleNamespace(
+            manager=None,
+            client=client,
+            interrupted_client_ids=set(),
+            pending_inputs={},
+            external=True,
+            connection_file=connection_file,
+        )
+        return session_id, connection_file
+
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         km, kc = _start_new_kernel(kernel_name=kernel_name)
-        session_id = f"managed:{id(km)}"
+        session_id = f"sess-{uuid4().hex}"
         self._sessions[session_id] = SimpleNamespace(
             manager=km,
             client=kc,
@@ -571,7 +781,10 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
 
     def interrupt_kernel(self, session: Session, execution: CellExecution) -> str:
         runtime_session = self._require_session(session.session_id)
-        runtime_session.manager.interrupt_kernel()
+        manager = getattr(runtime_session, "manager", None)
+        if manager is None or not hasattr(manager, "interrupt_kernel"):
+            raise RuntimeError("Attached external kernel interrupt is not supported yet")
+        manager.interrupt_kernel()
         runtime_session.interrupted_client_ids.add(execution.client_id)
         runtime_session.pending_inputs.pop(execution.client_id, None)
         self.update_client_execution_status(session, execution.client_id, "interrupted")
@@ -597,6 +810,22 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def disconnect_session(self, session: Session, reason: str) -> None:
         self.release_session_clients(session.session_id, reason=reason)
 
+    def sync_disconnect_deadline(self, session: Session, expires_at: float | None) -> float | None:
+        connection_file = str(getattr(session, "connection", "") or "")
+        if session.target.kind != "connection_file" or not connection_file:
+            return expires_at
+        if expires_at is not None:
+            _set_attached_expiry(connection_file, expires_at)
+            return expires_at
+        shared = _get_attached_expiry(connection_file)
+        if shared is not None:
+            return shared
+        _set_attached_expiry(connection_file, None)
+        return None
+
+    def expire_session(self, session: Session) -> None:
+        self.stop_session(session)
+
     def shutdown_client(self, session: Session, client_id: str, reason: str) -> None:
         runtime_session = self._sessions.get(session.session_id)
         if runtime_session is not None:
@@ -614,14 +843,54 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             runtime_session.client.stop_channels()
         except Exception:
             pass
+        manager = getattr(runtime_session, "manager", None)
+        connection_file = str(getattr(runtime_session, "connection_file", "") or "")
+        if manager is None:
+            shutdown = getattr(runtime_session.client, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown(restart=False)
+                except Exception:
+                    pass
+            if connection_file:
+                _set_attached_expiry(connection_file, None)
+                _signal_attached_supervisors(connection_file, sig=signal.SIGTERM, exclude_pid=os.getpid())
+                _unregister_attached_supervisor(connection_file, os.getpid())
+            return
         try:
-            runtime_session.manager.shutdown_kernel(now=True)
+            manager.shutdown_kernel(now=True)
         except Exception:
             pass
         try:
-            runtime_session.manager.cleanup_resources()
+            manager.cleanup_resources()
         except Exception:
             pass
+
+    def close(self) -> None:
+        super().close()
+        for session_id in list(self._sessions.keys()):
+            runtime_session = self._sessions.pop(session_id, None)
+            if runtime_session is None:
+                continue
+            runtime_session.pending_inputs.clear()
+            try:
+                runtime_session.client.stop_channels()
+            except Exception:
+                pass
+            connection_file = str(getattr(runtime_session, "connection_file", "") or "")
+            if connection_file:
+                _unregister_attached_supervisor(connection_file, os.getpid())
+            manager = getattr(runtime_session, "manager", None)
+            if manager is None:
+                continue
+            try:
+                manager.shutdown_kernel(now=True)
+            except Exception:
+                pass
+            try:
+                manager.cleanup_resources()
+            except Exception:
+                pass
 
     def _require_session(self, session_id: str) -> Any:
         try:
@@ -661,6 +930,10 @@ class InMemorySessionStore:
                 for (stored_notebook_id, _cell_id), execution in self._executions.items()
                 if stored_notebook_id == notebook_id
             ]
+
+    def list_sessions(self) -> list[Session]:
+        with self._lock:
+            return list(self._sessions.values())
 
 
 def build_runtime() -> InMemoryKernelRuntime | ManagedKernelRuntime:

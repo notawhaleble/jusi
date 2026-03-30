@@ -3,13 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
-from jusi.domain.models import CellExecution, ExecutableCell, Session
+from jusi.domain.models import CellExecution, ExecutableCell, Session, SessionTarget
 
 
 @dataclass(frozen=True)
 class StartSessionCommand:
     notebook_id: str
     kernel_name: str
+    target: SessionTarget
+
+
+@dataclass(frozen=True)
+class AttachSessionCommand:
+    notebook_id: str
+    target: SessionTarget
 
 
 @dataclass(frozen=True)
@@ -71,6 +78,13 @@ class InputReplyCommand:
     value: str
 
 
+@dataclass(frozen=True)
+class HealthcheckReplyCommand:
+    notebook_id: str
+    session_id: str
+    healthcheck_id: str
+
+
 class SessionEventSink(Protocol):
     def session_updated(self, notebook_id: str, payload: dict) -> None:
         ...
@@ -83,6 +97,12 @@ class SessionEventSink(Protocol):
 
 
 class KernelRuntime(Protocol):
+    def start_target(self, target: SessionTarget, kernel_name: str) -> tuple[str, str]:
+        """Start a new session for the resolved target and return session_id and connection."""
+
+    def attach_target(self, target: SessionTarget) -> tuple[str, str]:
+        """Attach to an existing external target and return session_id and connection."""
+
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         """Return session_id and connection reference."""
 
@@ -125,6 +145,15 @@ class KernelRuntime(Protocol):
     def shutdown_client(self, session: Session, client_id: str, reason: str) -> None:
         """Tear down a specific client lifecycle if the runtime owns one."""
 
+    def close(self) -> None:
+        """Sweep any runtime-owned resources during backend root-process shutdown."""
+
+    def sync_disconnect_deadline(self, session: Session, expires_at: float | None) -> float | None:
+        """Persist or fetch any shared disconnect deadline for the session."""
+
+    def expire_session(self, session: Session) -> None:
+        """Perform final timeout teardown for the session."""
+
 
 class SessionStore(Protocol):
     def save(self, session: Session) -> None:
@@ -140,4 +169,7 @@ class SessionStore(Protocol):
         ...
 
     def list_executions(self, notebook_id: str) -> list[CellExecution]:
+        ...
+
+    def list_sessions(self) -> list[Session]:
         ...

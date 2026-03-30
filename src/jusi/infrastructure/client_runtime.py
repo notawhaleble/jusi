@@ -32,6 +32,7 @@ def _build_client_env(client_id: str, notebook_id: str, session_id: str, control
             "JUSI_NOTEBOOK_ID": notebook_id,
             "JUSI_SESSION_ID": session_id,
             "JUSI_CLIENT_CONTROL_DIR": control_dir,
+            "JUSI_SUPERVISOR_PID": str(os.getpid()),
         }
     )
     return env

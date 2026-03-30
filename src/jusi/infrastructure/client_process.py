@@ -38,8 +38,38 @@ class ClientProcessRunner:
         self._commands_path = os.path.join(self._control_dir, "commands.jsonl") if self._control_dir else ""
         self._status_path = os.path.join(self._control_dir, "status.json") if self._control_dir else ""
         self._command_offset = 0
+        self._supervisor_pid = self._parse_supervisor_pid(os.environ.get("JUSI_SUPERVISOR_PID", ""))
+
+    @staticmethod
+    def _parse_supervisor_pid(raw: str) -> int:
+        try:
+            value = int(str(raw).strip())
+        except ValueError:
+            return 0
+        return value if value > 0 else 0
 
     def _stop(self, _signum: int, _frame: object) -> None:
+        self._running = False
+
+    def _supervisor_is_alive(self) -> bool:
+        if self._supervisor_pid <= 0:
+            return True
+        if os.getppid() != self._supervisor_pid:
+            return False
+        try:
+            os.kill(self._supervisor_pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _mark_shutdown(self, reason: str) -> None:
+        self._state.shutdown_reason = reason
+        self._state.client_bufnr = -1
+        self._state.view_revision += 1
+        self._state.lifecycle.append(f"shutdown:{reason}")
+        self._write_status()
         self._running = False
 
     def _write_status(self) -> None:
@@ -108,12 +138,7 @@ class ClientProcessRunner:
                 self._write_status()
             return
         if kind == "shutdown":
-            self._state.shutdown_reason = str(command.get("reason", "")).strip()
-            self._state.client_bufnr = -1
-            self._state.view_revision += 1
-            self._state.lifecycle.append(f"shutdown:{self._state.shutdown_reason}")
-            self._write_status()
-            self._running = False
+            self._mark_shutdown(str(command.get("reason", "")).strip())
 
     def _poll_commands(self) -> None:
         if not self._commands_path or not os.path.exists(self._commands_path):
@@ -137,6 +162,9 @@ class ClientProcessRunner:
         self._write_status()
 
         while self._running:
+            if not self._supervisor_is_alive():
+                self._mark_shutdown("supervisor_lost")
+                break
             self._poll_commands()
             time.sleep(0.1)
         return 0
