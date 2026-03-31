@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Callable
 
 from jusi.application.errors import SessionExpiredError, SessionNotFoundError, SessionStoppedError
 from jusi.application.ports import (
@@ -8,6 +9,7 @@ from jusi.application.ports import (
     BindPreparedClientCommand,
     DisconnectSessionCommand,
     ExecuteCellCommand,
+    HandlerMessageCommand,
     HealthcheckReplyCommand,
     InputReplyCommand,
     InterruptCellCommand,
@@ -20,6 +22,7 @@ from jusi.application.ports import (
     StartSessionCommand,
 )
 from jusi.domain.models import CellExecution, PreparedClient, Session, SessionTarget
+from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, default_frontend_channel
 
 
 def _target_payload(target: SessionTarget) -> dict:
@@ -153,10 +156,31 @@ class AttachSession:
 
 
 class ExecuteCell:
-    def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
+    def __init__(
+        self,
+        runtime: KernelRuntime,
+        store: SessionStore,
+        events: SessionEventSink,
+        display_handlers: DisplayHandlerRegistry | None = None,
+        active_handlers: DisplayHandlerRuntime | None = None,
+        handler_message_sink: Callable[[str, str, str, str, str, dict], None] | None = None,
+        live_handler_message_sink: Callable[[str, str, str, str, str, dict], None] | None = None,
+    ) -> None:
         self._runtime = runtime
         self._store = store
         self._events = events
+        self._display_handlers = display_handlers or DisplayHandlerRegistry()
+        self._active_handlers = active_handlers or DisplayHandlerRuntime()
+        self._handler_message_sink = handler_message_sink or (lambda *_args: None)
+        self._live_handler_message_sink = live_handler_message_sink or (lambda *_args: None)
+
+    def _resolve_owner_kind(self, command: ExecuteCellCommand) -> str:
+        matched_handler = self._display_handlers.find_for_cell(command.cell.main_lines)
+        if matched_handler is not None:
+            return "handler"
+        if command.cell.kind == "magic":
+            return "handler"
+        return "kernel"
 
     def begin_execute(self, command: ExecuteCellCommand) -> tuple[Session, CellExecution]:
         session = _require_matching_session(self._store, command.notebook_id, command.session_id)
@@ -168,7 +192,7 @@ class ExecuteCell:
         current_client = CellExecution(
             cell_id=command.cell.cell_id,
             status="busy",
-            owner_kind="handler" if command.cell.kind == "magic" else "kernel",
+            owner_kind=self._resolve_owner_kind(command),
             client_id=session.prepared.client_id,
             client_bufnr=session.prepared.client_bufnr,
             client_state="active",
@@ -193,7 +217,48 @@ class ExecuteCell:
         return session, current_client
 
     def finish_execute(self, command: ExecuteCellCommand, session: Session, current_client: CellExecution) -> CellExecution:
-        current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
+        matched_handler = self._display_handlers.find_for_cell(command.cell.main_lines)
+        if matched_handler is not None:
+            handler = matched_handler.factory()
+            append_event = lambda event: self._runtime.append_client_execution_event(session, current_client.client_id, event)
+            context = HandlerContext(
+                notebook_id=command.notebook_id,
+                session_id=session.session_id,
+                cell_id=current_client.cell_id,
+                client_id=current_client.client_id,
+                channel=default_frontend_channel(
+                    handler_id=matched_handler.handler_id,
+                    notebook_id=command.notebook_id,
+                    session_id=session.session_id,
+                    client_id=current_client.client_id,
+                    append_execution_event=append_event,
+                    emit_handler_message=self._handler_message_sink,
+                ),
+                push_frontend_message=lambda message_type, payload: self._live_handler_message_sink(
+                    command.notebook_id,
+                    session.session_id,
+                    current_client.client_id,
+                    matched_handler.handler_id,
+                    message_type,
+                    payload,
+                ),
+                append_execution_event=append_event,
+                update_execution_status=lambda status: self._runtime.update_client_execution_status(
+                    session, current_client.client_id, status
+                ),
+            )
+            self._active_handlers.register(
+                session.session_id,
+                current_client.client_id,
+                ActiveDisplayHandler(
+                    handler_id=matched_handler.handler_id,
+                    handler=handler,
+                    context=context,
+                ),
+            )
+            current_client.status = handler.execute(context, command.cell)
+        else:
+            current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
         self._store.save_execution(command.notebook_id, current_client)
         self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
         return current_client
@@ -457,4 +522,20 @@ class HealthcheckReply:
         session.frontend_healthcheck_id = ""
         session.frontend_healthcheck_deadline = None
         self._store.save(session)
+        return session
+
+
+class HandlerMessage:
+    def __init__(self, store: SessionStore, active_handlers: DisplayHandlerRuntime) -> None:
+        self._store = store
+        self._active_handlers = active_handlers
+
+    def execute(self, command: HandlerMessageCommand) -> Session:
+        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
+        active_handler = self._active_handlers.get(command.session_id, command.client_id)
+        if active_handler is None:
+            raise ValueError("No active handler is registered for the client")
+        if active_handler.handler_id != command.handler_id:
+            raise ValueError("Handler message does not match the active handler")
+        active_handler.handler.on_frontend_message(active_handler.context, command.message_type, command.payload)
         return session

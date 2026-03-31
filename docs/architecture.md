@@ -116,10 +116,33 @@ Owns:
 - event encoding
 - backend entrypoints
 
+## Plugin Direction
+
+Handler/plugin support should not be modeled as “just another runtime” or “just a renderer taxonomy”.
+
+Current direction:
+
+- a plugin has at least:
+  - magic command definition
+  - display handler
+- backend core provides:
+  - session/client lifecycle framing
+  - plugin discoverability/loading
+  - status consistency
+  - a structured plugin/frontend communication channel
+- plugin display handlers own:
+  - plugin-specific interaction logic
+  - follow-up/completion semantics
+  - mode transitions, for example VisiData-like navigation into shell-like interaction
+
+This is the level where MVP-style flexibility such as `%%sql`, `%%vd`, and `%%oc` generalizes best.
+
+See [plugins.md](/Users/niku/Documents/dev/jusi/docs/plugins.md) for the working draft.
+
 ## Next Architecture Step
 
-The next real design step is not more target variants. It is exercising the current durable-session model against real frontend behavior:
+The next real design step is to turn the plugin draft into an explicit backend seam:
 
-- validate backend-issued healthchecks against the current `jusivim` transport path
-- confirm disconnect/timeout behavior for hard frontend loss
-- then decide what external attach capability should widen next beyond `connection_file`
+- define `MagicCommand`, `DisplayHandler`, `HandlerContext`, and `FrontendChannel`
+- keep plugin behavior inside the normal session/client lifecycle instead of inventing a parallel subsystem
+- use one small first plugin path to validate the seam before larger first-party plugins land

@@ -79,6 +79,19 @@ def _render_event_lines(event: dict) -> tuple[str | None, list[str]]:
         return None, ["interrupted"]
     if event_type == "execution_state":
         return None, [f"state: {event.get('status', '')}"]
+    if event_type == "handler_stream":
+        text = str(event.get("text", ""))
+        return None, [f"handler.out> {text}"] if text else ["handler.out>"]
+    if event_type == "handler_input":
+        text = str(event.get("text", ""))
+        return None, [f"handler.in> {text}"] if text else ["handler.in>"]
+    if event_type == "handler_prompt":
+        text = str(event.get("text", ""))
+        return None, [f"handler.prompt> {text}"] if text else ["handler.prompt>"]
+    if event_type == "handler_channel_event":
+        return None, _render_handler_channel_event(event)
+    if event_type == "frontend_action_request":
+        return None, _render_frontend_action_request(event)
     if event_type == "execute_input":
         execution_count = event.get("execution_count")
         prefix = "execute"
@@ -159,4 +172,27 @@ def _render_comm_lines(event_type: str, event: dict) -> list[str]:
         lines.append(f"comm.data> {json.dumps(event.get('data', {}), ensure_ascii=True, sort_keys=True)}")
     if "state" in event:
         lines.append(f"comm.state> {json.dumps(event.get('state', {}), ensure_ascii=True, sort_keys=True)}")
+    return lines
+
+
+def _render_handler_channel_event(event: dict) -> list[str]:
+    event_type = str(event.get("event_type", "")).strip() or "event"
+    payload = event.get("payload", {})
+    if event_type == "handler_snapshot" and isinstance(payload, dict):
+        handler_id = str(payload.get("handler_id", "")).strip() or "handler"
+        mode = str(payload.get("mode", "")).strip() or "unknown"
+        entry = str(payload.get("entry", "")).strip()
+        lines = [f"handler> {handler_id} mode={mode}"]
+        if entry:
+            lines.append(f"handler.entry> {entry}")
+        return lines
+    return [f"handler.event> {event_type} {json.dumps(payload, ensure_ascii=True, sort_keys=True)}"]
+
+
+def _render_frontend_action_request(event: dict) -> list[str]:
+    action_type = str(event.get("action_type", "")).strip() or "action"
+    payload = event.get("payload", {})
+    lines = [f"frontend.action> {action_type}"]
+    if payload:
+        lines.append(f"frontend.payload> {json.dumps(payload, ensure_ascii=True, sort_keys=True)}")
     return lines

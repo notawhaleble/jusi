@@ -129,6 +129,16 @@ class HealthcheckReplyRequest:
     healthcheck_id: str
 
 
+@dataclass(frozen=True)
+class HandlerMessageRequest:
+    notebook_id: str
+    session_id: str
+    client_id: str
+    handler_id: str
+    message_type: str
+    payload: Dict[str, Any]
+
+
 def parse_envelope(raw: str) -> Envelope:
     try:
         data = json.loads(raw)
@@ -385,6 +395,35 @@ def parse_healthcheck_reply(payload: Mapping[str, Any]) -> HealthcheckReplyReque
         notebook_id=notebook_id,
         session_id=session_id,
         healthcheck_id=healthcheck_id,
+    )
+
+
+def parse_handler_message(payload: Mapping[str, Any]) -> HandlerMessageRequest:
+    notebook_id = str(payload.get("notebook_id", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    client_id = str(payload.get("client_id", "")).strip()
+    handler_id = str(payload.get("handler_id", "")).strip()
+    message_type = str(payload.get("message_type", "")).strip()
+    message_payload = payload.get("payload", {})
+    if not notebook_id:
+        raise ProtocolError("handler_message requires notebook_id")
+    if not session_id:
+        raise ProtocolError("handler_message requires session_id")
+    if not client_id:
+        raise ProtocolError("handler_message requires client_id")
+    if not handler_id:
+        raise ProtocolError("handler_message requires handler_id")
+    if not message_type:
+        raise ProtocolError("handler_message requires message_type")
+    if not isinstance(message_payload, Mapping):
+        raise ProtocolError("handler_message requires payload object")
+    return HandlerMessageRequest(
+        notebook_id=notebook_id,
+        session_id=session_id,
+        client_id=client_id,
+        handler_id=handler_id,
+        message_type=message_type,
+        payload=dict(message_payload),
     )
 
 

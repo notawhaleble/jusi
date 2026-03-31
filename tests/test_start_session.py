@@ -845,6 +845,32 @@ class StartSessionTest(unittest.TestCase):
         self.assertIsNotNone(session.expires_at)
         self.assertEqual([], runtime.list_clients(session_id))
 
+    def test_poll_client_updates_emits_revision_invalidation_event(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, client_id = self.start_and_bind(server)
+
+        server.poll_client_updates()
+        self.assertEqual([], server.drain_pending_messages())
+
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        runtime.append_client_execution_event(
+            session,
+            client_id,
+            {"type": "execution_state", "status": "busy"},
+        )
+
+        server.poll_client_updates()
+
+        messages = server.drain_pending_messages()
+        envelopes = [parse_envelope(message) for message in messages]
+        self.assertEqual(["client_updated"], [envelope.type for envelope in envelopes])
+        self.assertEqual("nb-1", envelopes[0].payload["notebook_id"])
+        self.assertEqual(session_id, envelopes[0].payload["session_id"])
+        self.assertEqual(client_id, envelopes[0].payload["client_id"])
+        self.assertGreater(envelopes[0].payload["revision"], 0)
+
     def test_stop_session_clears_prepared_and_interrupts_active_cells(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)

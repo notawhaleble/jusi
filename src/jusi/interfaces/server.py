@@ -7,10 +7,10 @@ import uuid
 from typing import List, Optional
 
 from jusi.application.errors import SessionError, SessionNotFoundError
-from jusi.application.ports import AttachSessionCommand, BindPreparedClientCommand, ExecuteCellCommand, HealthcheckReplyCommand, InputReplyCommand, InterruptCellCommand, StartSessionCommand
+from jusi.application.ports import AttachSessionCommand, BindPreparedClientCommand, ExecuteCellCommand, HandlerMessageCommand, HealthcheckReplyCommand, InputReplyCommand, InterruptCellCommand, StartSessionCommand
 from jusi.application.ports import DisconnectSessionCommand, ReconnectSessionCommand, StopSessionCommand
 from jusi.application.ports import ShutdownClientCommand
-from jusi.application.use_cases import AttachSession, BindPreparedClient, DisconnectSession, ExecuteCell, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
+from jusi.application.use_cases import AttachSession, BindPreparedClient, DisconnectSession, ExecuteCell, HandlerMessage, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
 from jusi.domain.models import ExecutableCell
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore, build_runtime
 from jusi.interfaces.protocol import (
@@ -23,6 +23,7 @@ from jusi.interfaces.protocol import (
     parse_disconnect_session,
     parse_envelope,
     parse_execute_cell,
+    parse_handler_message,
     parse_healthcheck_reply,
     parse_input_reply,
     parse_inspect_client,
@@ -33,6 +34,7 @@ from jusi.interfaces.protocol import (
     parse_stop_session,
     response_envelope,
 )
+from jusi.plugins import DisplayHandlerRegistry, DisplayHandlerRuntime, build_display_handler_registry
 
 FRONTEND_HEALTHCHECK_INTERVAL_SECONDS = 5.0
 FRONTEND_HEALTHCHECK_REPLY_TTL_SECONDS = 10.0
@@ -76,6 +78,46 @@ class ProtocolEventSink:
             )
         )
 
+    def handler_message(
+        self,
+        notebook_id: str,
+        session_id: str,
+        client_id: str,
+        handler_id: str,
+        message_type: str,
+        payload: dict,
+    ) -> None:
+        self._events.append(
+            Envelope(
+                version=1,
+                kind="event",
+                type="handler_message",
+                payload={
+                    "notebook_id": notebook_id,
+                    "session_id": session_id,
+                    "client_id": client_id,
+                    "handler_id": handler_id,
+                    "message_type": message_type,
+                    "payload": payload,
+                },
+            )
+        )
+
+    def client_updated(self, notebook_id: str, session_id: str, client_id: str, revision: int) -> None:
+        self._events.append(
+            Envelope(
+                version=1,
+                kind="event",
+                type="client_updated",
+                payload={
+                    "notebook_id": notebook_id,
+                    "session_id": session_id,
+                    "client_id": client_id,
+                    "revision": revision,
+                },
+            )
+        )
+
     def healthcheck(self, notebook_id: str, session_id: str, healthcheck_id: str) -> None:
         self._events.append(
             Envelope(
@@ -92,10 +134,42 @@ class ProtocolEventSink:
 
 
 class ProtocolServer:
-    def __init__(self, runtime: Optional[InMemoryKernelRuntime] = None) -> None:
+    def __init__(
+        self,
+        runtime: Optional[InMemoryKernelRuntime] = None,
+        display_handlers: Optional[DisplayHandlerRegistry] = None,
+    ) -> None:
         self._runtime = runtime or build_runtime()
         self._store = InMemorySessionStore()
         self._pending_events: SimpleQueue[Envelope] = SimpleQueue()
+        self._display_handlers = display_handlers or build_display_handler_registry()
+        self._active_handlers = DisplayHandlerRuntime()
+        self._client_revisions: dict[tuple[str, str], int] = {}
+
+    def _queue_handler_message(
+        self,
+        notebook_id: str,
+        session_id: str,
+        client_id: str,
+        handler_id: str,
+        message_type: str,
+        payload: dict,
+    ) -> None:
+        self._pending_events.put(
+            Envelope(
+                version=1,
+                kind="event",
+                type="handler_message",
+                payload={
+                    "notebook_id": notebook_id,
+                    "session_id": session_id,
+                    "client_id": client_id,
+                    "handler_id": handler_id,
+                    "message_type": message_type,
+                    "payload": payload,
+                },
+            )
+        )
 
     def drain_pending_messages(self) -> List[str]:
         envelopes: List[Envelope] = []
@@ -109,6 +183,7 @@ class ProtocolServer:
         return dump_envelopes(envelopes)
 
     def close(self) -> None:
+        self._active_handlers.stop_all()
         close_runtime = getattr(self._runtime, "close", None)
         if callable(close_runtime):
             close_runtime()
@@ -124,6 +199,7 @@ class ProtocolServer:
             if deadline is None or deadline > now:
                 continue
             self._runtime.expire_session(session)
+            self._active_handlers.remove_session(session.session_id)
             session.state = "stopped"
             session.last_action = "timeout"
             session.last_error = "session_expired"
@@ -173,6 +249,43 @@ class ProtocolServer:
                 )
             )
 
+    def poll_client_updates(self) -> None:
+        list_clients = getattr(self._runtime, "list_clients", None)
+        if not callable(list_clients):
+            return
+        live_keys: set[tuple[str, str]] = set()
+        for session in self._store.list_sessions():
+            for runtime_client in list_clients(session.session_id):
+                key = (session.session_id, runtime_client.client_id)
+                live_keys.add(key)
+                try:
+                    view = self._runtime.read_client_view(session, runtime_client.client_id)
+                except Exception:
+                    continue
+                revision = int(view.get("revision", 0))
+                previous_revision = self._client_revisions.get(key)
+                if previous_revision == revision:
+                    continue
+                self._client_revisions[key] = revision
+                if previous_revision is None:
+                    continue
+                self._pending_events.put(
+                    Envelope(
+                        version=1,
+                        kind="event",
+                        type="client_updated",
+                        payload={
+                            "notebook_id": session.notebook_id,
+                            "session_id": session.session_id,
+                            "client_id": runtime_client.client_id,
+                            "revision": revision,
+                        },
+                    )
+                )
+        stale_keys = [key for key in self._client_revisions if key not in live_keys]
+        for key in stale_keys:
+            self._client_revisions.pop(key, None)
+
     def handle_message(self, raw: str) -> List[str]:
         request = parse_envelope(raw)
         if request.kind != "request":
@@ -202,6 +315,8 @@ class ProtocolServer:
                 return self._handle_input_reply(request)
             if request.type == "healthcheck_reply":
                 return self._handle_healthcheck_reply(request)
+            if request.type == "handler_message":
+                return self._handle_handler_message(request)
             return dump_envelopes([error_response(request, "unknown_request", "Unknown request type")])
         except ProtocolError as exc:
             return dump_envelopes([error_response(request, "invalid_request", str(exc))])
@@ -280,6 +395,7 @@ class ProtocolServer:
             return dump_envelopes([error_response(request, exc.code, str(exc))])
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        self._active_handlers.remove_session(disconnect_request.session_id)
         envelopes = [response_envelope(request, ok=True)]
         envelopes.extend(events.events)
         return dump_envelopes(envelopes)
@@ -306,7 +422,15 @@ class ProtocolServer:
     def _handle_execute_cell(self, request: Envelope) -> List[str]:
         execute_request = parse_execute_cell(request.payload)
         events = ProtocolEventSink()
-        use_case = ExecuteCell(runtime=self._runtime, store=self._store, events=events)
+        use_case = ExecuteCell(
+            runtime=self._runtime,
+            store=self._store,
+            events=events,
+            display_handlers=self._display_handlers,
+            active_handlers=self._active_handlers,
+            handler_message_sink=events.handler_message,
+            live_handler_message_sink=self._queue_handler_message,
+        )
         try:
             command = ExecuteCellCommand(
                 notebook_id=execute_request.notebook_id,
@@ -344,7 +468,15 @@ class ProtocolServer:
     def _spawn_execute_completion(self, command: ExecuteCellCommand, session, current_client) -> None:  # type: ignore[no-untyped-def]
         def _run() -> None:
             events = ProtocolEventSink()
-            use_case = ExecuteCell(runtime=self._runtime, store=self._store, events=events)
+            use_case = ExecuteCell(
+                runtime=self._runtime,
+                store=self._store,
+                events=events,
+                display_handlers=self._display_handlers,
+                active_handlers=self._active_handlers,
+                handler_message_sink=events.handler_message,
+                live_handler_message_sink=self._queue_handler_message,
+            )
             try:
                 use_case.finish_execute(command, session, current_client)
             except Exception:
@@ -487,6 +619,26 @@ class ProtocolServer:
                     notebook_id=healthcheck_request.notebook_id,
                     session_id=healthcheck_request.session_id,
                     healthcheck_id=healthcheck_request.healthcheck_id,
+                )
+            )
+        except SessionError as exc:
+            return dump_envelopes([error_response(request, exc.code, str(exc))])
+        except ValueError as exc:
+            return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        return dump_envelopes([response_envelope(request, ok=True)])
+
+    def _handle_handler_message(self, request: Envelope) -> List[str]:
+        handler_request = parse_handler_message(request.payload)
+        use_case = HandlerMessage(store=self._store, active_handlers=self._active_handlers)
+        try:
+            use_case.execute(
+                HandlerMessageCommand(
+                    notebook_id=handler_request.notebook_id,
+                    session_id=handler_request.session_id,
+                    client_id=handler_request.client_id,
+                    handler_id=handler_request.handler_id,
+                    message_type=handler_request.message_type,
+                    payload=handler_request.payload,
                 )
             )
         except SessionError as exc:

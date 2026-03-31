@@ -13,6 +13,7 @@ Current backend slice covers:
 - `execute_cell`
 - `interrupt_cell`
 - `input_reply`
+- `handler_message`
 - `healthcheck_reply`
 - `disconnect_session`
 - `reconnect_session`
@@ -194,6 +195,32 @@ Behavior:
 - valid only while that exact active client is waiting on `input_request`
 - resumes the original execution; does not create a new execution identity
 
+### `handler_message`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "client_id": "client-7",
+  "handler_id": "vd",
+  "message_type": "bootstrap_done",
+  "payload": {
+    "bufnr": 91
+  }
+}
+```
+
+Behavior:
+
+- symmetric plugin/frontend message path
+- request form is frontend -> backend
+- event form is backend -> frontend
+- valid only while that client still has an active handler instance registered
+- current built-in `%%vd` path uses this for:
+  - `handler_snapshot`
+  - `action_request`
+  - later frontend replies such as `bootstrap_done`
+
 ### `healthcheck_reply`
 
 ```json
@@ -374,6 +401,52 @@ Behavior:
 }
 ```
 
+### `client_updated`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "client_id": "client-1",
+  "revision": 7
+}
+```
+
+Behavior:
+
+- emitted when backend observes that a client's visible view revision changed
+- intended as a redraw invalidation signal, not as a full view payload
+- frontend should respond by calling `inspect_client` for the same client if it needs the updated snapshot
+- this is the first backend-driven redraw signal for client rendering; `inspect_client` remains the content source for now
+
+### `handler_message`
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "client_id": "client-1",
+  "handler_id": "vd",
+  "message_type": "handler_snapshot",
+  "payload": {
+    "handler_id": "vd",
+    "mode": "browse",
+    "entry": "%%vd pods"
+  }
+}
+```
+
+Behavior:
+
+- backend -> frontend side of the structured handler channel
+- used for plugin/display-handler control messages
+- current built-in `%%vd` PTY path also uses it for live terminal traffic:
+  - `terminal_input`
+  - `terminal_output`
+  - `terminal_prompt`
+- for PTY-backed handlers, pushed `handler_message` events are now the hot path
+- `inspect_client` remains the fallback/debug snapshot path for those handlers
+
 ### `healthcheck`
 
 ```json
@@ -396,3 +469,7 @@ Behavior:
 - `start_session` still routes actual start behavior mainly through `kernel_name`
 - `attach_session` is only real for `target.kind=connection_file`
 - durable session metadata is currently in-memory per backend root process; cross-process persistence is still future work
+- transcript-style client redraw remains invalidation-plus-pull for now:
+  - backend emits `client_updated`
+  - frontend still pulls the full snapshot through `inspect_client`
+- PTY-backed handler output now bypasses that hot path and is pushed directly through `handler_message`

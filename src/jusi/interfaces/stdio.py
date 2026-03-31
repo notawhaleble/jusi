@@ -27,6 +27,7 @@ def process_stream(instream: TextIO, outstream: TextIO, server: ProtocolServer |
                 if active_server.poll_session_timeouts():
                     break
                 active_server.poll_frontend_health()
+                active_server.poll_client_updates()
                 if not running["value"]:
                     break
                 message = raw.strip()
@@ -44,6 +45,7 @@ def process_stream(instream: TextIO, outstream: TextIO, server: ProtocolServer |
             if active_server.poll_session_timeouts():
                 break
             active_server.poll_frontend_health()
+            active_server.poll_client_updates()
             for event in active_server.drain_pending_messages():
                 outstream.write(event + "\n")
             outstream.flush()

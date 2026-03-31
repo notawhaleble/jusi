@@ -105,6 +105,8 @@ Rules:
 - client teardown is separate from interrupt
 - prepared and active-cell client teardown should surface through `client_state`
 - client view snapshots are derived state, not lifecycle state
+- transcript-style client views may still use invalidation plus `inspect_client`
+- PTY-backed handler views may instead stream live terminal updates through pushed `handler_message` events and use `inspect_client` only as fallback/debug
 
 ## Execution Ownership
 

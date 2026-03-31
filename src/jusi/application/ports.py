@@ -85,6 +85,16 @@ class HealthcheckReplyCommand:
     healthcheck_id: str
 
 
+@dataclass(frozen=True)
+class HandlerMessageCommand:
+    notebook_id: str
+    session_id: str
+    client_id: str
+    handler_id: str
+    message_type: str
+    payload: dict
+
+
 class SessionEventSink(Protocol):
     def session_updated(self, notebook_id: str, payload: dict) -> None:
         ...
