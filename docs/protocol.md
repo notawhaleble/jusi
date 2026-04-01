@@ -220,6 +220,12 @@ Behavior:
   - `handler_snapshot`
   - `action_request`
   - later frontend replies such as `bootstrap_done`
+  - PTY input requests:
+    - `terminal_input` with `{ "text": "..." }`
+    - `terminal_key` with key/modifier payload like `{ "key": "enter" }` or `{ "key": "j", "ctrl": true }`
+    - `terminal_resize` with `{ "rows": 40, "cols": 120 }`
+    - `terminal_signal` with `{ "name": "interrupt" }`
+    - `terminal_bytes` with `{ "hex": "1b5b41" }` as a raw escape hatch
 
 ### `healthcheck_reply`
 
@@ -442,8 +448,8 @@ Behavior:
 - used for plugin/display-handler control messages
 - current built-in `%%vd` PTY path also uses it for live terminal traffic:
   - `terminal_input`
-  - `terminal_output`
-  - `terminal_prompt`
+  - `terminal_key`
+  - `terminal_bytes`
 - for PTY-backed handlers, pushed `handler_message` events are now the hot path
 - `inspect_client` remains the fallback/debug snapshot path for those handlers
 
