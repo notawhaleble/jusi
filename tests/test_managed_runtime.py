@@ -7,6 +7,7 @@ import time
 import unittest
 from queue import Empty
 from shlex import quote as shlex_quote
+from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import patch
 
@@ -278,6 +279,33 @@ class FakeManager:
 
 
 class ManagedRuntimeTest(unittest.TestCase):
+    def test_materialize_vd_source_exports_kernel_expression_to_json(self) -> None:
+        runtime = ManagedKernelRuntime()
+        fake_client = FakeClient()
+        fake_client.messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "status",
+                "content": {"execution_state": "idle"},
+            }
+        ]
+        runtime._sessions["sess-1"] = SimpleNamespace(
+            manager=None,
+            client=fake_client,
+            interrupted_client_ids=set(),
+            pending_inputs={},
+        )
+        session = Session(notebook_id="nb-1", session_id="sess-1")
+
+        source = runtime.materialize_vd_source(session, "pods")
+
+        self.assertEqual("json", source["format"])
+        self.assertTrue(os.path.exists(source["path"]))
+        self.assertIn("_jusi_vd_value = (pods)", fake_client.executed[0][0])
+        with open(source["path"], "r", encoding="utf-8") as handle:
+            self.assertEqual("", handle.read())
+        os.unlink(source["path"])
+
     def _start_bound_managed_server(self, client: FakeClient) -> tuple[ProtocolServer, str, str]:
         manager = FakeManager()
         with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):

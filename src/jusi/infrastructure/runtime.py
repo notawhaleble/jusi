@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import tempfile
 from queue import Empty
 from dataclasses import dataclass, field
 from itertools import count
@@ -504,6 +505,15 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
     def stop_session(self, session: Session) -> None:
         self.release_session_clients(session.session_id, reason="session_stop")
 
+    def materialize_vd_source(self, session: Session, expression: str) -> dict[str, str]:
+        if not expression.strip():
+            raise ValueError("%%vd requires a kernel-side expression to render")
+        handle, path = tempfile.mkstemp(prefix=f"jusi-vd-{session.session_id}-", suffix=".json")
+        os.close(handle)
+        with open(path, "w", encoding="utf-8") as output:
+            json.dump({"expression": expression}, output, ensure_ascii=False, indent=2)
+        return {"path": path, "format": "json"}
+
 
 class ManagedKernelRuntime(ClientRegistryRuntime):
     def __init__(self) -> None:
@@ -587,6 +597,41 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
 
         msg_id = runtime_session.client.execute(code)
         return self._drive_execution(runtime_session, session, client, msg_id)
+
+    def materialize_vd_source(self, session: Session, expression: str) -> dict[str, str]:
+        if not expression.strip():
+            raise ValueError("%%vd requires a kernel-side expression to render")
+        runtime_session = self._require_session(session.session_id)
+        handle, path = tempfile.mkstemp(prefix=f"jusi-vd-{session.session_id}-", suffix=".json")
+        os.close(handle)
+        code = "\n".join(
+            [
+                "import json",
+                f"_jusi_vd_value = ({expression})",
+                "if hasattr(_jusi_vd_value, 'to_json'):",
+                f"    open({path!r}, 'w', encoding='utf-8').write(_jusi_vd_value.to_json(orient='records'))",
+                "else:",
+                "    if hasattr(_jusi_vd_value, 'to_dict'):",
+                "        try:",
+                "            _jusi_vd_value = _jusi_vd_value.to_dict(orient='records')",
+                "        except TypeError:",
+                "            try:",
+                "                _jusi_vd_value = _jusi_vd_value.to_dict()",
+                "            except Exception:",
+                "                pass",
+                f"    with open({path!r}, 'w', encoding='utf-8') as _jusi_vd_output:",
+                "        json.dump(_jusi_vd_value, _jusi_vd_output, ensure_ascii=False, default=str, indent=2)",
+            ]
+        )
+        msg_id = runtime_session.client.execute(code, store_history=False)
+        error = self._drive_export_execution(runtime_session.client, msg_id)
+        if error:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
+            raise RuntimeError(error)
+        return {"path": path, "format": "json"}
 
     def reply_input(self, session: Session, execution: CellExecution, value: str) -> str:
         runtime_session = self._require_session(session.session_id)
@@ -764,6 +809,20 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             return kernel_client.get_iopub_msg(timeout=0.1)
         except Empty:
             return None
+
+    def _drive_export_execution(self, kernel_client: Any, msg_id: str) -> str:
+        while True:
+            message = self._try_get_iopub_message(kernel_client)
+            if message is None:
+                continue
+            if message.get("parent_header", {}).get("msg_id") != msg_id:
+                continue
+            msg_type = message.get("msg_type", "")
+            if msg_type == "error":
+                content = message.get("content", {})
+                return f"%%vd export failed: {content.get('ename', '')}: {content.get('evalue', '')}"
+            if msg_type == "status" and message.get("content", {}).get("execution_state") == "idle":
+                return ""
 
     def _try_get_stdin_request(self, kernel_client: Any, msg_id: str) -> dict | None:
         get_stdin_msg = getattr(kernel_client, "get_stdin_msg", None)

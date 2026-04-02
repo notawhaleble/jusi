@@ -242,6 +242,11 @@ class ExecuteCell:
                     message_type,
                     payload,
                 ),
+                invoke_backend_action=lambda action_name, payload: self._invoke_handler_backend_action(
+                    action_name,
+                    session,
+                    payload,
+                ),
                 append_execution_event=append_event,
                 update_execution_status=lambda status: self._runtime.update_client_execution_status(
                     session, current_client.client_id, status
@@ -262,6 +267,12 @@ class ExecuteCell:
         self._store.save_execution(command.notebook_id, current_client)
         self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
         return current_client
+
+    def _invoke_handler_backend_action(self, action_name: str, session: Session, payload: dict[str, object]) -> dict[str, object]:
+        if action_name == "materialize_vd_source":
+            expression = str(payload.get("expression", "")).strip()
+            return dict(self._runtime.materialize_vd_source(session, expression))
+        raise ValueError(f"Unsupported handler backend action: {action_name}")
 
     def execute(self, command: ExecuteCellCommand) -> CellExecution:
         session, current_client = self.begin_execute(command)

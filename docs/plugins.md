@@ -153,6 +153,25 @@ Why:
 
 So VisiData support should likely be a reusable first-party handler base, not a global assumption in the backend core.
 
+Current code status:
+
+- a reusable terminal-hosted handler base now exists in backend code and owns:
+  - PTY child spawn/teardown
+  - terminal input messages
+  - raw PTY byte streaming
+  - resize and signal routing
+- a reusable VisiData-oriented handler base now also exists on top of that terminal host and exposes shared hooks for:
+  - copy
+  - completion
+  - follow-up
+- current built-in `%%vd` now reuses that terminal-hosted base instead of owning PTY details directly
+- current built-in `%%vd` now also reuses the VisiData-oriented base instead of defining those hook names ad hoc
+- current built-in `%%vd` now does its first real job:
+  - parse a kernel-side object expression from cell body
+  - ask backend core to materialize that expression into a source file
+  - pass that source metadata into VisiData bootstrap
+- the next handler-base work is about giving the shared VD hooks richer plugin-facing semantics, not about re-solving PTY lifecycle again
+
 ## First-Class Communication Use Cases
 
 The architecture should explicitly support flows like these:

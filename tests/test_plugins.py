@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 import time
 from unittest.mock import patch
@@ -7,8 +9,10 @@ from jusi.plugins import (
     DisplayHandlerRegistry,
     DisplayHandlerSpec,
     MagicCommand,
+    VDDisplayHandlerBase,
     VDDisplayHandler,
     _build_vd_env,
+    _build_vd_command,
     builtin_display_handler_specs,
     build_display_handler_registry,
     load_display_handler_specs,
@@ -157,6 +161,34 @@ def build_sql_spec():
     )
 
 
+class FakeVDHandler(VDDisplayHandlerBase):
+    def handler_id(self) -> str:
+        return "fake_vd"
+
+    def complete(self, context, payload):  # type: ignore[no-untyped-def]
+        _ = context
+        prefix = str(payload.get("prefix", ""))
+        return [prefix + "_one", prefix + "_two"]
+
+    def followup(self, context, payload):  # type: ignore[no-untyped-def]
+        _ = context
+        return {"cell_text": str(payload.get("cell_text", "")).upper()}
+
+
+class FakePopen:
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        self.args = args
+        self.kwargs = kwargs
+        self.pid = 43210
+
+    def poll(self):  # type: ignore[no-untyped-def]
+        return 0
+
+    def wait(self, timeout=None):  # type: ignore[no-untyped-def]
+        _ = timeout
+        return 0
+
+
 class PluginRegistryTest(unittest.TestCase):
     def test_builtin_display_handler_specs_include_vd(self) -> None:
         specs = builtin_display_handler_specs()
@@ -168,6 +200,121 @@ class PluginRegistryTest(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             env = _build_vd_env()
         self.assertEqual("xterm-256color", env["TERM"])
+
+    def test_build_vd_command_finds_binary_next_to_sys_executable(self) -> None:
+        with tempfile.TemporaryDirectory() as tempdir:
+            python_path = os.path.join(tempdir, "python")
+            vd_path = os.path.join(tempdir, "vd")
+            with open(python_path, "w", encoding="utf-8") as handle:
+                handle.write("")
+            with open(vd_path, "w", encoding="utf-8") as handle:
+                handle.write("#!/bin/sh\n")
+            os.chmod(vd_path, 0o755)
+            with patch("jusi.plugins.shutil.which", return_value=""), patch("jusi.plugins.sys.executable", python_path):
+                command, notice = _build_vd_command()
+        self.assertEqual(vd_path, command[0])
+        self.assertEqual("", notice)
+
+    def test_vd_base_copy_complete_and_followup_hooks_emit_results(self) -> None:
+        handler = FakeVDHandler()
+        pushed: list[tuple[str, dict]] = []
+        context = type(
+            "Ctx",
+            (),
+            {
+                "push_frontend_message": lambda _self, message_type, payload: pushed.append((message_type, payload)),
+            },
+        )()
+
+        handler.handle_copy(context, {"text": "abc"})  # type: ignore[arg-type]
+        handler.on_frontend_message(context, "vd_complete", {"prefix": "pod"})  # type: ignore[arg-type]
+        handler.on_frontend_message(context, "vd_followup", {"cell_text": "show pods"})  # type: ignore[arg-type]
+
+        self.assertEqual(("vd_copy_result", {"handler_id": "fake_vd", "text": "abc"}), pushed[0])
+        self.assertEqual(
+            ("vd_complete_result", {"handler_id": "fake_vd", "items": ["pod_one", "pod_two"]}),
+            pushed[1],
+        )
+        self.assertEqual(
+            ("vd_followup_result", {"handler_id": "fake_vd", "payload": {"cell_text": "SHOW PODS"}}),
+            pushed[2],
+        )
+
+    def test_terminal_resize_before_bootstrap_is_applied_at_spawn(self) -> None:
+        handler = FakeVDHandler()
+        context = type(
+            "Ctx",
+            (),
+            {
+                "channel": type(
+                    "Chan",
+                    (),
+                    {
+                        "emit_event": lambda _self, *_args, **_kwargs: None,
+                        "request_action": lambda _self, *_args, **_kwargs: None,
+                    },
+                )(),
+                "push_frontend_message": lambda _self, *_args, **_kwargs: None,
+            },
+        )()
+        ioctl_calls: list[tuple[int, bytes]] = []
+
+        def record_ioctl(fd, op, payload):  # type: ignore[no-untyped-def]
+            _ = op
+            ioctl_calls.append((fd, payload))
+            return 0
+
+        with patch("jusi.plugins.subprocess.Popen", FakePopen), patch("jusi.plugins.fcntl.ioctl", side_effect=record_ioctl), patch(
+            "jusi.plugins.threading.Thread.start", lambda _self: None
+        ):
+            handler.on_frontend_message(context, "terminal_resize", {"rows": 21, "cols": 158})  # type: ignore[arg-type]
+            handler.on_frontend_message(context, "bootstrap_done", {"rows": 21, "cols": 158})  # type: ignore[arg-type]
+            handler.stop()
+
+        self.assertTrue(ioctl_calls)
+        winsize = ioctl_calls[0][1]
+        self.assertEqual((21, 158), tuple(int.from_bytes(winsize[index:index + 2], "little") for index in (0, 2)))
+
+    def test_terminal_resize_before_bootstrap_sets_spawn_env_geometry(self) -> None:
+        handler = FakeVDHandler()
+        context = type(
+            "Ctx",
+            (),
+            {
+                "channel": type(
+                    "Chan",
+                    (),
+                    {
+                        "emit_event": lambda _self, *_args, **_kwargs: None,
+                        "request_action": lambda _self, *_args, **_kwargs: None,
+                    },
+                )(),
+                "push_frontend_message": lambda _self, *_args, **_kwargs: None,
+            },
+        )()
+        captured_env: dict[str, str] = {}
+
+        class FakeEnvPopen:
+            def __init__(self, *_args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+                captured_env.update(kwargs.get("env", {}))
+                self.pid = 43210
+
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                _ = timeout
+                return 0
+
+        with patch.dict("os.environ", {"LINES": "45", "COLUMNS": "158"}), patch(
+            "jusi.plugins.subprocess.Popen", FakeEnvPopen
+        ), patch("jusi.plugins.threading.Thread.start", lambda _self: None):
+            handler.on_frontend_message(context, "terminal_resize", {"rows": 21, "cols": 158})  # type: ignore[arg-type]
+            handler.on_frontend_message(context, "bootstrap_done", {"rows": 21, "cols": 158})  # type: ignore[arg-type]
+            handler.stop()
+
+        self.assertEqual("21", captured_env["LINES"])
+        self.assertEqual("158", captured_env["COLUMNS"])
 
     def test_registry_matches_magic_cell_to_handler(self) -> None:
         registry = DisplayHandlerRegistry(
@@ -326,6 +473,10 @@ class PluginRegistryTest(unittest.TestCase):
             self.assertEqual("handler_snapshot", execute_envelopes[5].payload["message_type"])
             self.assertEqual("handler_message", execute_envelopes[6].type)
             self.assertEqual("action_request", execute_envelopes[6].payload["message_type"])
+            action_payload = execute_envelopes[6].payload["payload"]
+            self.assertEqual("pods", action_payload["payload"]["expression"])
+            self.assertEqual("json", action_payload["payload"]["source"]["format"])
+            self.assertTrue(action_payload["payload"]["source"]["path"].endswith(".json"))
             self.assertEqual("follow-up", execute_envelopes[7].payload["cell"]["status"])
 
             active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
