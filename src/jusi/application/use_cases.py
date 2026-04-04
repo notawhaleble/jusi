@@ -21,7 +21,7 @@ from jusi.application.ports import (
     StopSessionCommand,
     StartSessionCommand,
 )
-from jusi.domain.models import CellExecution, PreparedClient, Session, SessionTarget
+from jusi.domain.models import CellExecution, ClientTransport, PreparedClient, Session, SessionTarget
 from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, default_frontend_channel
 
 
@@ -49,22 +49,39 @@ def _session_payload(session: Session) -> dict:
 
 
 def _prepared_payload(prepared: PreparedClient) -> dict:
-    return {
+    payload = {
         "id": prepared.client_id,
         "state": prepared.state,
         "bufnr": prepared.client_bufnr,
         "client_state": prepared.client_state,
     }
+    if prepared.transport.kind:
+        payload["transport"] = _transport_payload(prepared.transport)
+    return payload
 
 
 def _cell_payload(execution: CellExecution) -> dict:
-    return {
+    payload = {
         "id": execution.cell_id,
         "status": execution.status,
         "owner": {"kind": execution.owner_kind},
         "client_id": execution.client_id,
         "client_bufnr": execution.client_bufnr,
         "client_state": execution.client_state,
+    }
+    if execution.transport.kind:
+        payload["transport"] = _transport_payload(execution.transport)
+    return payload
+
+
+def _transport_payload(transport: ClientTransport) -> dict:
+    return {
+        "kind": transport.kind,
+        "attach_cmd": list(transport.attach_cmd),
+        "attach_env": dict(transport.attach_env),
+        "session_id": transport.session_id,
+        "client_id": transport.client_id,
+        "handler_id": transport.handler_id,
     }
 
 
@@ -251,6 +268,12 @@ class ExecuteCell:
                 update_execution_status=lambda status: self._runtime.update_client_execution_status(
                     session, current_client.client_id, status
                 ),
+                set_client_transport=lambda transport: self._set_handler_client_transport(
+                    command.notebook_id,
+                    session,
+                    current_client,
+                    transport,
+                ),
             )
             self._active_handlers.register(
                 session.session_id,
@@ -273,6 +296,17 @@ class ExecuteCell:
             expression = str(payload.get("expression", "")).strip()
             return dict(self._runtime.materialize_vd_source(session, expression))
         raise ValueError(f"Unsupported handler backend action: {action_name}")
+
+    def _set_handler_client_transport(
+        self,
+        notebook_id: str,
+        session: Session,
+        execution: CellExecution,
+        transport: ClientTransport,
+    ) -> None:
+        execution.transport = transport
+        self._runtime.set_client_transport(session, execution.client_id, transport)
+        self._store.save_execution(notebook_id, execution)
 
     def execute(self, command: ExecuteCellCommand) -> CellExecution:
         session, current_client = self.begin_execute(command)

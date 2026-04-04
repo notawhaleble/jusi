@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from importlib import metadata
 from typing import Any, Callable, Iterable, Protocol, Sequence
 
-from jusi.domain.models import ExecutableCell
+from jusi.domain.models import ClientTransport, ExecutableCell
 
 
 DISPLAY_HANDLER_ENTRY_POINT_GROUP = "jusi.display_handlers"
@@ -47,6 +47,7 @@ class HandlerContext:
     invoke_backend_action: Callable[[str, dict[str, Any]], dict[str, Any]]
     append_execution_event: Callable[[dict[str, Any]], None]
     update_execution_status: Callable[[str], None]
+    set_client_transport: Callable[[ClientTransport], None]
 
 
 class DisplayHandler(Protocol):
@@ -197,6 +198,9 @@ class TerminalDisplayHandler:
         self._reader: threading.Thread | None = None
         self._context: HandlerContext | None = None
         self._pending_geometry: tuple[int, int] | None = None
+        self._pending_command: list[str] | None = None
+        self._pending_env: dict[str, str] | None = None
+        self._pending_fallback_notice: str = ""
 
     def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
         context.channel.emit_event(
@@ -245,6 +249,9 @@ class TerminalDisplayHandler:
             self._process = None
             self._master_fd = None
             self._pending_geometry = None
+            self._pending_command = None
+            self._pending_env = None
+            self._pending_fallback_notice = ""
         if process is not None and process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
@@ -269,20 +276,23 @@ class TerminalDisplayHandler:
     def _bootstrap_live_process(self, context: HandlerContext) -> None:
         with self._lock:
             geometry = self._pending_geometry
+            command = list(self._pending_command or [])
+            env = dict(self._pending_env or {})
+            fallback_notice = self._pending_fallback_notice
         self.stop()
         if geometry is not None:
             with self._lock:
                 self._pending_geometry = geometry
+        if command:
+            with self._lock:
+                self._pending_command = list(command)
+                self._pending_env = dict(env)
+                self._pending_fallback_notice = fallback_notice
         master_fd, slave_fd = pty.openpty()
         if geometry is not None:
             self._apply_winsize(slave_fd, geometry[0], geometry[1])
-        command, fallback_notice = self.terminal_command()
-        env = self.terminal_env()
-        env.pop("LINES", None)
-        env.pop("COLUMNS", None)
-        if geometry is not None:
-            env["LINES"] = str(geometry[0])
-            env["COLUMNS"] = str(geometry[1])
+        if not command:
+            command, fallback_notice, env = self._prepare_native_terminal_transport(context)
         process = subprocess.Popen(
             command,
             stdin=slave_fd,
@@ -306,6 +316,48 @@ class TerminalDisplayHandler:
             context.append_execution_event({"type": "handler_stream", "text": fallback_notice})
         self._reader = threading.Thread(target=self._read_output_loop, daemon=True)
         self._reader.start()
+
+    def prepare_bootstrap(self, context: HandlerContext) -> None:
+        self._prepare_native_terminal_transport(context)
+        context.push_frontend_message(
+            "bootstrap_ready",
+            {
+                "handler_id": self.handler_id(),
+                "client_id": context.client_id,
+                "session_id": context.session_id,
+            },
+        )
+
+    def _prepare_native_terminal_transport(self, context: HandlerContext) -> tuple[list[str], str, dict[str, str]]:
+        command, fallback_notice = self.terminal_command()
+        env = self.terminal_env()
+        with self._lock:
+            geometry = self._pending_geometry
+        env.pop("LINES", None)
+        env.pop("COLUMNS", None)
+        if geometry is not None:
+            env["LINES"] = str(geometry[0])
+            env["COLUMNS"] = str(geometry[1])
+        transport = ClientTransport(
+            kind="native_terminal",
+            attach_cmd=_native_terminal_attach_command(),
+            attach_env=_native_terminal_attach_env(
+                command=command,
+                env=env,
+                session_id=context.session_id,
+                client_id=context.client_id,
+                handler_id=self.handler_id(),
+            ),
+            session_id=context.session_id,
+            client_id=context.client_id,
+            handler_id=self.handler_id(),
+        )
+        context.set_client_transport(transport)
+        with self._lock:
+            self._pending_command = list(command)
+            self._pending_env = dict(env)
+            self._pending_fallback_notice = fallback_notice
+        return command, fallback_notice, env
 
     def _send_bytes(
         self,
@@ -407,6 +459,7 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
             self.bootstrap_action(),
             self.bootstrap_payload(context, cell),
         )
+        self.prepare_bootstrap(context)
         context.update_execution_status("follow-up")
         context.append_execution_event(
             {
@@ -664,6 +717,37 @@ def _build_vd_env() -> dict[str, str]:
     env = os.environ.copy()
     env["TERM"] = os.environ.get("JUSI_VD_TERM", "").strip() or "xterm-256color"
     return env
+
+
+def _native_terminal_attach_command() -> list[str]:
+    return [sys.executable, "-m", "jusi", "client-process", "terminal-attach"]
+
+
+def _native_terminal_attach_env(
+    *,
+    command: list[str],
+    env: dict[str, str],
+    session_id: str,
+    client_id: str,
+    handler_id: str,
+) -> dict[str, str]:
+    attach_child_env = dict(env)
+    attach_child_env.pop("LINES", None)
+    attach_child_env.pop("COLUMNS", None)
+    attach_env = {
+        "JUSI_TERMINAL_CMD_JSON": json.dumps(command),
+        "JUSI_TERMINAL_ENV_JSON": json.dumps(attach_child_env),
+        "JUSI_SESSION_ID": session_id,
+        "JUSI_CLIENT_ID": client_id,
+        "JUSI_HANDLER_ID": handler_id,
+    }
+    pythonpath = str(os.environ.get("PYTHONPATH", "")).strip()
+    if pythonpath:
+        attach_env["PYTHONPATH"] = pythonpath
+    supervisor_pid = str(os.getpid()).strip()
+    if supervisor_pid:
+        attach_env["JUSI_SUPERVISOR_PID"] = supervisor_pid
+    return attach_env
 
 
 def _executable_sibling(name: str) -> str:

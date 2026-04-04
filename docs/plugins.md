@@ -172,6 +172,23 @@ Current code status:
   - pass that source metadata into VisiData bootstrap
 - the next handler-base work is about giving the shared VD hooks richer plugin-facing semantics, not about re-solving PTY lifecycle again
 
+Native-terminal pivot note:
+
+- the current terminal-hosted base and `terminal_bytes` channel proved the interactive/plugin model
+- they are now treated as transitional for fullscreen interactive clients
+- long-term terminal-hosted plugins should prefer:
+  - backend-owned session/handler lifecycle
+  - structured `handler_message` control semantics
+  - native editor terminal rendering attached to a backend-provided bridge/client-process substrate
+
+So the terminal-hosted handler base should evolve toward:
+
+- starting and supervising the live interactive resource
+- advertising a native-terminal attach substrate for the owning `client_id`
+- keeping bootstrap/follow-up/completion/plugin commands on the structured handler channel
+
+not toward indefinitely extending raw terminal rendering over the notebook control channel.
+
 ## First-Class Communication Use Cases
 
 The architecture should explicitly support flows like these:

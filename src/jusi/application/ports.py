@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
-from jusi.domain.models import CellExecution, ExecutableCell, Session, SessionTarget
+from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, Session, SessionTarget
 
 
 @dataclass(frozen=True)
@@ -130,6 +130,9 @@ class KernelRuntime(Protocol):
 
     def append_client_execution_event(self, session: Session, client_id: str, event: dict) -> None:
         """Append a structured execution event to the active client transcript."""
+
+    def set_client_transport(self, session: Session, client_id: str, transport: ClientTransport) -> None:
+        """Publish transport metadata for a client."""
 
     def read_client_view(self, session: Session, client_id: str) -> dict:
         """Read the current backend-owned client view snapshot."""

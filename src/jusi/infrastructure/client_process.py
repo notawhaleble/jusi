@@ -24,6 +24,7 @@ class ClientProcessState:
     view_title: str = "idle"
     view_lines: list[str] = field(default_factory=list)
     shutdown_reason: str = ""
+    transport: dict = field(default_factory=dict)
 
 
 class ClientProcessRunner:
@@ -78,23 +79,23 @@ class ClientProcessRunner:
         os.makedirs(self._control_dir, exist_ok=True)
         self._rebuild_view()
         with open(self._status_path, "w", encoding="utf-8") as handle:
-            json.dump(
-                {
-                    "client_id": self._state.client_id,
-                    "notebook_id": self._state.notebook_id,
-                    "session_id": self._state.session_id,
-                    "client_bufnr": self._state.client_bufnr,
-                    "active_cell_id": self._state.active_cell_id,
-                    "execution_status": self._state.execution_status,
-                    "view_revision": self._state.view_revision,
-                    "lifecycle": list(self._state.lifecycle),
-                    "transcript": list(self._state.transcript),
-                    "view_title": self._state.view_title,
-                    "view_lines": list(self._state.view_lines),
-                    "shutdown_reason": self._state.shutdown_reason,
-                },
-                handle,
-            )
+            payload = {
+                "client_id": self._state.client_id,
+                "notebook_id": self._state.notebook_id,
+                "session_id": self._state.session_id,
+                "client_bufnr": self._state.client_bufnr,
+                "active_cell_id": self._state.active_cell_id,
+                "execution_status": self._state.execution_status,
+                "view_revision": self._state.view_revision,
+                "lifecycle": list(self._state.lifecycle),
+                "transcript": list(self._state.transcript),
+                "view_title": self._state.view_title,
+                "view_lines": list(self._state.view_lines),
+                "shutdown_reason": self._state.shutdown_reason,
+            }
+            if self._state.transport:
+                payload["transport"] = dict(self._state.transport)
+            json.dump(payload, handle)
 
     def _rebuild_view(self) -> None:
         view = build_client_view(
@@ -137,6 +138,14 @@ class ClientProcessRunner:
                 self._state.lifecycle.append(f"event:{event_type}")
                 self._write_status()
             return
+        if kind == "transport":
+            transport = command.get("transport", {})
+            if isinstance(transport, dict):
+                self._state.transport = dict(transport)
+                self._state.view_revision += 1
+                self._state.lifecycle.append(f"transport:{self._state.transport.get('kind', '')}")
+                self._write_status()
+            return
         if kind == "shutdown":
             self._mark_shutdown(str(command.get("reason", "")).strip())
 
@@ -172,3 +181,35 @@ class ClientProcessRunner:
 
 def run_client_process() -> int:
     return ClientProcessRunner().run()
+
+
+def run_terminal_attach() -> int:
+    raw_command = os.environ.get("JUSI_TERMINAL_CMD_JSON", "").strip()
+    if not raw_command:
+        sys.stderr.write("missing JUSI_TERMINAL_CMD_JSON\n")
+        sys.stderr.flush()
+        return 2
+    try:
+        command = json.loads(raw_command)
+    except json.JSONDecodeError:
+        sys.stderr.write("invalid JUSI_TERMINAL_CMD_JSON\n")
+        sys.stderr.flush()
+        return 2
+    if not isinstance(command, list) or not command or not all(isinstance(item, str) for item in command):
+        sys.stderr.write("terminal attach command must be a non-empty string list\n")
+        sys.stderr.flush()
+        return 2
+    child_env = os.environ.copy()
+    child_env.pop("LINES", None)
+    child_env.pop("COLUMNS", None)
+    raw_env = os.environ.get("JUSI_TERMINAL_ENV_JSON", "").strip()
+    if raw_env:
+        try:
+            env_updates = json.loads(raw_env)
+        except json.JSONDecodeError:
+            env_updates = {}
+        if isinstance(env_updates, dict):
+            for key, value in env_updates.items():
+                if isinstance(key, str) and isinstance(value, str):
+                    child_env[key] = value
+    os.execvpe(command[0], command, child_env)

@@ -20,11 +20,22 @@ class SessionTarget:
 
 
 @dataclass
+class ClientTransport:
+    kind: str = ""
+    attach_cmd: list[str] = field(default_factory=list)
+    attach_env: dict[str, str] = field(default_factory=dict)
+    session_id: str = ""
+    client_id: str = ""
+    handler_id: str = ""
+
+
+@dataclass
 class PreparedClient:
     state: PreparedState = "missing"
     client_id: str = ""
     client_bufnr: int = -1
     client_state: ClientState = "active"
+    transport: ClientTransport = field(default_factory=ClientTransport)
 
 
 @dataclass
@@ -52,6 +63,7 @@ class CellExecution:
     client_id: str = ""
     client_bufnr: int = -1
     client_state: ClientState = "active"
+    transport: ClientTransport = field(default_factory=ClientTransport)
 
 
 @dataclass(frozen=True)

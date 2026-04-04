@@ -139,10 +139,75 @@ This is the level where MVP-style flexibility such as `%%sql`, `%%vd`, and `%%oc
 
 See [plugins.md](/Users/niku/Documents/dev/jusi/docs/plugins.md) for the working draft.
 
+## Native Terminal Pivot
+
+The first PTY-backed handler slice was useful to prove:
+
+- plugin/frontend control messages
+- live interactive child-process ownership
+- handler bootstrap/follow-up ideas
+
+It was not a good final UX for fullscreen interactive tools when rendered through:
+
+- PTY bytes over the backend control channel
+- frontend terminal parsing in pure Vimscript
+- projection into a normal notebook buffer
+
+So the current architecture direction is:
+
+- keep notebook/session/handler ownership in backend core
+- keep structured `handler_message` for control semantics
+- stop treating PTY byte transport over the notebook control channel as the long-term terminal surface
+- pivot interactive terminal-hosted clients toward native editor terminal buffers
+
+### Concrete Backend Proposal
+
+The preferred substrate is a bridge/client-process model built on the existing `jusi client-process` split.
+
+Current proposal:
+
+- backend root process still owns session and handler lifecycle
+- when a handler becomes terminal-backed, backend provisions a dedicated terminal client process for that `client_id`
+- frontend receives terminal-client metadata from backend and launches a real editor terminal buffer against that process command
+- terminal transport flows through that native terminal job attachment, not through `handler_message terminal_bytes`
+- `handler_message` stays available for:
+  - bootstrap
+  - follow-up
+  - completion
+  - plugin commands
+  - other control semantics that are not raw terminal traffic
+
+### Terminal Client Identity
+
+When backend exposes a terminal-backed client, the identity should still remain within the normal Jusi client model:
+
+- `session_id`
+- `client_id`
+- optional `handler_id`
+
+The terminal bridge/client process must map back to those ids so stop/disconnect/cleanup stay centralized in backend supervision.
+
+### Advertising A Terminal-Backed Client
+
+Backend should advertise terminal-backed readiness explicitly instead of expecting frontend to infer it from `terminal_bytes`.
+
+The likely contract shape is:
+
+- prepared/active client remains a normal backend client
+- backend emits client metadata indicating:
+  - transport kind `native_terminal`
+  - attach command for the terminal buffer
+  - the owning `session_id`
+  - the owning `client_id`
+  - optional `handler_id`
+
+`inspect_client` can remain a debug/recovery seam, but should no longer be the hot rendering path for native-terminal clients.
+
 ## Next Architecture Step
 
-The next real design step is to turn the plugin draft into an explicit backend seam:
+Define the terminal-backed client contract concretely:
 
-- define `MagicCommand`, `DisplayHandler`, `HandlerContext`, and `FrontendChannel`
-- keep plugin behavior inside the normal session/client lifecycle instead of inventing a parallel subsystem
-- use one small first plugin path to validate the seam before larger first-party plugins land
+- how native-terminal capability is advertised
+- what attach command frontend should run
+- how the bridge/client process maps back to `session_id`, `client_id`, and optional `handler_id`
+- how stop/disconnect/backend-close tear that bridge down consistently

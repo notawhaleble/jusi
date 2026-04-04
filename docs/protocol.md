@@ -21,6 +21,7 @@ Current backend slice covers:
 - `bind_prepared_client`
 - `shutdown_client`
 - `inspect_client`
+- terminal-backed client transport advertisement on client events/inspection snapshots
 
 ## Envelope
 
@@ -57,6 +58,26 @@ Notes:
 - history regions stay frontend-local
 - buffer numbers may appear only where client binding requires them
 - current ids are backend-generated high-entropy values with `sess-` prefix
+
+## Client Transport
+
+Backend clients may expose one of these transport kinds:
+
+- `inspection`
+  - current default
+  - frontend renders through `client_updated` plus `inspect_client`
+- `native_terminal`
+  - native-terminal-friendly client advertisement for fullscreen interactive clients
+  - frontend should attach a real editor terminal buffer to the backend-provided attach command/substrate
+
+Current PTY traffic over `handler_message` is transitional rather than the long-term native-terminal transport.
+The first concrete native-terminal slice now advertises:
+
+- `attach_cmd`
+- `attach_env`
+- `session_id`
+- `client_id`
+- optional `handler_id`
 
 ## Session Target
 
@@ -219,6 +240,7 @@ Behavior:
 - current built-in `%%vd` path uses this for:
   - `handler_snapshot`
   - `action_request`
+  - `bootstrap_ready`
   - later frontend replies such as `bootstrap_done`
   - PTY input requests:
     - `terminal_input` with `{ "text": "..." }`
@@ -226,6 +248,25 @@ Behavior:
     - `terminal_resize` with `{ "rows": 40, "cols": 120 }`
     - `terminal_signal` with `{ "name": "interrupt" }`
     - `terminal_bytes` with `{ "hex": "1b5b41" }` as a raw escape hatch
+
+Direction note:
+
+- these PTY-oriented `handler_message` payloads are now considered transitional
+- long-term native-terminal clients should move raw terminal transport off the notebook control channel
+- `handler_message` remains the structured control channel for:
+  - bootstrap
+  - follow-up
+  - completion
+  - plugin commands
+
+Bootstrap note for native-terminal clients:
+
+- backend may advertise `transport.kind=native_terminal` before the handler is live
+- backend emits `handler_message(message_type=bootstrap_ready)` when:
+  - follow-up handler state is established
+  - native-terminal attach metadata is already available
+  - frontend may now send `bootstrap_done`
+- `bootstrap_done` should be treated as frontend acknowledgment that terminal attachment/bootstrap can proceed, not as the thing that first makes attach metadata exist
 
 ### `healthcheck_reply`
 
@@ -350,6 +391,7 @@ Behavior:
 
 - returns a derived backend-owned client view snapshot
 - includes a monotonic `revision` for polling consumers
+- may later include terminal attach metadata for recovery/debug, but that is not intended to be the primary live transport for native-terminal clients
 
 ## Events
 
@@ -391,6 +433,42 @@ Behavior:
 }
 ```
 
+Terminal-backed extension:
+
+```json
+{
+  "notebook_id": "nb-1",
+  "prepared": {
+    "id": "client-1",
+    "state": "ready",
+    "bufnr": 91,
+    "client_state": "active",
+    "transport": {
+      "kind": "native_terminal",
+      "attach_cmd": ["python", "-m", "jusi", "client-process", "terminal-attach"],
+      "attach_env": {
+        "JUSI_TERMINAL_CMD_JSON": "[\"/path/to/vd\", \"/tmp/jusi-vd.json\"]",
+        "JUSI_TERMINAL_ENV_JSON": "{\"TERM\": \"xterm-256color\"}",
+        "JUSI_SESSION_ID": "sess-1",
+        "JUSI_CLIENT_ID": "client-1",
+        "JUSI_HANDLER_ID": "vd"
+      },
+      "session_id": "sess-1",
+      "client_id": "client-1",
+      "handler_id": "vd"
+    }
+  }
+}
+```
+
+Notes:
+
+- `transport.kind=native_terminal` advertises that a real editor terminal buffer should attach to this client
+- `attach_cmd` is the backend-provided command/substrate for that terminal attachment
+- `attach_env` carries the environment needed for that attach command
+- `session_id`, `client_id`, and optional `handler_id` are repeated there so the bridge/client process can map cleanly back into backend supervision
+- current attach entrypoint is `python -m jusi client-process terminal-attach`
+
 ### `cell_updated`
 
 ```json
@@ -424,6 +502,7 @@ Behavior:
 - intended as a redraw invalidation signal, not as a full view payload
 - frontend should respond by calling `inspect_client` for the same client if it needs the updated snapshot
 - this is the first backend-driven redraw signal for client rendering; `inspect_client` remains the content source for now
+- planned native-terminal clients are expected to rely less on this hot path and more on direct terminal attachment via advertised transport metadata
 
 ### `handler_message`
 
@@ -452,6 +531,8 @@ Behavior:
   - `terminal_bytes`
 - for PTY-backed handlers, pushed `handler_message` events are now the hot path
 - `inspect_client` remains the fallback/debug snapshot path for those handlers
+- current architecture direction is to keep `handler_message` for control semantics while moving fullscreen terminal transport to a native-terminal attachment substrate
+- for native-terminal handlers, `bootstrap_ready` is now the explicit backend-owned signal that automatic bootstrap may proceed
 
 ### `healthcheck`
 
@@ -479,3 +560,7 @@ Behavior:
   - backend emits `client_updated`
   - frontend still pulls the full snapshot through `inspect_client`
 - PTY-backed handler output now bypasses that hot path and is pushed directly through `handler_message`
+- native-terminal pivot is now preferred for fullscreen interactive handlers:
+  - backend should advertise terminal-backed clients explicitly
+  - frontend should attach a real editor terminal buffer to the backend-provided client substrate
+  - `handler_message` should remain for control semantics rather than forever carrying terminal transport bytes

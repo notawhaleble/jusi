@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import uuid4
 
-from jusi.domain.models import CellExecution, ExecutableCell, Session, SessionTarget
+from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, Session, SessionTarget
 from jusi.infrastructure.client_view import build_client_view
 from jusi.infrastructure.client_runtime import ProcessClientHandle
 
@@ -146,6 +146,9 @@ class RuntimeClientHandle(Protocol):
     def append_execution_event(self, event: dict) -> None:
         ...
 
+    def set_transport(self, transport: dict) -> None:
+        ...
+
     def read_view(self) -> dict:
         ...
 
@@ -172,6 +175,7 @@ class InMemoryClientHandle:
     view_revision: int = 0
     lifecycle: list[str] = field(default_factory=list)
     transcript: list[dict] = field(default_factory=list)
+    transport: dict = field(default_factory=dict)
 
     def bind(self, client_bufnr: int) -> None:
         self.client_bufnr = client_bufnr
@@ -206,7 +210,14 @@ class InMemoryClientHandle:
             transcript=self.transcript,
         )
         view["revision"] = self.view_revision
+        if self.transport:
+            view["transport"] = dict(self.transport)
         return view
+
+    def set_transport(self, transport: dict) -> None:
+        self.transport = dict(transport)
+        self.view_revision += 1
+        self.lifecycle.append(f"transport:{self.transport.get('kind', '')}")
 
     def shutdown(self, reason: str) -> None:
         self.shutdown_reason = reason
@@ -230,6 +241,7 @@ class RuntimeClient:
     client_bufnr: int = -1
     cell_id: int | None = None
     shutdown_reason: str = ""
+    transport: ClientTransport = field(default_factory=ClientTransport)
 
 
 @dataclass
@@ -284,7 +296,31 @@ class ClientRegistryRuntime:
 
     def read_client_view(self, session: Session, client_id: str) -> dict:
         runtime_client = self._require_client(session.session_id, client_id)
-        return runtime_client.handle.read_view()
+        view = runtime_client.handle.read_view()
+        if runtime_client.transport.kind:
+            view["transport"] = {
+                "kind": runtime_client.transport.kind,
+                "attach_cmd": list(runtime_client.transport.attach_cmd),
+                "attach_env": dict(runtime_client.transport.attach_env),
+                "session_id": runtime_client.transport.session_id,
+                "client_id": runtime_client.transport.client_id,
+                "handler_id": runtime_client.transport.handler_id,
+            }
+        return view
+
+    def set_client_transport(self, session: Session, client_id: str, transport: ClientTransport) -> None:
+        runtime_client = self._require_client(session.session_id, client_id)
+        runtime_client.transport = transport
+        runtime_client.handle.set_transport(
+            {
+                "kind": transport.kind,
+                "attach_cmd": list(transport.attach_cmd),
+                "attach_env": dict(transport.attach_env),
+                "session_id": transport.session_id,
+                "client_id": transport.client_id,
+                "handler_id": transport.handler_id,
+            }
+        )
 
     def shutdown_client(self, session: Session, client_id: str, reason: str) -> None:
         session_clients = self._session_clients.get(session.session_id)

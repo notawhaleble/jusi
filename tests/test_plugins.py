@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ from jusi.plugins import (
     build_display_handler_registry,
     load_display_handler_specs,
 )
+from jusi.infrastructure.client_process import run_terminal_attach
 from jusi.infrastructure.runtime import InMemoryKernelRuntime
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
@@ -201,6 +203,56 @@ class PluginRegistryTest(unittest.TestCase):
             env = _build_vd_env()
         self.assertEqual("xterm-256color", env["TERM"])
 
+    def test_run_terminal_attach_execs_advertised_command(self) -> None:
+        captured = {}
+
+        def fake_execvpe(executable, args, env):  # type: ignore[no-untyped-def]
+            captured["executable"] = executable
+            captured["args"] = list(args)
+            captured["env"] = dict(env)
+            raise SystemExit(0)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "JUSI_TERMINAL_CMD_JSON": json.dumps(["/bin/sh", "-lc", "echo hi"]),
+                "JUSI_TERMINAL_ENV_JSON": json.dumps({"TERM": "xterm-256color", "FOO": "bar"}),
+            },
+            clear=True,
+        ), patch("jusi.infrastructure.client_process.os.execvpe", side_effect=fake_execvpe):
+            with self.assertRaises(SystemExit):
+                run_terminal_attach()
+
+        self.assertEqual("/bin/sh", captured["executable"])
+        self.assertEqual(["/bin/sh", "-lc", "echo hi"], captured["args"])
+        self.assertEqual("xterm-256color", captured["env"]["TERM"])
+        self.assertEqual("bar", captured["env"]["FOO"])
+
+    def test_run_terminal_attach_clears_inherited_lines_and_columns(self) -> None:
+        captured = {}
+
+        def fake_execvpe(executable, args, env):  # type: ignore[no-untyped-def]
+            captured["executable"] = executable
+            captured["args"] = list(args)
+            captured["env"] = dict(env)
+            raise SystemExit(0)
+
+        with patch.dict(
+            "os.environ",
+            {
+                "LINES": "45",
+                "COLUMNS": "158",
+                "JUSI_TERMINAL_CMD_JSON": json.dumps(["/bin/sh", "-lc", "echo hi"]),
+                "JUSI_TERMINAL_ENV_JSON": json.dumps({"TERM": "xterm-256color"}),
+            },
+            clear=True,
+        ), patch("jusi.infrastructure.client_process.os.execvpe", side_effect=fake_execvpe):
+            with self.assertRaises(SystemExit):
+                run_terminal_attach()
+
+        self.assertNotIn("LINES", captured["env"])
+        self.assertNotIn("COLUMNS", captured["env"])
+
     def test_build_vd_command_finds_binary_next_to_sys_executable(self) -> None:
         with tempfile.TemporaryDirectory() as tempdir:
             python_path = os.path.join(tempdir, "python")
@@ -246,6 +298,8 @@ class PluginRegistryTest(unittest.TestCase):
             "Ctx",
             (),
             {
+                "session_id": "sess-test",
+                "client_id": "client-test",
                 "channel": type(
                     "Chan",
                     (),
@@ -255,6 +309,7 @@ class PluginRegistryTest(unittest.TestCase):
                     },
                 )(),
                 "push_frontend_message": lambda _self, *_args, **_kwargs: None,
+                "set_client_transport": lambda _self, *_args, **_kwargs: None,
             },
         )()
         ioctl_calls: list[tuple[int, bytes]] = []
@@ -281,6 +336,8 @@ class PluginRegistryTest(unittest.TestCase):
             "Ctx",
             (),
             {
+                "session_id": "sess-test",
+                "client_id": "client-test",
                 "channel": type(
                     "Chan",
                     (),
@@ -290,6 +347,7 @@ class PluginRegistryTest(unittest.TestCase):
                     },
                 )(),
                 "push_frontend_message": lambda _self, *_args, **_kwargs: None,
+                "set_client_transport": lambda _self, *_args, **_kwargs: None,
             },
         )()
         captured_env: dict[str, str] = {}
@@ -469,17 +527,33 @@ class PluginRegistryTest(unittest.TestCase):
             )
             execute_envelopes = [parse_envelope(message) for message in execute_messages]
             self.assertEqual("handler", execute_envelopes[3].payload["cell"]["owner"]["kind"])
-            self.assertEqual("handler_message", execute_envelopes[5].type)
-            self.assertEqual("handler_snapshot", execute_envelopes[5].payload["message_type"])
-            self.assertEqual("handler_message", execute_envelopes[6].type)
-            self.assertEqual("action_request", execute_envelopes[6].payload["message_type"])
-            action_payload = execute_envelopes[6].payload["payload"]
+            handler_messages = [envelope for envelope in execute_envelopes if envelope.type == "handler_message"]
+            message_types = [envelope.payload["message_type"] for envelope in handler_messages]
+            self.assertIn("handler_snapshot", message_types)
+            self.assertIn("action_request", message_types)
+            action_payload = next(
+                envelope.payload["payload"] for envelope in handler_messages if envelope.payload["message_type"] == "action_request"
+            )
             self.assertEqual("pods", action_payload["payload"]["expression"])
             self.assertEqual("json", action_payload["payload"]["source"]["format"])
             self.assertTrue(action_payload["payload"]["source"]["path"].endswith(".json"))
-            self.assertEqual("follow-up", execute_envelopes[7].payload["cell"]["status"])
+            self.assertEqual("follow-up", execute_envelopes[-1].payload["cell"]["status"])
+            pending_messages = wait_for_handler_messages(server, message_types=["bootstrap_ready"])
+            self.assertTrue(any(payload["message_type"] == "bootstrap_ready" for payload in pending_messages))
 
             active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+            inspect_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "inspect_client", '
+                    '"request_id": "req-inspect-pre-bootstrap", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + active_client_id
+                    + '"}}'
+                )
+            )
+            inspect_envelope = [parse_envelope(message) for message in inspect_messages][0]
+            self.assertEqual("native_terminal", inspect_envelope.payload["client"]["transport"]["kind"])
             lines = inspect_client_lines(server, session_id, active_client_id)
             self.assertIn("handler> vd mode=browse", lines)
             self.assertIn("handler.entry> %%vd pods", lines)
@@ -512,6 +586,82 @@ class PluginRegistryTest(unittest.TestCase):
             )
             self.assertTrue(any(payload["message_type"] == "terminal_input" and payload["payload"]["text"] == "open pods" for payload in pushed))
             self.assertIn("echo open pods", decode_terminal_bytes(pushed))
+            server.close()
+
+    def test_bootstrap_exposes_native_terminal_transport_metadata(self) -> None:
+        with patch.dict("os.environ", {"JUSI_VD_CMD": TEST_VD_CMD}):
+            server, session_id, active_client_id = start_bound_vd_server()
+
+            inspect_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "inspect_client", '
+                    '"request_id": "req-inspect-transport", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + active_client_id
+                    + '"}}'
+                )
+            )
+            inspect_envelope = [parse_envelope(message) for message in inspect_messages][0]
+            transport = inspect_envelope.payload["client"]["transport"]
+
+            self.assertEqual("native_terminal", transport["kind"])
+            self.assertEqual([os.sys.executable, "-m", "jusi", "client-process", "terminal-attach"], transport["attach_cmd"])
+            self.assertEqual(session_id, transport["session_id"])
+            self.assertEqual(active_client_id, transport["client_id"])
+            self.assertEqual("vd", transport["handler_id"])
+            self.assertIn("JUSI_TERMINAL_CMD_JSON", transport["attach_env"])
+            server.close()
+
+    def test_bootstrap_propagates_pythonpath_into_native_terminal_attach_env(self) -> None:
+        with patch.dict("os.environ", {"JUSI_VD_CMD": TEST_VD_CMD, "PYTHONPATH": "/tmp/jusi-src"}):
+            server, session_id, active_client_id = start_bound_vd_server()
+
+            inspect_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "inspect_client", '
+                    '"request_id": "req-inspect-pythonpath", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + active_client_id
+                    + '"}}'
+                )
+            )
+            inspect_envelope = [parse_envelope(message) for message in inspect_messages][0]
+            transport = inspect_envelope.payload["client"]["transport"]
+
+            self.assertEqual("/tmp/jusi-src", transport["attach_env"]["PYTHONPATH"])
+            server.close()
+
+    def test_native_terminal_attach_env_does_not_force_lines_or_columns(self) -> None:
+        with patch.dict("os.environ", {"JUSI_VD_CMD": TEST_VD_CMD}):
+            server, session_id, active_client_id = start_bound_vd_server()
+            server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "handler_message", '
+                    '"request_id": "req-resize-pre", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + active_client_id
+                    + '", "handler_id": "vd", "message_type": "terminal_resize", "payload": {"rows": 20, "cols": 158}}}'
+                )
+            )
+            inspect_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "inspect_client", '
+                    '"request_id": "req-inspect-attach-env", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + active_client_id
+                    + '"}}'
+                )
+            )
+            inspect_envelope = [parse_envelope(message) for message in inspect_messages][0]
+            transport = inspect_envelope.payload["client"]["transport"]
+            child_env = json.loads(transport["attach_env"]["JUSI_TERMINAL_ENV_JSON"])
+
+            self.assertNotIn("LINES", child_env)
+            self.assertNotIn("COLUMNS", child_env)
             server.close()
 
     def test_terminal_input_requires_enter_to_submit(self) -> None:

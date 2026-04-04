@@ -62,6 +62,7 @@ class ProcessClientHandle:
     view_revision: int = 0
     lifecycle: list[str] = field(default_factory=list)
     transcript: list[dict] = field(default_factory=list)
+    transport: dict = field(default_factory=dict)
     process: subprocess.Popen[str] = field(init=False)
     control_dir: str = field(init=False)
     commands_path: str = field(init=False)
@@ -155,15 +156,27 @@ class ProcessClientHandle:
         event_type = str(event_copy.get("type", "")).strip() or "event"
         self.lifecycle.append(f"event:{event_type}")
 
+    def set_transport(self, transport: dict) -> None:
+        transport_copy = dict(transport)
+        self._send_command({"kind": "transport", "transport": transport_copy})
+        self._wait_for_status(lambda snapshot: snapshot.get("transport", {}) == transport_copy)
+        self.transport = transport_copy
+        self.view_revision += 1
+        self.lifecycle.append(f"transport:{transport_copy.get('kind', '')}")
+
     def read_view(self) -> dict:
         snapshot = self.read_status()
-        return {
+        view = {
             "title": snapshot.get("view_title", ""),
             "lines": list(snapshot.get("view_lines", [])),
             "execution_status": snapshot.get("execution_status", ""),
             "active_cell_id": snapshot.get("active_cell_id"),
             "revision": int(snapshot.get("view_revision", 0)),
         }
+        transport = snapshot.get("transport", {})
+        if isinstance(transport, dict) and transport:
+            view["transport"] = dict(transport)
+        return view
 
     def shutdown(self, reason: str) -> None:
         if self.shutdown_reason:
