@@ -156,10 +156,9 @@ So VisiData support should likely be a reusable first-party handler base, not a 
 Current code status:
 
 - a reusable terminal-hosted handler base now exists in backend code and owns:
-  - PTY child spawn/teardown
-  - terminal input messages
-  - raw PTY byte streaming
-  - resize and signal routing
+  - native-terminal transport preparation
+  - terminal command/environment advertisement
+  - handler-side terminal-oriented control hooks
 - a reusable VisiData-oriented handler base now also exists on top of that terminal host and exposes shared hooks for:
   - copy
   - completion
@@ -169,13 +168,13 @@ Current code status:
 - current built-in `%%vd` now does its first real job:
   - parse a kernel-side object expression from cell body
   - ask backend core to materialize that expression into a source file
-  - pass that source metadata into VisiData bootstrap
+  - advertise a native-terminal attach command that launches VisiData against that source
 - the next handler-base work is about giving the shared VD hooks richer plugin-facing semantics, not about re-solving PTY lifecycle again
 
 Native-terminal pivot note:
 
-- the current terminal-hosted base and `terminal_bytes` channel proved the interactive/plugin model
-- they are now treated as transitional for fullscreen interactive clients
+- the earlier PTY-byte path proved the interactive/plugin model
+- fullscreen interactive clients now pivot through native editor terminal buffers instead
 - long-term terminal-hosted plugins should prefer:
   - backend-owned session/handler lifecycle
   - structured `handler_message` control semantics
@@ -185,7 +184,7 @@ So the terminal-hosted handler base should evolve toward:
 
 - starting and supervising the live interactive resource
 - advertising a native-terminal attach substrate for the owning `client_id`
-- keeping bootstrap/follow-up/completion/plugin commands on the structured handler channel
+- keeping follow-up/completion/plugin commands on the structured handler channel
 
 not toward indefinitely extending raw terminal rendering over the notebook control channel.
 

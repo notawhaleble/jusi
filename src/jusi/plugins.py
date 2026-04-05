@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
-import pty
 import shlex
 import signal
 import subprocess
-import struct
 import sys
 import tempfile
-import termios
-import threading
 import shutil
 from dataclasses import dataclass, field
 from importlib import metadata
@@ -192,15 +187,7 @@ class RecordingFrontendChannel:
 
 class TerminalDisplayHandler:
     def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._process: subprocess.Popen[bytes] | None = None
-        self._master_fd: int | None = None
-        self._reader: threading.Thread | None = None
-        self._context: HandlerContext | None = None
-        self._pending_geometry: tuple[int, int] | None = None
-        self._pending_command: list[str] | None = None
-        self._pending_env: dict[str, str] | None = None
-        self._pending_fallback_notice: str = ""
+        self._mode = "ready"
 
     def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
         context.channel.emit_event(
@@ -211,27 +198,6 @@ class TerminalDisplayHandler:
                 "payload": dict(payload),
             },
         )
-        if message_type == "bootstrap_done":
-            self._remember_geometry(payload)
-            self._bootstrap_live_process(context)
-        if message_type == "send_input":
-            text = str(payload.get("text", ""))
-            self._send_bytes(context, (text + "\n").encode("utf-8"), echo_payload={"text": text}, message_type="terminal_input")
-        if message_type == "terminal_input":
-            text = str(payload.get("text", ""))
-            self._send_bytes(context, text.encode("utf-8"), echo_payload={"text": text}, message_type="terminal_input")
-        if message_type == "terminal_bytes":
-            raw_hex = str(payload.get("hex", "")).strip()
-            if raw_hex:
-                self._send_bytes(context, bytes.fromhex(raw_hex), echo_payload={"hex": raw_hex}, message_type="terminal_bytes")
-        if message_type == "terminal_key":
-            sequence = _terminal_key_bytes(payload)
-            if sequence:
-                self._send_bytes(context, sequence, echo_payload=dict(payload), message_type="terminal_key")
-        if message_type == "terminal_resize":
-            self._resize_terminal(payload)
-        if message_type == "terminal_signal":
-            self._signal_terminal(payload)
 
     def handler_id(self) -> str:
         raise NotImplementedError
@@ -243,101 +209,14 @@ class TerminalDisplayHandler:
         return _build_terminal_env()
 
     def stop(self) -> None:
-        with self._lock:
-            process = self._process
-            master_fd = self._master_fd
-            self._process = None
-            self._master_fd = None
-            self._pending_geometry = None
-            self._pending_command = None
-            self._pending_env = None
-            self._pending_fallback_notice = ""
-        if process is not None and process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=1)
-        if master_fd is not None:
-            try:
-                os.close(master_fd)
-            except OSError:
-                pass
-        self._reader = None
-        self._read_buffer = ""
+        self._mode = "ready"
 
-    def _bootstrap_live_process(self, context: HandlerContext) -> None:
-        with self._lock:
-            geometry = self._pending_geometry
-            command = list(self._pending_command or [])
-            env = dict(self._pending_env or {})
-            fallback_notice = self._pending_fallback_notice
-        self.stop()
-        if geometry is not None:
-            with self._lock:
-                self._pending_geometry = geometry
-        if command:
-            with self._lock:
-                self._pending_command = list(command)
-                self._pending_env = dict(env)
-                self._pending_fallback_notice = fallback_notice
-        master_fd, slave_fd = pty.openpty()
-        if geometry is not None:
-            self._apply_winsize(slave_fd, geometry[0], geometry[1])
-        if not command:
-            command, fallback_notice, env = self._prepare_native_terminal_transport(context)
-        process = subprocess.Popen(
-            command,
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=slave_fd,
-            close_fds=True,
-            start_new_session=True,
-            env=env,
-        )
-        os.close(slave_fd)
-        with self._lock:
-            self._process = process
-            self._master_fd = master_fd
-            self._context = context
-        context.channel.emit_event("handler_snapshot", self.snapshot())
-        context.push_frontend_message(
-            "handler_snapshot",
-            self.snapshot(),
-        )
-        if fallback_notice:
-            context.append_execution_event({"type": "handler_stream", "text": fallback_notice})
-        self._reader = threading.Thread(target=self._read_output_loop, daemon=True)
-        self._reader.start()
-
-    def prepare_bootstrap(self, context: HandlerContext) -> None:
+    def prepare_transport(self, context: HandlerContext) -> None:
         self._prepare_native_terminal_transport(context)
-        context.push_frontend_message(
-            "bootstrap_ready",
-            {
-                "handler_id": self.handler_id(),
-                "client_id": context.client_id,
-                "session_id": context.session_id,
-            },
-        )
 
     def _prepare_native_terminal_transport(self, context: HandlerContext) -> tuple[list[str], str, dict[str, str]]:
         command, fallback_notice = self.terminal_command()
         env = self.terminal_env()
-        with self._lock:
-            geometry = self._pending_geometry
-        env.pop("LINES", None)
-        env.pop("COLUMNS", None)
-        if geometry is not None:
-            env["LINES"] = str(geometry[0])
-            env["COLUMNS"] = str(geometry[1])
         transport = ClientTransport(
             kind="native_terminal",
             attach_cmd=_native_terminal_attach_command(),
@@ -353,89 +232,17 @@ class TerminalDisplayHandler:
             handler_id=self.handler_id(),
         )
         context.set_client_transport(transport)
-        with self._lock:
-            self._pending_command = list(command)
-            self._pending_env = dict(env)
-            self._pending_fallback_notice = fallback_notice
         return command, fallback_notice, env
-
-    def _send_bytes(
-        self,
-        context: HandlerContext,
-        payload: bytes,
-        *,
-        echo_payload: dict[str, Any],
-        message_type: str,
-    ) -> None:
-        context.push_frontend_message(message_type, echo_payload)
-        with self._lock:
-            master_fd = self._master_fd
-        if master_fd is None:
-            context.push_frontend_message("terminal_output", {"text": "vd transport is not active"})
-            return
-        os.write(master_fd, payload)
-
-    def _resize_terminal(self, payload: dict[str, Any]) -> None:
-        geometry = self._parse_geometry(payload)
-        if geometry is None:
-            return
-        rows, cols = geometry
-        with self._lock:
-            master_fd = self._master_fd
-            process = self._process
-            self._pending_geometry = geometry
-        if master_fd is None:
-            return
-        self._apply_winsize(master_fd, rows, cols)
-        if process is not None and process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGWINCH)
-            except ProcessLookupError:
-                pass
-
-    def _signal_terminal(self, payload: dict[str, Any]) -> None:
-        name = str(payload.get("name", "")).strip().lower()
-        with self._lock:
-            process = self._process
-            master_fd = self._master_fd
-        if name == "interrupt":
-            if process is not None and process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGINT)
-                except ProcessLookupError:
-                    pass
-            return
-        if name == "eof" and master_fd is not None:
-            os.write(master_fd, b"\x04")
-
-    def _remember_geometry(self, payload: dict[str, Any]) -> None:
-        geometry = self._parse_geometry(payload)
-        if geometry is None:
-            return
-        with self._lock:
-            self._pending_geometry = geometry
-
-    def _parse_geometry(self, payload: dict[str, Any]) -> tuple[int, int] | None:
-        rows = int(payload.get("rows", 0) or 0)
-        cols = int(payload.get("cols", 0) or 0)
-        if rows <= 0 or cols <= 0:
-            return None
-        return rows, cols
-
-    def _apply_winsize(self, fd: int, rows: int, cols: int) -> None:
-        winsize = struct.pack("HHHH", rows, cols, 0, 0)
-        fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
 
 class VDDisplayHandlerBase(TerminalDisplayHandler):
     def __init__(self) -> None:
         super().__init__()
-        self._mode = "browse"
         self._entry = ""
 
     def execute(self, context: HandlerContext, cell: ExecutableCell) -> str:
         self.stop()
-        self._mode = "browse"
+        self._mode = "ready"
         self._entry = cell.main_lines[0] if cell.main_lines else f"%%{self.handler_id()}"
         context.append_execution_event(
             {
@@ -455,11 +262,7 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
                 "family": "visidata",
             },
         )
-        context.channel.request_action(
-            self.bootstrap_action(),
-            self.bootstrap_payload(context, cell),
-        )
-        self.prepare_bootstrap(context)
+        self.prepare_transport(context)
         context.update_execution_status("follow-up")
         context.append_execution_event(
             {
@@ -469,16 +272,6 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
             }
         )
         return "follow-up"
-
-    def bootstrap_action(self) -> str:
-        return f"{self.handler_id()}.bootstrap"
-
-    def bootstrap_payload(self, context: HandlerContext, cell: ExecutableCell) -> dict[str, Any]:
-        _ = (context, cell)
-        return {
-            "handler_id": self.handler_id(),
-            "mode": self._mode,
-        }
 
     def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
         if message_type == "vd_copy":
@@ -535,36 +328,8 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
     def snapshot(self) -> dict[str, Any]:
         snapshot = {"handler_id": self.handler_id(), "mode": self._mode, "entry": self._entry, "family": "visidata"}
         if self._mode == "live":
-            snapshot.update({"ready": True, "transport": "pty"})
+            snapshot.update({"ready": True, "transport": "native_terminal"})
         return snapshot
-
-    def _read_output_loop(self) -> None:
-        while True:
-            with self._lock:
-                process = self._process
-                master_fd = self._master_fd
-                context = self._context
-            if process is None or master_fd is None or context is None:
-                return
-            try:
-                chunk = os.read(master_fd, 4096)
-            except OSError:
-                break
-            if not chunk:
-                break
-            self._push_output_bytes(context, chunk)
-            if process.poll() is not None:
-                break
-
-    def _push_output_bytes(self, context: HandlerContext, chunk: bytes) -> None:
-        if not chunk:
-            return
-        context.push_frontend_message(
-            "terminal_bytes",
-            {
-                "hex": chunk.hex(),
-            },
-        )
 
 
 class VDDisplayHandler(VDDisplayHandlerBase):
@@ -573,23 +338,46 @@ class VDDisplayHandler(VDDisplayHandlerBase):
         self._source_info: dict[str, str] | None = None
 
     def execute(self, context: HandlerContext, cell: ExecutableCell) -> str:
-        self._source_info = None
-        return super().execute(context, cell)
+        self.stop()
+        self._mode = "ready"
+        self._entry = cell.main_lines[0] if cell.main_lines else f"%%{self.handler_id()}"
+        context.append_execution_event(
+            {
+                "type": "execution_started",
+                "cell_id": context.cell_id,
+                "kind": cell.kind,
+                "syntax": cell.syntax,
+                "handler_id": self.handler_id(),
+            }
+        )
+        context.channel.emit_event(
+            "handler_snapshot",
+            {
+                "handler_id": self.handler_id(),
+                "mode": self._mode,
+                "entry": self._entry,
+                "family": "visidata",
+            },
+        )
+        expression = _vd_expression_from_cell(cell)
+        if expression:
+            self._source_info = context.invoke_backend_action(
+                "materialize_vd_source",
+                {"expression": expression},
+            )
+        self.prepare_transport(context)
+        context.update_execution_status("follow-up")
+        context.append_execution_event(
+            {
+                "type": "execution_finished",
+                "status": "follow-up",
+                "handler_id": self.handler_id(),
+            }
+        )
+        return "follow-up"
 
     def handler_id(self) -> str:
         return "vd"
-
-    def bootstrap_payload(self, context: HandlerContext, cell: ExecutableCell) -> dict[str, Any]:
-        payload = super().bootstrap_payload(context, cell)
-        expression = _vd_expression_from_cell(cell)
-        if not expression:
-            return payload
-        self._source_info = context.invoke_backend_action(
-            "materialize_vd_source",
-            {"expression": expression},
-        )
-        payload.update({"expression": expression, "source": dict(self._source_info)})
-        return payload
 
     def terminal_command(self) -> tuple[list[str], str]:
         source_path = self._source_info.get("path", "") if self._source_info else ""
@@ -774,64 +562,3 @@ def _vd_expression_from_cell(cell: ExecutableCell) -> str:
         body_lines.append(inline)
     body_lines.extend(cell.main_lines[1:])
     return "\n".join(body_lines).strip()
-
-
-def _terminal_key_bytes(payload: dict[str, Any]) -> bytes:
-    key = str(payload.get("key", "")).strip()
-    if not key:
-        return b""
-    ctrl = bool(payload.get("ctrl", False))
-    alt = bool(payload.get("alt", False))
-    shift = bool(payload.get("shift", False))
-
-    named = {
-        "enter": b"\r",
-        "return": b"\r",
-        "tab": b"\t",
-        "backspace": b"\x7f",
-        "escape": b"\x1b",
-        "esc": b"\x1b",
-        "space": b" ",
-        "up": b"\x1b[A",
-        "down": b"\x1b[B",
-        "right": b"\x1b[C",
-        "left": b"\x1b[D",
-        "home": b"\x1b[H",
-        "end": b"\x1b[F",
-        "insert": b"\x1b[2~",
-        "delete": b"\x1b[3~",
-        "pageup": b"\x1b[5~",
-        "pagedown": b"\x1b[6~",
-        "f1": b"\x1bOP",
-        "f2": b"\x1bOQ",
-        "f3": b"\x1bOR",
-        "f4": b"\x1bOS",
-        "f5": b"\x1b[15~",
-        "f6": b"\x1b[17~",
-        "f7": b"\x1b[18~",
-        "f8": b"\x1b[19~",
-        "f9": b"\x1b[20~",
-        "f10": b"\x1b[21~",
-        "f11": b"\x1b[23~",
-        "f12": b"\x1b[24~",
-    }
-    if key.lower() in named:
-        sequence = named[key.lower()]
-        return (b"\x1b" + sequence) if alt else sequence
-
-    char = key
-    if len(char) != 1:
-        return b""
-    if shift:
-        char = char.upper()
-    if ctrl:
-        codepoint = ord(char.upper())
-        if 64 <= codepoint <= 95:
-            sequence = bytes([codepoint - 64])
-        elif codepoint == 63:
-            sequence = b"\x7f"
-        else:
-            return b""
-    else:
-        sequence = char.encode("utf-8")
-    return (b"\x1b" + sequence) if alt else sequence

@@ -145,7 +145,7 @@ The first PTY-backed handler slice was useful to prove:
 
 - plugin/frontend control messages
 - live interactive child-process ownership
-- handler bootstrap/follow-up ideas
+- handler follow-up/control ideas
 
 It was not a good final UX for fullscreen interactive tools when rendered through:
 
@@ -171,7 +171,6 @@ Current proposal:
 - frontend receives terminal-client metadata from backend and launches a real editor terminal buffer against that process command
 - terminal transport flows through that native terminal job attachment, not through `handler_message terminal_bytes`
 - `handler_message` stays available for:
-  - bootstrap
   - follow-up
   - completion
   - plugin commands
@@ -189,7 +188,7 @@ The terminal bridge/client process must map back to those ids so stop/disconnect
 
 ### Advertising A Terminal-Backed Client
 
-Backend should advertise terminal-backed readiness explicitly instead of expecting frontend to infer it from `terminal_bytes`.
+Backend should advertise terminal-backed clients explicitly through normal client transport metadata.
 
 The likely contract shape is:
 

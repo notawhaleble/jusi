@@ -28,12 +28,6 @@ TEST_VD_CMD = (
     "/bin/sh -lc \"stty -echo; printf 'vd live ready\\r\\nvd> '; "
     "while IFS= read -r line; do printf 'echo %s\\r\\nvd> ' \\\"$line\\\"; done\""
 )
-TEST_VD_SIGNAL_CMD = (
-    "/bin/sh -lc \"trap \\\"printf 'INT\\\\r\\\\nvd> '\\\" INT; stty -echo; printf 'vd live ready\\r\\nvd> '; "
-    "while IFS= read -r line; do printf 'echo %s\\r\\nvd> ' \\\"$line\\\"; done\""
-)
-
-
 def inspect_client_lines(server: ProtocolServer, session_id: str, client_id: str) -> list[str]:
     inspect_messages = server.handle_message(
         (
@@ -58,38 +52,6 @@ def wait_for_client_lines(server: ProtocolServer, session_id: str, client_id: st
             return last_lines
         time.sleep(0.05)
     raise AssertionError(f"Timed out waiting for client lines {expected!r}; got {last_lines!r}")
-
-
-def wait_for_handler_messages(
-    server: ProtocolServer,
-    *,
-    message_types: list[str],
-) -> list[dict]:
-    deadline = time.time() + 2.0
-    collected: list[dict] = []
-    needed = set(message_types)
-    while time.time() < deadline:
-        drained = [parse_envelope(message) for message in server.drain_pending_messages()]
-        for envelope in drained:
-            if envelope.type != "handler_message":
-                continue
-            collected.append(envelope.payload)
-        seen = {payload["message_type"] for payload in collected}
-        if needed.issubset(seen):
-            return collected
-        time.sleep(0.05)
-    raise AssertionError(f"Timed out waiting for handler messages {message_types!r}; got {collected!r}")
-
-
-def decode_terminal_bytes(payloads: list[dict]) -> str:
-    chunks: list[bytes] = []
-    for payload in payloads:
-        if payload["message_type"] != "terminal_bytes":
-            continue
-        raw_hex = str(payload["payload"].get("hex", ""))
-        if raw_hex:
-            chunks.append(bytes.fromhex(raw_hex))
-    return b"".join(chunks).decode("utf-8", errors="replace")
 
 
 def start_bound_vd_server(*, command: str = TEST_VD_CMD) -> tuple[ProtocolServer, str, str]:
@@ -124,18 +86,6 @@ def start_bound_vd_server(*, command: str = TEST_VD_CMD) -> tuple[ProtocolServer
     )
     execute_envelopes = [parse_envelope(message) for message in execute_messages]
     active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
-    message_response = server.handle_message(
-        (
-            '{"version": 1, "kind": "request", "type": "handler_message", '
-            '"request_id": "req-handler", "payload": {"notebook_id": "nb-1", "session_id": "'
-            + session_id
-            + '", "client_id": "'
-            + active_client_id
-            + '", "handler_id": "vd", "message_type": "bootstrap_done", "payload": {"bufnr": 91}}}'
-        )
-    )
-    assert parse_envelope(message_response[0]).ok
-    wait_for_handler_messages(server, message_types=["handler_snapshot", "terminal_bytes"])
     return server, session_id, active_client_id
 
 
@@ -175,20 +125,6 @@ class FakeVDHandler(VDDisplayHandlerBase):
     def followup(self, context, payload):  # type: ignore[no-untyped-def]
         _ = context
         return {"cell_text": str(payload.get("cell_text", "")).upper()}
-
-
-class FakePopen:
-    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        self.args = args
-        self.kwargs = kwargs
-        self.pid = 43210
-
-    def poll(self):  # type: ignore[no-untyped-def]
-        return 0
-
-    def wait(self, timeout=None):  # type: ignore[no-untyped-def]
-        _ = timeout
-        return 0
 
 
 class PluginRegistryTest(unittest.TestCase):
@@ -291,88 +227,6 @@ class PluginRegistryTest(unittest.TestCase):
             ("vd_followup_result", {"handler_id": "fake_vd", "payload": {"cell_text": "SHOW PODS"}}),
             pushed[2],
         )
-
-    def test_terminal_resize_before_bootstrap_is_applied_at_spawn(self) -> None:
-        handler = FakeVDHandler()
-        context = type(
-            "Ctx",
-            (),
-            {
-                "session_id": "sess-test",
-                "client_id": "client-test",
-                "channel": type(
-                    "Chan",
-                    (),
-                    {
-                        "emit_event": lambda _self, *_args, **_kwargs: None,
-                        "request_action": lambda _self, *_args, **_kwargs: None,
-                    },
-                )(),
-                "push_frontend_message": lambda _self, *_args, **_kwargs: None,
-                "set_client_transport": lambda _self, *_args, **_kwargs: None,
-            },
-        )()
-        ioctl_calls: list[tuple[int, bytes]] = []
-
-        def record_ioctl(fd, op, payload):  # type: ignore[no-untyped-def]
-            _ = op
-            ioctl_calls.append((fd, payload))
-            return 0
-
-        with patch("jusi.plugins.subprocess.Popen", FakePopen), patch("jusi.plugins.fcntl.ioctl", side_effect=record_ioctl), patch(
-            "jusi.plugins.threading.Thread.start", lambda _self: None
-        ):
-            handler.on_frontend_message(context, "terminal_resize", {"rows": 21, "cols": 158})  # type: ignore[arg-type]
-            handler.on_frontend_message(context, "bootstrap_done", {"rows": 21, "cols": 158})  # type: ignore[arg-type]
-            handler.stop()
-
-        self.assertTrue(ioctl_calls)
-        winsize = ioctl_calls[0][1]
-        self.assertEqual((21, 158), tuple(int.from_bytes(winsize[index:index + 2], "little") for index in (0, 2)))
-
-    def test_terminal_resize_before_bootstrap_sets_spawn_env_geometry(self) -> None:
-        handler = FakeVDHandler()
-        context = type(
-            "Ctx",
-            (),
-            {
-                "session_id": "sess-test",
-                "client_id": "client-test",
-                "channel": type(
-                    "Chan",
-                    (),
-                    {
-                        "emit_event": lambda _self, *_args, **_kwargs: None,
-                        "request_action": lambda _self, *_args, **_kwargs: None,
-                    },
-                )(),
-                "push_frontend_message": lambda _self, *_args, **_kwargs: None,
-                "set_client_transport": lambda _self, *_args, **_kwargs: None,
-            },
-        )()
-        captured_env: dict[str, str] = {}
-
-        class FakeEnvPopen:
-            def __init__(self, *_args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-                captured_env.update(kwargs.get("env", {}))
-                self.pid = 43210
-
-            def poll(self):
-                return None
-
-            def wait(self, timeout=None):
-                _ = timeout
-                return 0
-
-        with patch.dict("os.environ", {"LINES": "45", "COLUMNS": "158"}), patch(
-            "jusi.plugins.subprocess.Popen", FakeEnvPopen
-        ), patch("jusi.plugins.threading.Thread.start", lambda _self: None):
-            handler.on_frontend_message(context, "terminal_resize", {"rows": 21, "cols": 158})  # type: ignore[arg-type]
-            handler.on_frontend_message(context, "bootstrap_done", {"rows": 21, "cols": 158})  # type: ignore[arg-type]
-            handler.stop()
-
-        self.assertEqual("21", captured_env["LINES"])
-        self.assertEqual("158", captured_env["COLUMNS"])
 
     def test_registry_matches_magic_cell_to_handler(self) -> None:
         registry = DisplayHandlerRegistry(
@@ -490,7 +344,7 @@ class PluginRegistryTest(unittest.TestCase):
         )
         execute_envelopes = [parse_envelope(message) for message in execute_messages]
         self.assertEqual("handler", execute_envelopes[3].payload["cell"]["owner"]["kind"])
-        self.assertEqual("follow-up", execute_envelopes[7].payload["cell"]["status"])
+        self.assertEqual("follow-up", execute_envelopes[-1].payload["cell"]["status"])
 
     def test_builtin_vd_handler_executes_without_magic_cell_kind(self) -> None:
         with patch.dict("os.environ", {"JUSI_VD_CMD": TEST_VD_CMD}):
@@ -530,16 +384,7 @@ class PluginRegistryTest(unittest.TestCase):
             handler_messages = [envelope for envelope in execute_envelopes if envelope.type == "handler_message"]
             message_types = [envelope.payload["message_type"] for envelope in handler_messages]
             self.assertIn("handler_snapshot", message_types)
-            self.assertIn("action_request", message_types)
-            action_payload = next(
-                envelope.payload["payload"] for envelope in handler_messages if envelope.payload["message_type"] == "action_request"
-            )
-            self.assertEqual("pods", action_payload["payload"]["expression"])
-            self.assertEqual("json", action_payload["payload"]["source"]["format"])
-            self.assertTrue(action_payload["payload"]["source"]["path"].endswith(".json"))
             self.assertEqual("follow-up", execute_envelopes[-1].payload["cell"]["status"])
-            pending_messages = wait_for_handler_messages(server, message_types=["bootstrap_ready"])
-            self.assertTrue(any(payload["message_type"] == "bootstrap_ready" for payload in pending_messages))
 
             active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
             inspect_messages = server.handle_message(
@@ -554,38 +399,84 @@ class PluginRegistryTest(unittest.TestCase):
             )
             inspect_envelope = [parse_envelope(message) for message in inspect_messages][0]
             self.assertEqual("native_terminal", inspect_envelope.payload["client"]["transport"]["kind"])
+            self.assertTrue(inspect_envelope.payload["client"]["transport"]["attach_env"]["JUSI_TERMINAL_CMD_JSON"])
             lines = inspect_client_lines(server, session_id, active_client_id)
-            self.assertIn("handler> vd mode=browse", lines)
+            self.assertIn("handler> vd mode=ready", lines)
             self.assertIn("handler.entry> %%vd pods", lines)
-            self.assertIn("frontend.action> vd.bootstrap", lines)
             server.close()
 
-    def test_handler_message_request_roundtrips_into_active_vd_handler(self) -> None:
+    def test_vd_transport_includes_exported_source_path(self) -> None:
+        captured_transport = {}
+
+        class FakeContext:
+            notebook_id = "nb-1"
+            session_id = "sess-1"
+            cell_id = 12
+            client_id = "client-1"
+
+            def __init__(self) -> None:
+                self.channel = type("Channel", (), {"emit_event": lambda *_args, **_kwargs: None})()
+
+            def invoke_backend_action(self, action_name, payload):  # type: ignore[no-untyped-def]
+                self.action_name = action_name
+                self.payload = dict(payload)
+                return {"path": "/tmp/jusi-vd-export.json", "format": "json"}
+
+            def append_execution_event(self, event):  # type: ignore[no-untyped-def]
+                _ = event
+
+            def update_execution_status(self, status):  # type: ignore[no-untyped-def]
+                self.status = status
+
+            def set_client_transport(self, transport):  # type: ignore[no-untyped-def]
+                captured_transport.update(
+                    {
+                        "kind": transport.kind,
+                        "attach_env": dict(transport.attach_env),
+                    }
+                )
+
+        context = FakeContext()
+        cell = type(
+            "Cell",
+            (),
+            {
+                "cell_id": 12,
+                "kind": "code",
+                "syntax": "python",
+                "main_lines": ["%%vd", "a"],
+            },
+        )()
+
+        with patch.dict("os.environ", {}, clear=True), patch("jusi.plugins.shutil.which", return_value="/usr/bin/vd"):
+            handler = VDDisplayHandler()
+            status = handler.execute(context, cell)
+
+        self.assertEqual("follow-up", status)
+        self.assertEqual("materialize_vd_source", context.action_name)
+        self.assertEqual({"expression": "a"}, context.payload)
+        self.assertEqual("native_terminal", captured_transport["kind"])
+        advertised_command = json.loads(captured_transport["attach_env"]["JUSI_TERMINAL_CMD_JSON"])
+        self.assertEqual(["/usr/bin/vd", "/tmp/jusi-vd-export.json"], advertised_command)
+
+    def test_handler_message_still_records_frontend_messages(self) -> None:
         with patch.dict("os.environ", {"JUSI_VD_CMD": TEST_VD_CMD}):
             server, session_id, active_client_id = start_bound_vd_server()
 
-            lines = inspect_client_lines(server, session_id, active_client_id)
-            self.assertTrue(any(line.startswith("handler.event> frontend_message ") for line in lines))
-            self.assertIn("handler> vd mode=live", lines)
-
-            input_response = server.handle_message(
+            response = server.handle_message(
                 (
                     '{"version": 1, "kind": "request", "type": "handler_message", '
-                    '"request_id": "req-handler-input", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    '"request_id": "req-handler-compat", "payload": {"notebook_id": "nb-1", "session_id": "'
                     + session_id
                     + '", "client_id": "'
                     + active_client_id
-                    + '", "handler_id": "vd", "message_type": "send_input", "payload": {"text": "open pods"}}}'
+                    + '", "handler_id": "vd", "message_type": "frontend_debug", "payload": {"note": "ping"}}}'
                 )
             )
-            self.assertTrue(parse_envelope(input_response[0]).ok)
-
-            pushed = wait_for_handler_messages(
-                server,
-                message_types=["terminal_input", "terminal_bytes"],
-            )
-            self.assertTrue(any(payload["message_type"] == "terminal_input" and payload["payload"]["text"] == "open pods" for payload in pushed))
-            self.assertIn("echo open pods", decode_terminal_bytes(pushed))
+            self.assertTrue(parse_envelope(response[0]).ok)
+            lines = inspect_client_lines(server, session_id, active_client_id)
+            self.assertTrue(any(line.startswith("handler.event> frontend_message ") for line in lines))
+            self.assertIn("handler> vd mode=ready", lines)
             server.close()
 
     def test_bootstrap_exposes_native_terminal_transport_metadata(self) -> None:
@@ -636,16 +527,6 @@ class PluginRegistryTest(unittest.TestCase):
     def test_native_terminal_attach_env_does_not_force_lines_or_columns(self) -> None:
         with patch.dict("os.environ", {"JUSI_VD_CMD": TEST_VD_CMD}):
             server, session_id, active_client_id = start_bound_vd_server()
-            server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "handler_message", '
-                    '"request_id": "req-resize-pre", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + active_client_id
-                    + '", "handler_id": "vd", "message_type": "terminal_resize", "payload": {"rows": 20, "cols": 158}}}'
-                )
-            )
             inspect_messages = server.handle_message(
                 (
                     '{"version": 1, "kind": "request", "type": "inspect_client", '
@@ -662,59 +543,6 @@ class PluginRegistryTest(unittest.TestCase):
 
             self.assertNotIn("LINES", child_env)
             self.assertNotIn("COLUMNS", child_env)
-            server.close()
-
-    def test_terminal_input_requires_enter_to_submit(self) -> None:
-        with patch.dict("os.environ", {"JUSI_VD_CMD": TEST_VD_CMD}):
-            server, session_id, active_client_id = start_bound_vd_server()
-            response = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "handler_message", '
-                    '"request_id": "req-terminal-input", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + active_client_id
-                    + '", "handler_id": "vd", "message_type": "terminal_input", "payload": {"text": "open pods"}}}'
-                )
-            )
-            self.assertTrue(parse_envelope(response[0]).ok)
-            pushed = wait_for_handler_messages(server, message_types=["terminal_input"])
-            self.assertTrue(any(payload["message_type"] == "terminal_input" for payload in pushed))
-            lines = inspect_client_lines(server, session_id, active_client_id)
-            self.assertNotIn("handler.out> echo open pods", lines)
-
-            enter_response = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "handler_message", '
-                    '"request_id": "req-terminal-key", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + active_client_id
-                    + '", "handler_id": "vd", "message_type": "terminal_key", "payload": {"key": "enter"}}}'
-                )
-            )
-            self.assertTrue(parse_envelope(enter_response[0]).ok)
-            pushed = wait_for_handler_messages(server, message_types=["terminal_key", "terminal_bytes"])
-            self.assertTrue(any(payload["message_type"] == "terminal_key" for payload in pushed))
-            self.assertIn("echo open pods", decode_terminal_bytes(pushed))
-            server.close()
-
-    def test_terminal_signal_interrupt_reaches_pty_process(self) -> None:
-        with patch.dict("os.environ", {"JUSI_VD_CMD": TEST_VD_SIGNAL_CMD}):
-            server, session_id, active_client_id = start_bound_vd_server(command=TEST_VD_SIGNAL_CMD)
-            response = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "handler_message", '
-                    '"request_id": "req-terminal-signal", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + active_client_id
-                    + '", "handler_id": "vd", "message_type": "terminal_signal", "payload": {"name": "interrupt"}}}'
-                )
-            )
-            self.assertTrue(parse_envelope(response[0]).ok)
-            pushed = wait_for_handler_messages(server, message_types=["terminal_bytes"])
-            self.assertIn("INT", decode_terminal_bytes(pushed))
             server.close()
 
 
