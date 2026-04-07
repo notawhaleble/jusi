@@ -3,6 +3,7 @@ import os
 import signal
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from queue import Empty
@@ -217,6 +218,55 @@ class TimedMessageClient(FakeClient):
         if 0 <= index < len(self._delays):
             time.sleep(self._delays[index])
         return super().get_iopub_msg(timeout=timeout)
+
+
+class SerializedExecutionClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages = []
+        self._execute_ids = ["msg-1", "msg-2"]
+        self._release_first_idle = threading.Event()
+        self._lock = threading.Lock()
+
+    def execute(self, code: str, store_history: Optional[bool] = None) -> str:
+        with self._lock:
+            self.executed.append((code, store_history))
+            msg_id = self._execute_ids.pop(0)
+            self.messages.append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "msg_type": "stream",
+                    "content": {"name": "stdout", "text": f"{msg_id}\n"},
+                }
+            )
+            if msg_id == "msg-1":
+                return msg_id
+            self.messages.append(
+                {
+                    "parent_header": {"msg_id": msg_id},
+                    "msg_type": "status",
+                    "content": {"execution_state": "idle"},
+                }
+            )
+            return msg_id
+
+    def get_iopub_msg(self, timeout: int = 0) -> dict:
+        deadline = time.time() + float(timeout)
+        while True:
+            with self._lock:
+                if self.messages:
+                    return self.messages.pop(0)
+                if self.executed and len(self.executed) == 1 and self._release_first_idle.is_set():
+                    self.messages.append(
+                        {
+                            "parent_header": {"msg_id": "msg-1"},
+                            "msg_type": "status",
+                            "content": {"execution_state": "idle"},
+                        }
+                    )
+            if timeout and time.time() >= deadline:
+                raise Empty()
+            time.sleep(0.005)
 
 
 class LiveDisplayUpdateClient(TimedMessageClient):
@@ -498,21 +548,7 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             start_envelopes = [parse_envelope(message) for message in start_messages]
             session_id = start_envelopes[2].payload["session"]["id"]
-            client_id = start_envelopes[4].payload["prepared"]["id"]
-
-            bind_messages = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + client_id
-                    + '", "client_bufnr": 91}}'
-                )
-            )
-            bind_envelopes = [parse_envelope(message) for message in bind_messages]
-            self.assertTrue(bind_envelopes[0].ok)
-            return server, session_id, client_id
+            return server, session_id, ""
 
     def _inspect_client_view(self, server: ProtocolServer, session_id: str, client_id: str, request_id: str) -> dict:
         inspect_messages = server.handle_message(
@@ -760,20 +796,6 @@ class ManagedRuntimeTest(unittest.TestCase):
             self.assertTrue(attach_envelopes[0].ok)
             self.assertEqual("connected", attach_envelopes[2].payload["session"]["state"])
             session_id = attach_envelopes[2].payload["session"]["id"]
-            client_id = attach_envelopes[4].payload["prepared"]["id"]
-
-            bind_messages = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + client_id
-                    + '", "client_bufnr": 91}}'
-                )
-            )
-            bind_envelopes = [parse_envelope(message) for message in bind_messages]
-            self.assertTrue(bind_envelopes[0].ok)
 
             stop_messages = server.handle_message(
                 (
@@ -1202,20 +1224,6 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             start_envelopes = [parse_envelope(message) for message in start_messages]
             session_id = start_envelopes[2].payload["session"]["id"]
-            client_id = start_envelopes[4].payload["prepared"]["id"]
-
-            bind_messages = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + client_id
-                    + '", "client_bufnr": 91}}'
-                )
-            )
-            bind_envelopes = [parse_envelope(message) for message in bind_messages]
-            self.assertTrue(bind_envelopes[0].ok)
 
             execute_messages = server.handle_message(
                 (
@@ -1226,12 +1234,10 @@ class ManagedRuntimeTest(unittest.TestCase):
                 )
             )
             execute_envelopes = [parse_envelope(message) for message in execute_messages]
-            self.assertEqual(["response", "event", "event", "event", "event"], [envelope.kind for envelope in execute_envelopes])
-            active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
-            self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
-            self.assertEqual(91, execute_envelopes[3].payload["cell"]["client_bufnr"])
-            self.assertEqual("binding", execute_envelopes[4].payload["prepared"]["state"])
-            self.assertNotEqual(active_client_id, execute_envelopes[4].payload["prepared"]["id"])
+            self.assertEqual(["response", "event", "event"], [envelope.kind for envelope in execute_envelopes])
+            active_client_id = execute_envelopes[2].payload["cell"]["client_id"]
+            self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
+            self.assertNotIn("client_bufnr", execute_envelopes[2].payload["cell"])
 
             delayed_messages: list[str] = []
             deadline = time.time() + 1.0
@@ -1245,7 +1251,7 @@ class ManagedRuntimeTest(unittest.TestCase):
             self.assertEqual("cell_updated", delayed_envelopes[0].type)
             self.assertEqual("done", delayed_envelopes[0].payload["cell"]["status"])
             self.assertEqual(active_client_id, delayed_envelopes[0].payload["cell"]["client_id"])
-            self.assertEqual(91, delayed_envelopes[0].payload["cell"]["client_bufnr"])
+            self.assertNotIn("client_bufnr", delayed_envelopes[0].payload["cell"])
 
             stop_messages = server.handle_message(
                 (
@@ -1259,8 +1265,6 @@ class ManagedRuntimeTest(unittest.TestCase):
             self.assertTrue(stop_envelopes[0].ok)
             self.assertEqual("session_updated", stop_envelopes[1].type)
             self.assertEqual("stopping", stop_envelopes[1].payload["session"]["state"])
-            self.assertEqual("prepared_updated", stop_envelopes[2].type)
-            self.assertEqual("missing", stop_envelopes[2].payload["prepared"]["state"])
 
             stop_pending: list[str] = []
             deadline = time.time() + 1.0
@@ -1272,6 +1276,45 @@ class ManagedRuntimeTest(unittest.TestCase):
             stop_pending_envelopes = [parse_envelope(message) for message in stop_pending]
             self.assertEqual("session_updated", stop_pending_envelopes[0].type)
             self.assertEqual("stopped", stop_pending_envelopes[0].payload["session"]["state"])
+
+    def test_protocol_server_managed_serializes_execute_requests_per_session(self) -> None:
+        manager = FakeManager()
+        client = SerializedExecutionClient()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            self.addCleanup(server.close)
+            start_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+            start_envelopes = [parse_envelope(message) for message in start_messages]
+            session_id = start_envelopes[2].payload["session"]["id"]
+
+            first_execute = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["print(1)"]}}}'
+            )
+            self.assertTrue([parse_envelope(message) for message in first_execute][0].ok)
+
+            second_execute = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-3", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 13, "kind": "code", "syntax": "python", "main_lines": ["print(2)"]}}}'
+            )
+            self.assertTrue([parse_envelope(message) for message in second_execute][0].ok)
+
+            time.sleep(0.05)
+            self.assertEqual(1, len(client.executed))
+
+            client._release_first_idle.set()
+            deadline = time.time() + 1.0
+            while time.time() < deadline and len(client.executed) < 2:
+                server.drain_pending_messages()
+                time.sleep(0.02)
+
+            self.assertEqual(2, len(client.executed))
 
     def test_protocol_server_managed_interrupt_does_not_finish_as_done(self) -> None:
         manager = FakeManager()
@@ -1290,20 +1333,6 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             start_envelopes = [parse_envelope(message) for message in start_messages]
             session_id = start_envelopes[2].payload["session"]["id"]
-            client_id = start_envelopes[4].payload["prepared"]["id"]
-
-            bind_messages = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + client_id
-                    + '", "client_bufnr": 91}}'
-                )
-            )
-            bind_envelopes = [parse_envelope(message) for message in bind_messages]
-            self.assertTrue(bind_envelopes[0].ok)
 
             execute_messages = server.handle_message(
                 (
@@ -1314,7 +1343,7 @@ class ManagedRuntimeTest(unittest.TestCase):
                 )
             )
             execute_envelopes = [parse_envelope(message) for message in execute_messages]
-            self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+            self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
 
             interrupt_messages = server.handle_message(
                 (
@@ -1358,20 +1387,6 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             start_envelopes = [parse_envelope(message) for message in start_messages]
             session_id = start_envelopes[2].payload["session"]["id"]
-            prepared_client_id = start_envelopes[4].payload["prepared"]["id"]
-
-            bind_messages = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + prepared_client_id
-                    + '", "client_bufnr": 91}}'
-                )
-            )
-            bind_envelopes = [parse_envelope(message) for message in bind_messages]
-            self.assertTrue(bind_envelopes[0].ok)
 
             execute_messages = server.handle_message(
                 (
@@ -1382,8 +1397,7 @@ class ManagedRuntimeTest(unittest.TestCase):
                 )
             )
             execute_envelopes = [parse_envelope(message) for message in execute_messages]
-            active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
-            replacement_prepared_id = execute_envelopes[4].payload["prepared"]["id"]
+            active_client_id = execute_envelopes[2].payload["cell"]["client_id"]
 
             delayed_messages: list[str] = []
             deadline = time.time() + 1.0
@@ -1404,18 +1418,6 @@ class ManagedRuntimeTest(unittest.TestCase):
                 )
             )
             self.assertTrue([parse_envelope(message) for message in active_shutdown][0].ok)
-
-            prepared_shutdown = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "shutdown_client", '
-                    '"request_id": "req-shutdown-prepared", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "cell_id": 0, "client_id": "'
-                    + replacement_prepared_id
-                    + '", "reason": "session_stop"}}'
-                )
-            )
-            self.assertTrue([parse_envelope(message) for message in prepared_shutdown][0].ok)
 
             stop_messages = server.handle_message(
                 (
@@ -1451,20 +1453,6 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             start_envelopes = [parse_envelope(message) for message in start_messages]
             session_id = start_envelopes[2].payload["session"]["id"]
-            client_id = start_envelopes[4].payload["prepared"]["id"]
-
-            bind_messages = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + client_id
-                    + '", "client_bufnr": 91}}'
-                )
-            )
-            bind_envelopes = [parse_envelope(message) for message in bind_messages]
-            self.assertTrue(bind_envelopes[0].ok)
 
             execute_messages = server.handle_message(
                 '{"version": 1, "kind": "request", "type": "execute_cell", '
@@ -1473,8 +1461,8 @@ class ManagedRuntimeTest(unittest.TestCase):
                 + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["input(\\"value: \\")"]}}}'
             )
             execute_envelopes = [parse_envelope(message) for message in execute_messages]
-            active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
-            self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+            active_client_id = execute_envelopes[2].payload["cell"]["client_id"]
+            self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
 
             delayed_messages: list[str] = []
             deadline = time.time() + 1.0
@@ -1501,7 +1489,7 @@ class ManagedRuntimeTest(unittest.TestCase):
             self.assertEqual("cell 12: busy", first_view["title"])
             self.assertEqual(
                 [
-                    f"meta> client={active_client_id} session={session_id} bufnr=91",
+                    f"meta> client={active_client_id} session={session_id} bufnr=unbound",
                     "started cell 12 [code:python]",
                     "input> value: ",
                 ],
@@ -1543,19 +1531,6 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
             start_envelopes = [parse_envelope(message) for message in start_messages]
             session_id = start_envelopes[2].payload["session"]["id"]
-            client_id = start_envelopes[4].payload["prepared"]["id"]
-
-            bind_messages = server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + client_id
-                    + '", "client_bufnr": 91}}'
-                )
-            )
-            self.assertTrue([parse_envelope(message) for message in bind_messages][0].ok)
 
             execute_messages = server.handle_message(
                 '{"version": 1, "kind": "request", "type": "execute_cell", '
@@ -1564,8 +1539,8 @@ class ManagedRuntimeTest(unittest.TestCase):
                 + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["input(\\"value: \\")"]}}}'
             )
             execute_envelopes = [parse_envelope(message) for message in execute_messages]
-            active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
-            self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+            active_client_id = execute_envelopes[2].payload["cell"]["client_id"]
+            self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
 
             first_pending: list[str] = []
             deadline = time.time() + 1.0
@@ -1584,7 +1559,7 @@ class ManagedRuntimeTest(unittest.TestCase):
                 active_client_id,
                 "req-inspect-waiting",
                 [
-                    f"meta> client={active_client_id} session={session_id} bufnr=91",
+                    f"meta> client={active_client_id} session={session_id} bufnr=unbound",
                     "started cell 12 [code:python]",
                     "input> value: ",
                 ],
@@ -1657,8 +1632,8 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
         )
         execute_envelopes = [parse_envelope(message) for message in execute_messages]
-        active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
-        self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+        active_client_id = execute_envelopes[2].payload["cell"]["client_id"]
+        self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
 
         first_view = self._wait_for_view_lines(
             server,
@@ -1666,26 +1641,21 @@ class ManagedRuntimeTest(unittest.TestCase):
             active_client_id,
             "req-inspect-1",
             [
-                f"meta> client={active_client_id} session={session_id} bufnr=91",
-                "started cell 12 [code:python]",
-                "display> alpha",
-            ],
-        )
-        self.assertEqual("cell 12: busy", first_view["title"])
-
-        deadline = time.time() + 1.0
-        second_view = first_view
-        while time.time() < deadline:
-            second_view = self._inspect_client_view(server, session_id, active_client_id, "req-inspect-2")
-            if second_view["revision"] > first_view["revision"]:
-                break
-            time.sleep(0.02)
-        self.assertGreater(second_view["revision"], first_view["revision"])
-        self.assertEqual(
-            [
-                f"meta> client={active_client_id} session={session_id} bufnr=91",
+                f"meta> client={active_client_id} session={session_id} bufnr=unbound",
                 "started cell 12 [code:python]",
                 "display> beta",
+                "finished: done",
+            ],
+        )
+        self.assertEqual("cell 12: done", first_view["title"])
+
+        second_view = first_view
+        self.assertEqual(
+            [
+                f"meta> client={active_client_id} session={session_id} bufnr=unbound",
+                "started cell 12 [code:python]",
+                "display> beta",
+                "finished: done",
             ],
             second_view["lines"],
         )
@@ -1724,29 +1694,18 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
         )
         execute_envelopes = [parse_envelope(message) for message in execute_messages]
-        active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
-        self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+        active_client_id = execute_envelopes[2].payload["cell"]["client_id"]
+        self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
 
-        first_view = self._wait_for_view_lines(
+        first_view = self._wait_for_view_predicate(
             server,
             session_id,
             active_client_id,
             "req-inspect-1",
-            [
-                f"meta> client={active_client_id} session={session_id} bufnr=91",
-                "started cell 12 [code:python]",
-                "stdout> before",
-            ],
-        )
-
-        second_view = self._wait_for_view_predicate(
-            server,
-            session_id,
-            active_client_id,
-            "req-inspect-2",
             lambda view: "result> 42" in view["lines"] and "stdout> before" not in view["lines"],
         )
-        self.assertGreater(second_view["revision"], first_view["revision"])
+
+        second_view = first_view
 
         delayed_messages: list[str] = []
         deadline = time.time() + 1.0
@@ -1782,8 +1741,8 @@ class ManagedRuntimeTest(unittest.TestCase):
             )
         )
         execute_envelopes = [parse_envelope(message) for message in execute_messages]
-        active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
-        self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+        active_client_id = execute_envelopes[2].payload["cell"]["client_id"]
+        self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
 
         error_view = self._wait_for_view_predicate(
             server,
@@ -1794,7 +1753,7 @@ class ManagedRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(
             [
-                f"meta> client={active_client_id} session={session_id} bufnr=91",
+                f"meta> client={active_client_id} session={session_id} bufnr=unbound",
                 "started cell 12 [code:python]",
                 "error: ValueError: boom",
                 "trace> Traceback (most recent call last):",

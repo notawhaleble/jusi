@@ -18,7 +18,6 @@ Current backend slice covers:
 - `disconnect_session`
 - `reconnect_session`
 - `stop_session`
-- `bind_prepared_client`
 - `shutdown_client`
 - `inspect_client`
 - terminal-backed client transport advertisement on client events/inspection snapshots
@@ -50,13 +49,13 @@ Fields:
 - `notebook_id`: frontend notebook runtime id
 - `session_id`: backend-generated durable session id
 - `cell_id`: frontend runtime cell id
-- `client_id`: backend-generated prepared/active client id
+- `client_id`: backend-generated cell-owned client id
 
 Notes:
 
 - `sign_id` is not part of the backend contract
 - history regions stay frontend-local
-- buffer numbers may appear only where client binding requires them
+- buffer numbers may be absent or unbound from backend perspective
 - current ids are backend-generated high-entropy values with `sess-` prefix
 
 ## Client Transport
@@ -131,8 +130,6 @@ Behavior:
 - starts a new durable session for the notebook
 - enters `starting`, then `connected`
 - backend generates a durable `session_id`
-- provisions a session-scoped prepared client
-- prepared state does not become `ready` until frontend binds the real Vim buffer
 - frontend may omit `target`; backend derives the current default target from `kernel_name`
 
 ### `attach_session`
@@ -157,7 +154,7 @@ Behavior:
 - current honest attach slice is intentionally narrow:
   - `target.kind` must be `connection_file`
 - this path is now real in both the in-memory runtime and the managed runtime
-- attached sessions provision a normal prepared client through the same lifecycle as started sessions
+- attached sessions now only establish the durable backend session; client allocation happens on execute
 - managed runtime keeps a small connection-file sidecar registry of attached Jusi root-process PIDs for stop fanout
 - other target kinds may still be recorded as identity, but are not executable attach paths yet
 
@@ -179,9 +176,9 @@ Behavior:
 Behavior:
 
 - requires `connected` session
-- requires current prepared client in `ready`
-- consumes the session prepared client into the cell's active client
-- only after consume does replacement preparation begin
+- allocates the real execution client directly for that cell
+- frontend may first see the cell become `busy` before a local buffer exists for that client
+- once backend emits the real `client_id` on `cell_updated`, frontend can bind or create the local buffer for that client
 - terminal `cell_updated` may arrive later as an async event
 - current long-term direction is:
   - every cell still enters through the Jupyter kernel
@@ -312,7 +309,6 @@ Behavior:
 Behavior:
 
 - moves the session to `disconnected`
-- clears prepared state
 - active execution ownership degrades to `unknown`
 - session identity remains durable for later reconnect
 - session payload exposes `expires_at` as the current disconnect deadline
@@ -331,7 +327,6 @@ Behavior:
 Behavior:
 
 - valid only from `disconnected`
-- restarts prepared-client provisioning
 - does not invent false active execution ownership
 - fails with:
   - `session_not_found` for unknown notebook/session identity
@@ -358,22 +353,6 @@ Behavior:
   - signals peer attached Jusi root processes registered for the same connection file so they shut down too
 - timeout teardown follows that same whole-session rule for attached `connection_file` sessions
 
-### `bind_prepared_client`
-
-```json
-{
-  "notebook_id": "nb-1",
-  "session_id": "sess-1",
-  "client_id": "client-1",
-  "client_bufnr": 91
-}
-```
-
-Behavior:
-
-- acknowledges the real Vim buffer for the current prepared client
-- transitions prepared state from `binding` to `ready`
-
 ### `shutdown_client`
 
 ```json
@@ -389,7 +368,7 @@ Behavior:
 Behavior:
 
 - separate from interrupt
-- tears down either a prepared client or active cell client
+- tears down an active cell client
 - cell status and client lifecycle remain separate concerns
 
 ### `inspect_client`
@@ -434,57 +413,6 @@ Behavior:
 }
 ```
 
-### `prepared_updated`
-
-```json
-{
-  "notebook_id": "nb-1",
-  "prepared": {
-    "id": "client-1",
-    "state": "binding",
-    "bufnr": -1,
-    "client_state": "active"
-  }
-}
-```
-
-Terminal-backed extension:
-
-```json
-{
-  "notebook_id": "nb-1",
-  "prepared": {
-    "id": "client-1",
-    "state": "ready",
-    "bufnr": 91,
-    "client_state": "active",
-    "transport": {
-      "kind": "native_terminal",
-      "attach_cmd": ["python", "-m", "jusi", "client-process", "terminal-attach"],
-      "attach_env": {
-        "JUSI_TERMINAL_CMD_JSON": "[\"/path/to/vd\", \"/tmp/jusi-vd.json\"]",
-        "JUSI_TERMINAL_ENV_JSON": "{\"TERM\": \"xterm-256color\"}",
-        "JUSI_SESSION_ID": "sess-1",
-        "JUSI_CLIENT_ID": "client-1",
-        "JUSI_HANDLER_ID": "vd"
-      },
-      "session_id": "sess-1",
-      "client_id": "client-1",
-      "handler_id": "vd"
-    }
-  }
-}
-```
-
-Notes:
-
-- `transport.kind=native_terminal` advertises that a real editor terminal buffer should attach to this client
-- `attach_cmd` is the backend-provided command/substrate for that terminal attachment
-- `attach_env` carries the environment needed for that attach command
-- `session_id`, `client_id`, and optional `handler_id` are repeated there so the bridge/client process can map cleanly back into backend supervision
-- current attach entrypoint is `python -m jusi client-process terminal-attach`
-- `attach_env` for native-terminal clients intentionally does not force `LINES` / `COLUMNS`; the real terminal buffer size should be authoritative
-
 ### `cell_updated`
 
 ```json
@@ -495,11 +423,17 @@ Notes:
     "status": "busy",
     "owner": {"kind": "kernel"},
     "client_id": "client-1",
-    "client_bufnr": 91,
     "client_state": "active"
   }
 }
 ```
+
+Notes:
+
+- `client_id` appears when backend has allocated the real execution client
+- `client_bufnr` may be omitted when frontend has not yet bound a local buffer
+- native-terminal transport metadata belongs to that real execution client, not to any session-level prepared slot
+- `owner` is independent from `status`
 
 ### `client_updated`
 

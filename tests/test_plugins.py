@@ -62,17 +62,6 @@ def start_bound_vd_server() -> tuple[ProtocolServer, str, str]:
     )
     start_envelopes = [parse_envelope(message) for message in start_messages]
     session_id = start_envelopes[2].payload["session"]["id"]
-    client_id = start_envelopes[4].payload["prepared"]["id"]
-    server.handle_message(
-        (
-            '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-            '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-            + session_id
-            + '", "client_id": "'
-            + client_id
-            + '", "client_bufnr": 91}}'
-        )
-    )
     execute_messages = server.handle_message(
         (
             '{"version": 1, "kind": "request", "type": "execute_cell", '
@@ -328,18 +317,6 @@ class PluginRegistryTest(unittest.TestCase):
             )
             start_envelopes = [parse_envelope(message) for message in start_messages]
             session_id = start_envelopes[2].payload["session"]["id"]
-            client_id = start_envelopes[4].payload["prepared"]["id"]
-
-            server.handle_message(
-                (
-                    '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                    '"request_id": "req-bind", "payload": {"notebook_id": "nb-1", "session_id": "'
-                    + session_id
-                    + '", "client_id": "'
-                    + client_id
-                    + '", "client_bufnr": 91}}'
-                )
-            )
 
             execute_messages = server.handle_message(
                 (

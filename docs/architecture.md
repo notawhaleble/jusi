@@ -34,7 +34,7 @@ Use these terms consistently:
   - in-memory supervision state held by the backend root process for the current session
   - tracks live per-session resources rather than acting as a multi-session registry
 - `client process`
-  - a backend-owned child process used for prepared/active client runtime behavior
+  - a backend-owned child process used for active client runtime behavior
   - current entrypoint: `python -m jusi client-process`
 - `kernel handle`
   - the execution-side resource for the session
@@ -65,15 +65,15 @@ Current interpretation:
 
 ## Current Honest Runtime Slice
 
-- `start_session` starts a backend-owned session and provisions a prepared client
+- `start_session` starts a backend-owned session
 - `attach_session` exists as a real backend path, but is intentionally narrow:
   - only `target.kind=connection_file` is executable today
 - managed runtime now supports that same narrow attach slice against a real external connection file
 - managed attached sessions now also use a small connection-file sidecar registry to coordinate stop fanout across peer Jusi root processes
 - that same sidecar now carries the shared disconnect timeout deadline for attached peers
-- `execute_cell` consumes the session prepared client and prepares the next one
+- `execute_cell` allocates the real execution client directly for that cell
 - `disconnect_session` preserves durable session identity as `disconnected`
-- `reconnect_session` reprovisions prepared state without inventing false execution ownership
+- `reconnect_session` restores the durable session linkage without inventing false execution ownership
 - backend root process now also drives frontend-link liveness with backend-issued healthchecks and converts missed replies into the normal disconnect/timeout path
 - session-level health and teardown decisions remain centralized in the backend root process rather than delegated to clients making independent suicide decisions
 
@@ -85,7 +85,6 @@ Owns:
 
 - session state
 - session target
-- prepared client
 - cell execution state
 
 ### Application

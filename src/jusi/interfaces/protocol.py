@@ -90,14 +90,6 @@ class StopSessionRequest:
 
 
 @dataclass(frozen=True)
-class BindPreparedClientRequest:
-    notebook_id: str
-    session_id: str
-    client_id: str
-    client_bufnr: int
-
-
-@dataclass(frozen=True)
 class ShutdownClientRequest:
     notebook_id: str
     session_id: str
@@ -295,27 +287,6 @@ def parse_stop_session(payload: Mapping[str, Any]) -> StopSessionRequest:
     if not session_id:
         raise ProtocolError("stop_session requires session_id")
     return StopSessionRequest(notebook_id=notebook_id, session_id=session_id)
-
-
-def parse_bind_prepared_client(payload: Mapping[str, Any]) -> BindPreparedClientRequest:
-    notebook_id = str(payload.get("notebook_id", "")).strip()
-    session_id = str(payload.get("session_id", "")).strip()
-    client_id = str(payload.get("client_id", "")).strip()
-    client_bufnr = int(payload.get("client_bufnr", -1))
-    if not notebook_id:
-        raise ProtocolError("bind_prepared_client requires notebook_id")
-    if not session_id:
-        raise ProtocolError("bind_prepared_client requires session_id")
-    if not client_id:
-        raise ProtocolError("bind_prepared_client requires client_id")
-    if client_bufnr < 0:
-        raise ProtocolError("bind_prepared_client requires non-negative client_bufnr")
-    return BindPreparedClientRequest(
-        notebook_id=notebook_id,
-        session_id=session_id,
-        client_id=client_id,
-        client_bufnr=client_bufnr,
-    )
 
 
 def parse_shutdown_client(payload: Mapping[str, Any]) -> ShutdownClientRequest:

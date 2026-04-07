@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 SessionState = Literal["idle", "starting", "connected", "disconnected", "stopping", "stopped", "failed"]
-PreparedState = Literal["missing", "spawning", "binding", "ready"]
 CellState = Literal["pending", "busy", "follow-up", "done", "error", "interrupted", "parked"]
 ClientState = Literal["active", "shutting_down", "shutdown"]
 ExecutionOwnerKind = Literal["kernel", "handler", "unknown"]
@@ -31,15 +30,6 @@ class ClientTransport:
 
 
 @dataclass
-class PreparedClient:
-    state: PreparedState = "missing"
-    client_id: str = ""
-    client_bufnr: int = -1
-    client_state: ClientState = "active"
-    transport: ClientTransport = field(default_factory=ClientTransport)
-
-
-@dataclass
 class Session:
     notebook_id: str
     session_id: str = ""
@@ -53,7 +43,6 @@ class Session:
     frontend_healthcheck_deadline: float | None = None
     last_error: str = ""
     last_action: str = ""
-    prepared: PreparedClient = field(default_factory=PreparedClient)
 
 
 @dataclass

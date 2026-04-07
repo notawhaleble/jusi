@@ -6,6 +6,7 @@ import os
 import pickle
 import signal
 import tempfile
+import threading
 from queue import Empty
 from dataclasses import dataclass, field
 from itertools import count
@@ -243,7 +244,7 @@ class RuntimeClient:
     notebook_id: str
     session_id: str
     handle: RuntimeClientHandle
-    state: str = "prepared"
+    state: str = "active"
     client_bufnr: int = -1
     cell_id: int | None = None
     shutdown_reason: str = ""
@@ -253,7 +254,6 @@ class RuntimeClient:
 @dataclass
 class RuntimeSessionClients:
     clients: dict[str, RuntimeClient] = field(default_factory=dict)
-    prepared_client_id: str = ""
 
 
 class ClientRegistryRuntime:
@@ -270,27 +270,18 @@ class ClientRegistryRuntime:
             session_id=session_id,
             handle=self._build_client_handle(client_id, notebook_id, session_id),
         )
-        session_clients.prepared_client_id = client_id
         return client_id
 
-    def bind_prepared_client(self, session: Session, client_id: str, client_bufnr: int) -> None:
-        runtime_client = self._require_client(session.session_id, client_id)
-        if runtime_client.state != "prepared":
-            raise ValueError("Prepared client is no longer awaiting binding")
-        runtime_client.handle.bind(client_bufnr)
-        runtime_client.client_bufnr = client_bufnr
-
     def activate_client(self, session: Session, client_id: str, cell_id: int) -> None:
-        session_clients = self._ensure_session_clients(session.session_id)
         runtime_client = self._require_client(session.session_id, client_id)
-        if session_clients.prepared_client_id != client_id:
-            raise ValueError("Prepared client id does not match runtime state")
-        if runtime_client.client_bufnr < 0:
-            raise ValueError("Prepared client is not bound")
         runtime_client.handle.activate(cell_id)
         runtime_client.state = "active"
         runtime_client.cell_id = cell_id
-        session_clients.prepared_client_id = ""
+
+    def bind_prepared_client(self, session: Session, client_id: str, client_bufnr: int) -> None:
+        runtime_client = self._require_client(session.session_id, client_id)
+        runtime_client.handle.bind(client_bufnr)
+        runtime_client.client_bufnr = client_bufnr
 
     def update_client_execution_status(self, session: Session, client_id: str, status: str) -> None:
         runtime_client = self._require_client(session.session_id, client_id)
@@ -339,8 +330,6 @@ class ClientRegistryRuntime:
         runtime_client.state = "shutdown"
         runtime_client.shutdown_reason = reason
         runtime_client.client_bufnr = -1
-        if session_clients.prepared_client_id == client_id:
-            session_clients.prepared_client_id = ""
         session_clients.clients.pop(client_id, None)
 
     def release_session_clients(self, session_id: str, reason: str) -> None:
@@ -635,6 +624,15 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         super().__init__()
         self._sessions: dict[str, Any] = {}
 
+    @staticmethod
+    def _session_execute_lock(runtime_session: Any) -> threading.RLock:
+        lock = getattr(runtime_session, "execute_lock", None)
+        if lock is not None and hasattr(lock, "acquire") and hasattr(lock, "release"):
+            return lock
+        lock = threading.RLock()
+        runtime_session.execute_lock = lock
+        return lock
+
     def supports_background_execute(self) -> bool:
         return True
 
@@ -660,6 +658,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             interrupted_client_ids=set(),
             pending_inputs={},
             handoffs={},
+            execute_lock=threading.RLock(),
             external=True,
             connection_file=connection_file,
         )
@@ -674,6 +673,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             interrupted_client_ids=set(),
             pending_inputs={},
             handoffs={},
+            execute_lock=threading.RLock(),
             jusi_magics_registered=False,
         )
         return session_id, str(getattr(km, "connection_file", ""))
@@ -701,25 +701,43 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             client.client_id,
             {"type": "execution_started", "cell_id": client.cell_id, "kind": cell.kind, "syntax": cell.syntax},
         )
-        if cell.keep_running:
-            runtime_session.client.execute(code)
+        with self._session_execute_lock(runtime_session):
             emit_timing(
-                "runtime.managed.execute_cell.sent",
+                "runtime.managed.execute_lock.acquired",
                 session_id=session.session_id,
                 client_id=client.client_id,
                 cell_id=client.cell_id,
-                keep_running=True,
             )
-            self.update_client_execution_status(session, client.client_id, "busy")
-            self.append_client_execution_event(
-                session,
-                client.client_id,
-                {"type": "execution_state", "status": "busy"},
-            )
-            return "busy"
-        if cell.kind == "magic":
-            self._ensure_jusi_magics(runtime_session)
-            msg_id = runtime_session.client.execute(code, store_history=False)
+            if cell.keep_running:
+                runtime_session.client.execute(code)
+                emit_timing(
+                    "runtime.managed.execute_cell.sent",
+                    session_id=session.session_id,
+                    client_id=client.client_id,
+                    cell_id=client.cell_id,
+                    keep_running=True,
+                )
+                self.update_client_execution_status(session, client.client_id, "busy")
+                self.append_client_execution_event(
+                    session,
+                    client.client_id,
+                    {"type": "execution_state", "status": "busy"},
+                )
+                return "busy"
+            if cell.kind == "magic":
+                self._ensure_jusi_magics(runtime_session)
+                msg_id = runtime_session.client.execute(code, store_history=False)
+                emit_timing(
+                    "runtime.managed.execute_cell.sent",
+                    session_id=session.session_id,
+                    client_id=client.client_id,
+                    cell_id=client.cell_id,
+                    msg_id=msg_id,
+                    kind=cell.kind,
+                )
+                return self._drive_execution(runtime_session, session, client, msg_id)
+
+            msg_id = runtime_session.client.execute(code)
             emit_timing(
                 "runtime.managed.execute_cell.sent",
                 session_id=session.session_id,
@@ -729,17 +747,6 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                 kind=cell.kind,
             )
             return self._drive_execution(runtime_session, session, client, msg_id)
-
-        msg_id = runtime_session.client.execute(code)
-        emit_timing(
-            "runtime.managed.execute_cell.sent",
-            session_id=session.session_id,
-            client_id=client.client_id,
-            cell_id=client.cell_id,
-            msg_id=msg_id,
-            kind=cell.kind,
-        )
-        return self._drive_execution(runtime_session, session, client, msg_id)
 
     def _ensure_jusi_magics(self, runtime_session: Any) -> None:
         if bool(getattr(runtime_session, "jusi_magics_registered", False)):
@@ -797,15 +804,16 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
 
     def reply_input(self, session: Session, execution: CellExecution, value: str) -> str:
         runtime_session = self._require_session(session.session_id)
-        pending_input = runtime_session.pending_inputs.get(execution.client_id)
-        if pending_input is None or pending_input.cell_id != execution.cell_id:
-            raise ValueError("No pending input_request for the tracked cell client")
-        reply_input = getattr(runtime_session.client, "input", None)
-        if not callable(reply_input):
-            raise RuntimeError("Managed runtime client does not support stdin replies")
-        reply_input(value)
-        runtime_session.pending_inputs.pop(execution.client_id, None)
-        return self._drive_execution(runtime_session, session, execution, pending_input.msg_id)
+        with self._session_execute_lock(runtime_session):
+            pending_input = runtime_session.pending_inputs.get(execution.client_id)
+            if pending_input is None or pending_input.cell_id != execution.cell_id:
+                raise ValueError("No pending input_request for the tracked cell client")
+            reply_input = getattr(runtime_session.client, "input", None)
+            if not callable(reply_input):
+                raise RuntimeError("Managed runtime client does not support stdin replies")
+            reply_input(value)
+            runtime_session.pending_inputs.pop(execution.client_id, None)
+            return self._drive_execution(runtime_session, session, execution, pending_input.msg_id)
 
     def _drive_execution(self, runtime_session: Any, session: Session, client: CellExecution, msg_id: str) -> str:
         status = client.status if client.status in {"error", "follow-up", "interrupted"} else "done"

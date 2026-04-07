@@ -50,7 +50,7 @@ If you are adding a new plugin, you should mainly think about:
 3. which frontend/backend commands the plugin needs
 4. which follow-up and completion semantics it opts into or customizes
 
-You should not have to redesign session lifecycle, reconnect policy, prepared-client handling, or supervision.
+You should not have to redesign session lifecycle, reconnect policy, client allocation, or supervision.
 
 ## Public Contract Draft
 
@@ -137,7 +137,7 @@ The goal is to make “weird but useful” flows explicit architecture instead o
 Core still owns:
 
 - session state
-- prepared-client lifecycle
+- active client lifecycle
 - active execution ownership
 - disconnect/reconnect/stop semantics
 - child-process supervision

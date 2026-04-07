@@ -6,7 +6,6 @@ from typing import Callable
 from jusi.application.errors import SessionExpiredError, SessionNotFoundError, SessionStoppedError
 from jusi.application.ports import (
     AttachSessionCommand,
-    BindPreparedClientCommand,
     DisconnectSessionCommand,
     ExecuteCellCommand,
     HandlerMessageCommand,
@@ -21,7 +20,7 @@ from jusi.application.ports import (
     StopSessionCommand,
     StartSessionCommand,
 )
-from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, PreparedClient, Session, SessionTarget
+from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, Session, SessionTarget
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.handler_worker import HandlerWorkerProcess, HandlerWorkerStartup
 from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, default_frontend_channel
@@ -50,18 +49,6 @@ def _session_payload(session: Session) -> dict:
     }
 
 
-def _prepared_payload(prepared: PreparedClient) -> dict:
-    payload = {
-        "id": prepared.client_id,
-        "state": prepared.state,
-        "bufnr": prepared.client_bufnr,
-        "client_state": prepared.client_state,
-    }
-    if prepared.transport.kind:
-        payload["transport"] = _transport_payload(prepared.transport)
-    return payload
-
-
 def _effective_kernel_name(target: SessionTarget, kernel_name: str) -> str:
     requested = kernel_name.strip() or "python3"
     if target.kind == "venv":
@@ -76,9 +63,10 @@ def _cell_payload(execution: CellExecution) -> dict:
         "status": execution.status,
         "owner": {"kind": execution.owner_kind},
         "client_id": execution.client_id,
-        "client_bufnr": execution.client_bufnr,
         "client_state": execution.client_state,
     }
+    if execution.client_bufnr >= 0:
+        payload["client_bufnr"] = execution.client_bufnr
     if execution.transport.kind:
         payload["transport"] = _transport_payload(execution.transport)
     return payload
@@ -131,16 +119,9 @@ class StartSession:
         session.frontend_last_ack_at = time.time()
         session.frontend_healthcheck_id = ""
         session.frontend_healthcheck_deadline = None
-        session.prepared = PreparedClient(state="spawning", client_state="active")
         self._store.save(session)
 
         self._events.session_updated(command.notebook_id, _session_payload(session))
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
-
-        client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
-        session.prepared = PreparedClient(state="binding", client_id=client_id, client_bufnr=-1, client_state="active")
-        self._store.save(session)
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
         return session
 
 
@@ -170,16 +151,9 @@ class AttachSession:
         session.frontend_last_ack_at = time.time()
         session.frontend_healthcheck_id = ""
         session.frontend_healthcheck_deadline = None
-        session.prepared = PreparedClient(state="spawning", client_state="active")
         self._store.save(session)
 
         self._events.session_updated(command.notebook_id, _session_payload(session))
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
-
-        client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
-        session.prepared = PreparedClient(state="binding", client_id=client_id, client_bufnr=-1, client_state="active")
-        self._store.save(session)
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
         return session
 
 
@@ -218,19 +192,17 @@ class ExecuteCell:
         session = _require_matching_session(self._store, command.notebook_id, command.session_id)
         if session.state != "connected":
             raise ValueError("Cannot execute cell without a connected session")
-        if session.prepared.state != "ready":
-            raise ValueError("Cannot execute cell without a prepared client")
+        client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
 
         current_client = CellExecution(
             cell_id=command.cell.cell_id,
             status="busy",
             owner_kind=self._resolve_owner_kind(command),
-            client_id=session.prepared.client_id,
-            client_bufnr=session.prepared.client_bufnr,
+            client_id=client_id,
+            client_bufnr=-1,
             client_state="active",
         )
         session.last_action = "execute"
-        session.prepared = PreparedClient(state="spawning", client_state="active")
         self._store.save(session)
         emit_timing(
             "use_case.execute.session_saved_spawning",
@@ -241,7 +213,6 @@ class ExecuteCell:
         )
 
         self._events.session_updated(command.notebook_id, _session_payload(session))
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
         self._events.cell_updated(
             command.notebook_id, _cell_payload(current_client)
         )
@@ -270,34 +241,6 @@ class ExecuteCell:
             client_id=current_client.client_id,
             owner_kind=current_client.owner_kind,
             status=current_client.status,
-        )
-
-        emit_timing(
-            "use_case.execute.prepare_next_start",
-            notebook_id=command.notebook_id,
-            session_id=session.session_id,
-            cell_id=current_client.cell_id,
-            client_id=current_client.client_id,
-        )
-        client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
-        emit_timing(
-            "use_case.execute.prepare_next_done",
-            notebook_id=command.notebook_id,
-            session_id=session.session_id,
-            cell_id=current_client.cell_id,
-            client_id=current_client.client_id,
-            prepared_client_id=client_id,
-        )
-        session.prepared = PreparedClient(state="binding", client_id=client_id, client_bufnr=-1, client_state="active")
-        self._store.save(session)
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
-        emit_timing(
-            "use_case.execute.prepared_binding_emitted",
-            notebook_id=command.notebook_id,
-            session_id=session.session_id,
-            cell_id=current_client.cell_id,
-            client_id=current_client.client_id,
-            prepared_client_id=client_id,
         )
         return session, current_client
 
@@ -572,13 +515,11 @@ class DisconnectSession:
         session.expires_at = self._runtime.sync_disconnect_deadline(session, session.expires_at)
         session.frontend_healthcheck_id = ""
         session.frontend_healthcheck_deadline = None
-        session.prepared = PreparedClient(state="missing", client_state="shutdown")
 
         self._runtime.disconnect_session(session, command.reason)
         session.state = "disconnected"
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
 
         for execution in self._store.list_executions(command.notebook_id):
             if execution.status in {"busy", "follow-up"}:
@@ -612,17 +553,11 @@ class ReconnectSession:
         session.frontend_last_ack_at = time.time()
         session.frontend_healthcheck_id = ""
         session.frontend_healthcheck_deadline = None
-        session.prepared = PreparedClient(state="spawning", client_state="active")
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
-
-        client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
         session.state = "connected"
-        session.prepared = PreparedClient(state="binding", client_id=client_id, client_bufnr=-1, client_state="active")
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
         return session
 
 
@@ -644,10 +579,8 @@ class StopSession:
         session.expires_at = None
         session.frontend_healthcheck_id = ""
         session.frontend_healthcheck_deadline = None
-        session.prepared = PreparedClient(state="missing", client_state="shutdown")
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
 
         for execution in self._store.list_executions(command.notebook_id):
             if execution.status in {"busy", "follow-up"}:
@@ -669,31 +602,6 @@ class StopSession:
         return self.finish_stop(command, session)
 
 
-class BindPreparedClient:
-    def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
-        self._runtime = runtime
-        self._store = store
-        self._events = events
-
-    def execute(self, command: BindPreparedClientCommand) -> PreparedClient:
-        session = _require_matching_session(self._store, command.notebook_id, command.session_id)
-        if session.prepared.client_id != command.client_id:
-            raise ValueError("Prepared client id does not match current session state")
-        if session.prepared.state not in {"binding", "ready"}:
-            raise ValueError("Prepared client is not awaiting binding")
-
-        session.prepared = PreparedClient(
-            state="ready",
-            client_id=command.client_id,
-            client_bufnr=command.client_bufnr,
-            client_state="active",
-        )
-        self._runtime.bind_prepared_client(session, command.client_id, command.client_bufnr)
-        self._store.save(session)
-        self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
-        return session.prepared
-
-
 class ShutdownClient:
     def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
         self._runtime = runtime
@@ -702,21 +610,6 @@ class ShutdownClient:
 
     def execute(self, command: ShutdownClientCommand) -> None:
         session = _require_matching_session(self._store, command.notebook_id, command.session_id)
-
-        if session.prepared.client_id == command.client_id:
-            session.prepared = PreparedClient(
-                state=session.prepared.state,
-                client_id=session.prepared.client_id,
-                client_bufnr=session.prepared.client_bufnr,
-                client_state="shutting_down",
-            )
-            self._store.save(session)
-            self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
-            self._runtime.shutdown_client(session, command.client_id, command.reason)
-            session.prepared = PreparedClient(state="missing", client_state="shutdown")
-            self._store.save(session)
-            self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
-            return
 
         execution = self._store.get_execution(command.notebook_id, command.cell_id)
         if execution is None or execution.client_id != command.client_id:

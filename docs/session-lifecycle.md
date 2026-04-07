@@ -17,7 +17,7 @@ States:
 Transitions:
 
 - `idle -> starting`: accepted `start_session` or `attach_session`
-- `starting -> connected`: session and initial prepared client are usable enough to continue
+- `starting -> connected`: session startup or attach completed enough to accept execution
 - `starting -> failed`: startup/attach failed
 - `connected -> disconnected`: linkage loss while the durable session may still exist
 - `disconnected -> starting`: reconnect begins
@@ -45,33 +45,6 @@ Rules:
 - that same sidecar now carries the shared disconnect timeout deadline for attached peers
 - known issue: suspended Vim, for example via `Ctrl-Z`, may look like link loss to backend healthchecks
 
-## Prepared Client
-
-States:
-
-- `missing`
-- `spawning`
-- `binding`
-- `ready`
-
-Transitions:
-
-- `missing -> spawning`: backend begins provisioning
-- `spawning -> binding`: backend-owned prepared client exists, frontend buffer not bound yet
-- `binding -> ready`: frontend acknowledges the real Vim buffer
-- `ready -> spawning`: execution consumed the prepared client; replacement begins
-- `spawning -> missing`: provisioning failed or session teardown
-- `binding -> missing`: teardown before bind completed
-- `ready -> missing`: teardown or disconnect
-
-Rules:
-
-- prepared client is session-scoped, not cell-scoped
-- only one prepared client is current at a time
-- execution consumes the current prepared client atomically from the frontend point of view
-- replacement preparation begins only after that consume
-- backend must not claim `ready` before `bind_prepared_client`
-
 ## Cell Execution
 
 States:
@@ -86,9 +59,9 @@ States:
 
 Rules:
 
-- cell status is separate from prepared-client readiness
-- active cell keeps the consumed client identity until a later lifecycle event changes it
-- `follow-up` does not block later execution once the next prepared client becomes `ready`
+- cell status is separate from client allocation/binding details
+- active cell keeps its client identity until a later lifecycle event changes it
+- `follow-up` does not block later execution
 - `parked` remains reserved for deliberate keep-output semantics
 - `input_reply` resumes the same active execution after `input_request`
 
@@ -103,7 +76,7 @@ States:
 Rules:
 
 - client teardown is separate from interrupt
-- prepared and active-cell client teardown should surface through `client_state`
+- active-cell client teardown should surface through `client_state`
 - client view snapshots are derived state, not lifecycle state
 - transcript-style client views may still use invalidation plus `inspect_client`
 - native-terminal handler clients should render through the advertised terminal attach transport rather than `inspect_client`

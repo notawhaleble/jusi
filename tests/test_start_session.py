@@ -22,24 +22,13 @@ class StartSessionTest(unittest.TestCase):
         )
         start_envelopes = [parse_envelope(message) for message in start_messages]
         session_id = start_envelopes[2].payload["session"]["id"]
-        client_id = start_envelopes[4].payload["prepared"]["id"]
-
-        bind_messages = server.handle_message(
-            (
-                '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                '"request_id": "req-bind", "payload": {"notebook_id": "' + notebook_id + '", "session_id": "'
-                + session_id
-                + '", "client_id": "'
-                + client_id
-                + '", "client_bufnr": 91}}'
-            )
-        )
-        bind_envelopes = [parse_envelope(message) for message in bind_messages]
-        self.assertTrue(bind_envelopes[0].ok)
-        self.assertEqual("ready", bind_envelopes[1].payload["prepared"]["state"])
+        client_id = server._runtime.prepare_client(notebook_id, session_id)
+        session = server._store.get_by_notebook(notebook_id)
+        self.assertIsNotNone(session)
+        server._runtime.bind_prepared_client(session, client_id, 91)
         return session_id, client_id
 
-    def test_start_session_emits_starting_then_connected_and_binding_updates(self) -> None:
+    def test_start_session_emits_starting_then_connected_updates(self) -> None:
         events = CollectingEventSink()
         use_case = StartSession(runtime=InMemoryKernelRuntime(), store=InMemorySessionStore(), events=events)
 
@@ -58,21 +47,14 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("python3", session.target.alias)
         self.assertEqual("kernel", session.target.kind)
         self.assertIsNone(session.expires_at)
-        self.assertEqual(
-            ["session_updated", "session_updated", "prepared_updated", "prepared_updated"],
-            [event["type"] for event in events.events],
-        )
+        self.assertEqual(["session_updated", "session_updated"], [event["type"] for event in events.events])
         self.assertEqual("starting", events.events[0]["payload"]["state"])
         self.assertEqual("connected", events.events[1]["payload"]["state"])
         self.assertEqual(
             {"source": "start", "alias": "python3", "kind": "kernel", "value": "", "config": {}},
             events.events[1]["payload"]["target"],
         )
-        self.assertEqual("spawning", events.events[2]["payload"]["state"])
-        self.assertEqual("binding", events.events[3]["payload"]["state"])
-        self.assertEqual(-1, events.events[3]["payload"]["bufnr"])
-
-    def test_protocol_server_start_requires_bind_before_ready(self) -> None:
+    def test_protocol_server_start_connects_without_prepared_client_updates(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         messages = server.handle_message(
             (
@@ -94,11 +76,7 @@ class StartSessionTest(unittest.TestCase):
             {"source": "start", "alias": "python3", "kind": "kernel", "value": "", "config": {}},
             envelopes[2].payload["session"]["target"],
         )
-        self.assertEqual("prepared_updated", envelopes[3].type)
-        self.assertEqual("spawning", envelopes[3].payload["prepared"]["state"])
-        self.assertEqual("prepared_updated", envelopes[4].type)
-        self.assertEqual("binding", envelopes[4].payload["prepared"]["state"])
-        self.assertEqual(-1, envelopes[4].payload["prepared"]["bufnr"])
+        self.assertEqual(3, len(envelopes))
 
     def test_protocol_server_start_accepts_explicit_target_identity(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
@@ -139,7 +117,7 @@ class StartSessionTest(unittest.TestCase):
 
         self.assertEqual("python3", session.kernel_name)
 
-    def test_attach_session_emits_external_connection_file_connected_and_binding_updates(self) -> None:
+    def test_attach_session_emits_external_connection_file_connected_updates(self) -> None:
         events = CollectingEventSink()
         use_case = AttachSession(runtime=InMemoryKernelRuntime(), store=InMemorySessionStore(), events=events)
 
@@ -156,14 +134,9 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("attach", session.target.source)
         self.assertEqual("connection_file", session.target.kind)
         self.assertIsNone(session.expires_at)
-        self.assertEqual(
-            ["session_updated", "session_updated", "prepared_updated", "prepared_updated"],
-            [event["type"] for event in events.events],
-        )
+        self.assertEqual(["session_updated", "session_updated"], [event["type"] for event in events.events])
         self.assertEqual("starting", events.events[0]["payload"]["state"])
         self.assertEqual("connected", events.events[1]["payload"]["state"])
-        self.assertEqual("spawning", events.events[2]["payload"]["state"])
-        self.assertEqual("binding", events.events[3]["payload"]["state"])
 
     def test_attach_session_rejects_non_connection_file_target_kind(self) -> None:
         events = CollectingEventSink()
@@ -177,7 +150,7 @@ class StartSessionTest(unittest.TestCase):
                 )
             )
 
-    def test_protocol_server_attach_records_explicit_target_and_prepares_client(self) -> None:
+    def test_protocol_server_attach_records_explicit_target(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         messages = server.handle_message(
             (
@@ -202,8 +175,7 @@ class StartSessionTest(unittest.TestCase):
             },
             envelopes[2].payload["session"]["target"],
         )
-        self.assertEqual("spawning", envelopes[3].payload["prepared"]["state"])
-        self.assertEqual("binding", envelopes[4].payload["prepared"]["state"])
+        self.assertEqual(3, len(envelopes))
 
     def test_protocol_server_attach_rejects_non_connection_file_target_kind(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
@@ -218,7 +190,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertFalse(envelope.ok)
         self.assertEqual("invalid_state", envelope.error["code"])
 
-    def test_bind_prepared_client_marks_session_ready(self) -> None:
+    def test_internal_client_bind_helper_marks_runtime_client_bound(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, client_id = self.start_and_bind(server)
@@ -228,10 +200,10 @@ class StartSessionTest(unittest.TestCase):
         runtime_client = runtime.get_client(session_id, client_id)
         self.assertIsNotNone(runtime_client)
         self.assertEqual(91, runtime_client.client_bufnr)
-        self.assertEqual("prepared", runtime_client.state)
+        self.assertEqual("active", runtime_client.state)
         self.assertEqual(["bind:91"], runtime_client.handle.lifecycle)
 
-    def test_shutdown_prepared_client_resets_prepared_state(self) -> None:
+    def test_shutdown_untracked_client_fails_explicitly(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, client_id = self.start_and_bind(server)
@@ -247,15 +219,10 @@ class StartSessionTest(unittest.TestCase):
             )
         )
         shutdown_envelopes = [parse_envelope(message) for message in shutdown_messages]
-        self.assertTrue(shutdown_envelopes[0].ok)
-        self.assertEqual("ready", shutdown_envelopes[1].payload["prepared"]["state"])
-        self.assertEqual("shutting_down", shutdown_envelopes[1].payload["prepared"]["client_state"])
-        self.assertEqual("missing", shutdown_envelopes[2].payload["prepared"]["state"])
-        self.assertEqual("shutdown", shutdown_envelopes[2].payload["prepared"]["client_state"])
-        self.assertEqual(-1, shutdown_envelopes[2].payload["prepared"]["bufnr"])
-        self.assertIsNone(runtime.get_client(session_id, client_id))
+        self.assertFalse(shutdown_envelopes[0].ok)
+        self.assertEqual("invalid_state", shutdown_envelopes[0].error["code"])
 
-    def test_execute_requires_bound_prepared_client(self) -> None:
+    def test_execute_does_not_require_prebound_client(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         start_messages = server.handle_message(
             (
@@ -274,10 +241,9 @@ class StartSessionTest(unittest.TestCase):
             )
         )
         execute_envelopes = [parse_envelope(message) for message in execute_messages]
-        self.assertFalse(execute_envelopes[0].ok)
-        self.assertEqual("invalid_state", execute_envelopes[0].error["code"])
+        self.assertTrue(execute_envelopes[0].ok)
 
-    def test_execute_flow_consumes_bound_prepared_client_and_returns_next_binding(self) -> None:
+    def test_execute_flow_allocates_direct_cell_owned_client(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, _client_id = self.start_and_bind(server)
@@ -296,20 +262,16 @@ class StartSessionTest(unittest.TestCase):
         self.assertTrue(execute_envelopes[0].ok)
         self.assertEqual("session_updated", execute_envelopes[1].type)
         self.assertEqual("execute", execute_envelopes[1].payload["session"]["last_action"])
-        self.assertEqual("prepared_updated", execute_envelopes[2].type)
-        self.assertEqual("spawning", execute_envelopes[2].payload["prepared"]["state"])
+        self.assertEqual("cell_updated", execute_envelopes[2].type)
+        self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
         self.assertEqual("cell_updated", execute_envelopes[3].type)
-        self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
-        self.assertEqual("prepared_updated", execute_envelopes[4].type)
-        self.assertEqual("binding", execute_envelopes[4].payload["prepared"]["state"])
-        self.assertEqual("cell_updated", execute_envelopes[5].type)
-        self.assertEqual("done", execute_envelopes[5].payload["cell"]["status"])
-        active_client = runtime.get_client(session_id, execute_envelopes[3].payload["cell"]["client_id"])
+        self.assertEqual("done", execute_envelopes[3].payload["cell"]["status"])
+        active_client = runtime.get_client(session_id, execute_envelopes[2].payload["cell"]["client_id"])
         self.assertIsNotNone(active_client)
         self.assertEqual("active", active_client.state)
         self.assertEqual(12, active_client.cell_id)
         self.assertEqual(
-            ["bind:91", "activate:12", "status:busy", "event:execution_started", "status:done", "event:execution_finished"],
+            ["activate:12", "status:busy", "event:execution_started", "status:done", "event:execution_finished"],
             active_client.handle.lifecycle,
         )
         session = server._store.get_by_notebook("nb-1")
@@ -318,21 +280,18 @@ class StartSessionTest(unittest.TestCase):
             {
                 "title": "cell 12: done",
                 "lines": [
-                    f"meta> client={active_client.client_id} session={session_id} bufnr=91",
+                    f"meta> client={active_client.client_id} session={session_id} bufnr=unbound",
                     "started cell 12 [code:python]",
                     "finished: done",
                 ],
                 "execution_status": "done",
                 "active_cell_id": 12,
-                "revision": 6,
+                "revision": 5,
             },
             runtime.read_client_view(session, active_client.client_id),
         )
-        prepared_client = runtime.get_client(session_id, execute_envelopes[4].payload["prepared"]["id"])
-        self.assertIsNotNone(prepared_client)
-        self.assertEqual("prepared", prepared_client.state)
 
-    def test_follow_up_cell_does_not_block_later_execution_once_next_client_is_bound(self) -> None:
+    def test_follow_up_cell_does_not_block_later_execution(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         session_id, _client_id = self.start_and_bind(server)
 
@@ -345,23 +304,8 @@ class StartSessionTest(unittest.TestCase):
             )
         )
         followup_envelopes = [parse_envelope(message) for message in followup_messages]
-        self.assertEqual("follow-up", followup_envelopes[5].payload["cell"]["status"])
-        self.assertEqual("handler", followup_envelopes[5].payload["cell"]["owner"]["kind"])
-        self.assertEqual("binding", followup_envelopes[4].payload["prepared"]["state"])
-
-        next_client_id = followup_envelopes[4].payload["prepared"]["id"]
-        bind_messages = server.handle_message(
-            (
-                '{"version": 1, "kind": "request", "type": "bind_prepared_client", '
-                '"request_id": "req-bind-2", "payload": {"notebook_id": "nb-1", "session_id": "'
-                + session_id
-                + '", "client_id": "'
-                + next_client_id
-                + '", "client_bufnr": 92}}'
-            )
-        )
-        bind_envelopes = [parse_envelope(message) for message in bind_messages]
-        self.assertTrue(bind_envelopes[0].ok)
+        self.assertEqual("follow-up", followup_envelopes[3].payload["cell"]["status"])
+        self.assertEqual("handler", followup_envelopes[3].payload["cell"]["owner"]["kind"])
 
         next_messages = server.handle_message(
             (
@@ -373,9 +317,8 @@ class StartSessionTest(unittest.TestCase):
         )
         next_envelopes = [parse_envelope(message) for message in next_messages]
         self.assertTrue(next_envelopes[0].ok)
-        self.assertEqual("busy", next_envelopes[3].payload["cell"]["status"])
-        self.assertEqual("binding", next_envelopes[4].payload["prepared"]["state"])
-        self.assertEqual("done", next_envelopes[5].payload["cell"]["status"])
+        self.assertEqual("busy", next_envelopes[2].payload["cell"]["status"])
+        self.assertEqual("done", next_envelopes[3].payload["cell"]["status"])
 
     def test_interrupt_finished_execution_fails_explicitly(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
@@ -433,7 +376,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("follow-up", shutdown_envelopes[1].payload["cell"]["status"])
         self.assertEqual("shutdown", shutdown_envelopes[2].payload["cell"]["client_state"])
         self.assertEqual("follow-up", shutdown_envelopes[2].payload["cell"]["status"])
-        self.assertEqual(-1, shutdown_envelopes[2].payload["cell"]["client_bufnr"])
+        self.assertNotIn("client_bufnr", shutdown_envelopes[2].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, active_client_id))
 
     def test_inspect_client_returns_runtime_view_snapshot(self) -> None:
@@ -468,13 +411,13 @@ class StartSessionTest(unittest.TestCase):
             {
                 "title": "cell 12: done",
                 "lines": [
-                    f"meta> client={client_id} session={session_id} bufnr=91",
+                    f"meta> client={client_id} session={session_id} bufnr=unbound",
                     "started cell 12 [code:python]",
                     "finished: done",
                 ],
                 "execution_status": "done",
                 "active_cell_id": 12,
-                "revision": 6,
+                "revision": 5,
             },
             inspect_envelopes[0].payload["client"],
         )
@@ -510,13 +453,13 @@ class StartSessionTest(unittest.TestCase):
             {
                 "title": "cell 12: busy",
                 "lines": [
-                    f"meta> client={client_id} session={session_id} bufnr=91",
+                    f"meta> client={client_id} session={session_id} bufnr=unbound",
                     "started cell 12 [code:python]",
                     "state: busy",
                 ],
                 "execution_status": "busy",
                 "active_cell_id": 12,
-                "revision": 5,
+                "revision": 4,
             },
             inspect_envelopes[0].payload["client"],
         )
@@ -588,8 +531,8 @@ class StartSessionTest(unittest.TestCase):
             )
         )
         execute_envelopes = [parse_envelope(message) for message in execute_messages]
-        self.assertEqual("busy", execute_envelopes[5].payload["cell"]["status"])
-        self.assertEqual("kernel", execute_envelopes[5].payload["cell"]["owner"]["kind"])
+        self.assertEqual("busy", execute_envelopes[3].payload["cell"]["status"])
+        self.assertEqual("kernel", execute_envelopes[3].payload["cell"]["owner"]["kind"])
 
         interrupt_messages = server.handle_message(
             (
@@ -630,9 +573,8 @@ class StartSessionTest(unittest.TestCase):
         self.assertTrue(disconnect_envelopes[0].ok)
         self.assertEqual("disconnected", disconnect_envelopes[1].payload["session"]["state"])
         self.assertGreater(disconnect_envelopes[1].payload["session"]["expires_at"], 0)
-        self.assertEqual("missing", disconnect_envelopes[2].payload["prepared"]["state"])
-        self.assertEqual("unknown", disconnect_envelopes[3].payload["cell"]["owner"]["kind"])
-        self.assertEqual("follow-up", disconnect_envelopes[3].payload["cell"]["status"])
+        self.assertEqual("unknown", disconnect_envelopes[2].payload["cell"]["owner"]["kind"])
+        self.assertEqual("follow-up", disconnect_envelopes[2].payload["cell"]["status"])
         self.assertEqual([], runtime.list_clients(session_id))
 
         reconnect_messages = server.handle_message(
@@ -647,10 +589,8 @@ class StartSessionTest(unittest.TestCase):
         self.assertTrue(reconnect_envelopes[0].ok)
         self.assertEqual("starting", reconnect_envelopes[1].payload["session"]["state"])
         self.assertIsNone(reconnect_envelopes[1].payload["session"]["expires_at"])
-        self.assertEqual("spawning", reconnect_envelopes[2].payload["prepared"]["state"])
-        self.assertEqual("connected", reconnect_envelopes[3].payload["session"]["state"])
-        self.assertIsNone(reconnect_envelopes[3].payload["session"]["expires_at"])
-        self.assertEqual("binding", reconnect_envelopes[4].payload["prepared"]["state"])
+        self.assertEqual("connected", reconnect_envelopes[2].payload["session"]["state"])
+        self.assertIsNone(reconnect_envelopes[2].payload["session"]["expires_at"])
 
     def test_disconnect_marks_started_session_disconnected(self) -> None:
         runtime = InMemoryKernelRuntime()
@@ -669,8 +609,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertTrue(disconnect_envelopes[0].ok)
         self.assertEqual("disconnected", disconnect_envelopes[1].payload["session"]["state"])
         self.assertGreater(disconnect_envelopes[1].payload["session"]["expires_at"], 0)
-        self.assertEqual("missing", disconnect_envelopes[2].payload["prepared"]["state"])
-        self.assertEqual([], disconnect_envelopes[3:])
+        self.assertEqual([], disconnect_envelopes[2:])
         self.assertEqual([], runtime.list_clients(session_id))
 
     def test_interrupt_unknown_owner_fails_after_disconnect(self) -> None:
@@ -853,7 +792,7 @@ class StartSessionTest(unittest.TestCase):
 
         messages = server.drain_pending_messages()
         envelopes = [parse_envelope(message) for message in messages]
-        self.assertEqual(["session_updated", "prepared_updated"], [envelope.type for envelope in envelopes])
+        self.assertEqual(["session_updated"], [envelope.type for envelope in envelopes])
         self.assertEqual("disconnected", session.state)
         self.assertEqual("frontend_unreachable", session.last_error)
         self.assertIsNotNone(session.expires_at)
@@ -885,7 +824,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual(client_id, envelopes[0].payload["client_id"])
         self.assertGreater(envelopes[0].payload["revision"], 0)
 
-    def test_stop_session_clears_prepared_and_interrupts_active_cells(self) -> None:
+    def test_stop_session_interrupts_active_cells(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, _client_id = self.start_and_bind(server)
@@ -909,8 +848,7 @@ class StartSessionTest(unittest.TestCase):
         stop_envelopes = [parse_envelope(message) for message in stop_messages]
         self.assertTrue(stop_envelopes[0].ok)
         self.assertEqual("stopping", stop_envelopes[1].payload["session"]["state"])
-        self.assertEqual("missing", stop_envelopes[2].payload["prepared"]["state"])
-        self.assertEqual("interrupted", stop_envelopes[3].payload["cell"]["status"])
+        self.assertEqual("interrupted", stop_envelopes[2].payload["cell"]["status"])
         pending_messages = server.drain_pending_messages()
         pending_envelopes = [parse_envelope(message) for message in pending_messages]
         self.assertEqual("stopped", pending_envelopes[0].payload["session"]["state"])

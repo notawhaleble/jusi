@@ -7,10 +7,10 @@ import uuid
 from typing import List, Optional
 
 from jusi.application.errors import SessionError, SessionNotFoundError
-from jusi.application.ports import AttachSessionCommand, BindPreparedClientCommand, ExecuteCellCommand, HandlerMessageCommand, HealthcheckReplyCommand, InputReplyCommand, InterruptCellCommand, StartSessionCommand
+from jusi.application.ports import AttachSessionCommand, ExecuteCellCommand, HandlerMessageCommand, HealthcheckReplyCommand, InputReplyCommand, InterruptCellCommand, StartSessionCommand
 from jusi.application.ports import DisconnectSessionCommand, ReconnectSessionCommand, StopSessionCommand
 from jusi.application.ports import ShutdownClientCommand
-from jusi.application.use_cases import AttachSession, BindPreparedClient, DisconnectSession, ExecuteCell, HandlerMessage, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
+from jusi.application.use_cases import AttachSession, DisconnectSession, ExecuteCell, HandlerMessage, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
 from jusi.domain.models import ExecutableCell
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore, build_runtime
@@ -20,7 +20,6 @@ from jusi.interfaces.protocol import (
     dump_envelopes,
     error_response,
     parse_attach_session,
-    parse_bind_prepared_client,
     parse_disconnect_session,
     parse_envelope,
     parse_execute_cell,
@@ -56,16 +55,6 @@ class ProtocolEventSink:
                 kind="event",
                 type="session_updated",
                 payload={"notebook_id": notebook_id, "session": payload},
-            )
-        )
-
-    def prepared_updated(self, notebook_id: str, payload: dict) -> None:
-        self._events.append(
-            Envelope(
-                version=1,
-                kind="event",
-                type="prepared_updated",
-                payload={"notebook_id": notebook_id, "prepared": payload},
             )
         )
 
@@ -316,8 +305,6 @@ class ProtocolServer:
                 return self._handle_reconnect_session(request)
             if request.type == "stop_session":
                 return self._handle_stop_session(request)
-            if request.type == "bind_prepared_client":
-                return self._handle_bind_prepared_client(request)
             if request.type == "shutdown_client":
                 return self._handle_shutdown_client(request)
             if request.type == "inspect_client":
@@ -574,27 +561,6 @@ class ProtocolServer:
                 self._pending_events.put(event)
 
         Thread(target=_run, daemon=True).start()
-
-    def _handle_bind_prepared_client(self, request: Envelope) -> List[str]:
-        bind_request = parse_bind_prepared_client(request.payload)
-        events = ProtocolEventSink()
-        use_case = BindPreparedClient(runtime=self._runtime, store=self._store, events=events)
-        try:
-            use_case.execute(
-                BindPreparedClientCommand(
-                    notebook_id=bind_request.notebook_id,
-                    session_id=bind_request.session_id,
-                    client_id=bind_request.client_id,
-                    client_bufnr=bind_request.client_bufnr,
-                )
-            )
-        except SessionError as exc:
-            return dump_envelopes([error_response(request, exc.code, str(exc))])
-        except ValueError as exc:
-            return dump_envelopes([error_response(request, "invalid_state", str(exc))])
-        envelopes = [response_envelope(request, ok=True)]
-        envelopes.extend(events.events)
-        return dump_envelopes(envelopes)
 
     def _handle_shutdown_client(self, request: Envelope) -> List[str]:
         shutdown_request = parse_shutdown_client(request.payload)

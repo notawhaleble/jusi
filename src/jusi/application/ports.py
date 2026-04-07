@@ -53,14 +53,6 @@ class StopSessionCommand:
 
 
 @dataclass(frozen=True)
-class BindPreparedClientCommand:
-    notebook_id: str
-    session_id: str
-    client_id: str
-    client_bufnr: int
-
-
-@dataclass(frozen=True)
 class ShutdownClientCommand:
     notebook_id: str
     session_id: str
@@ -99,9 +91,6 @@ class SessionEventSink(Protocol):
     def session_updated(self, notebook_id: str, payload: dict) -> None:
         ...
 
-    def prepared_updated(self, notebook_id: str, payload: dict) -> None:
-        ...
-
     def cell_updated(self, notebook_id: str, payload: dict) -> None:
         ...
 
@@ -117,13 +106,10 @@ class KernelRuntime(Protocol):
         """Return session_id and connection reference."""
 
     def prepare_client(self, notebook_id: str, session_id: str) -> str:
-        """Return a backend-owned prepared client id."""
-
-    def bind_prepared_client(self, session: Session, client_id: str, client_bufnr: int) -> None:
-        """Attach a real frontend buffer binding to a prepared client."""
+        """Return a backend-owned execution client id."""
 
     def activate_client(self, session: Session, client_id: str, cell_id: int) -> None:
-        """Move a prepared client into active cell ownership."""
+        """Move an execution client into active cell ownership."""
 
     def update_client_execution_status(self, session: Session, client_id: str, status: str) -> None:
         """Publish the current execution-facing status for an active client."""
