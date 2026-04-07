@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from typing import Optional
 from unittest.mock import patch
 
-from jusi.domain.models import CellExecution, ExecutableCell, Session, SessionTarget
+from jusi.domain.models import CellExecution, ExecutableCell, Session, SessionTarget, JUSI_HANDLER_HANDOFF_MIME
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, ManagedClientHandle, ManagedKernelRuntime, RuntimeDependencyError, build_runtime
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
@@ -168,6 +168,44 @@ class InputReplyFlowClient(FakeClient):
         ]
 
 
+class MagicHandoffClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages = [
+            {
+                "parent_header": {"msg_id": "msg-boot"},
+                "msg_type": "status",
+                "content": {"execution_state": "idle"},
+            },
+            {
+                "parent_header": {"msg_id": "msg-magic"},
+                "msg_type": "display_data",
+                "content": {
+                    "data": {
+                        JUSI_HANDLER_HANDOFF_MIME: {
+                            "handler_id": "vd",
+                            "magic_name": "vd",
+                            "content": "pods",
+                        }
+                    },
+                    "metadata": {
+                        JUSI_HANDLER_HANDOFF_MIME: {"source": "kernel"},
+                    },
+                },
+            },
+            {
+                "parent_header": {"msg_id": "msg-magic"},
+                "msg_type": "status",
+                "content": {"execution_state": "idle"},
+            },
+        ]
+        self._execute_ids = ["msg-boot", "msg-magic"]
+
+    def execute(self, code: str, store_history: Optional[bool] = None) -> str:
+        self.executed.append((code, store_history))
+        return self._execute_ids.pop(0)
+
+
 class TimedMessageClient(FakeClient):
     def __init__(self, messages: list[dict], delays: list[float]) -> None:
         super().__init__()
@@ -279,6 +317,150 @@ class FakeManager:
 
 
 class ManagedRuntimeTest(unittest.TestCase):
+    def test_protocol_server_managed_handoff_starts_handler_worker(self) -> None:
+        manager = FakeManager()
+        client = FakeClient()
+        client.messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "display_data",
+                "content": {
+                    "data": {
+                        JUSI_HANDLER_HANDOFF_MIME: {
+                            "handler_id": "vd",
+                            "magic_name": "vd",
+                            "content": "pods",
+                        }
+                    },
+                    "metadata": {
+                        JUSI_HANDLER_HANDOFF_MIME: {"source": "kernel"},
+                    },
+                },
+            },
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "status",
+                "content": {"execution_state": "idle"},
+            },
+        ]
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)), patch(
+            "jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")
+        ):
+            server, session_id, _ = self._start_bound_managed_server(client)
+            execute_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "execute_cell", '
+                    '"request_id": "req-exec-handoff", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
+                )
+            )
+            execute_envelopes = [parse_envelope(message) for message in execute_messages]
+            deadline = time.time() + 1.0
+            pending_envelopes: list = []
+            while time.time() < deadline:
+                pending_envelopes.extend(parse_envelope(message) for message in server.drain_pending_messages())
+                cell_events = [
+                    envelope
+                    for envelope in execute_envelopes + pending_envelopes
+                    if envelope.type == "cell_updated"
+                ]
+                if cell_events and cell_events[-1].payload["cell"]["owner"]["kind"] == "handler":
+                    break
+                time.sleep(0.02)
+            cell_events = [
+                envelope
+                for envelope in execute_envelopes + pending_envelopes
+                if envelope.type == "cell_updated"
+            ]
+            self.assertEqual("handler", cell_events[-1].payload["cell"]["owner"]["kind"])
+            self.assertEqual("follow-up", cell_events[-1].payload["cell"]["status"])
+            active_client_id = cell_events[0].payload["cell"]["client_id"]
+            inspect = self._inspect_client_view(server, session_id, active_client_id, "req-inspect-handoff-worker")
+            self.assertEqual("native_terminal", inspect["transport"]["kind"])
+            self.assertTrue(any("handler.handoff> magic=vd handler=vd" == line for line in inspect["lines"]))
+            server.close()
+
+    def test_execute_cell_records_jusi_handler_handoff_from_display_data(self) -> None:
+        runtime = ManagedKernelRuntime()
+        self.addCleanup(runtime.close)
+        fake_client = FakeClient()
+        fake_client.messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "display_data",
+                "content": {
+                    "data": {
+                        JUSI_HANDLER_HANDOFF_MIME: {
+                            "handler_id": "todo",
+                            "magic_name": "todo",
+                            "content": "buy milk",
+                        }
+                    },
+                    "metadata": {
+                        JUSI_HANDLER_HANDOFF_MIME: {"cur_proj": "home"},
+                    },
+                },
+            },
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "status",
+                "content": {"execution_state": "idle"},
+            },
+        ]
+        runtime._sessions["sess-1"] = SimpleNamespace(
+            manager=None,
+            client=fake_client,
+            interrupted_client_ids=set(),
+            pending_inputs={},
+        )
+        session = Session(notebook_id="nb-1", session_id="sess-1")
+        runtime.prepare_client("nb-1", "sess-1")
+        client_id = runtime.prepare_client("nb-1", "sess-1")
+        runtime.bind_prepared_client(session, client_id, 91)
+        execution = CellExecution(cell_id=12, client_id=client_id, client_bufnr=91)
+
+        status = runtime.execute_cell(
+            session,
+            ExecutableCell(cell_id=12, kind="code", syntax="python", main_lines=["display('x')"]),
+            execution,
+        )
+
+        self.assertEqual("follow-up", status)
+        view = runtime.read_client_view(session, client_id)
+        self.assertIn("handler.handoff> magic=todo handler=todo", view["lines"])
+        self.assertIn('handler.meta> {"cur_proj": "home"}', view["lines"])
+
+    def test_managed_magic_execution_registers_kernel_magic_and_records_handoff(self) -> None:
+        runtime = ManagedKernelRuntime()
+        self.addCleanup(runtime.close)
+        fake_client = MagicHandoffClient()
+        runtime._sessions["sess-1"] = SimpleNamespace(
+            manager=None,
+            client=fake_client,
+            interrupted_client_ids=set(),
+            pending_inputs={},
+            handoffs={},
+            jusi_magics_registered=False,
+        )
+        session = Session(notebook_id="nb-1", session_id="sess-1")
+        client_id = runtime.prepare_client("nb-1", "sess-1")
+        runtime.bind_prepared_client(session, client_id, 91)
+        execution = CellExecution(cell_id=12, client_id=client_id, client_bufnr=91)
+
+        status = runtime.execute_cell(
+            session,
+            ExecutableCell(cell_id=12, kind="magic", syntax="python", main_lines=["%%vd", "pods"]),
+            execution,
+        )
+
+        self.assertEqual("follow-up", status)
+        self.assertEqual(2, len(fake_client.executed))
+        self.assertIn("register_magic_function", fake_client.executed[0][0])
+        self.assertEqual(("%%vd\npods", False), fake_client.executed[1])
+        view = runtime.read_client_view(session, client_id)
+        self.assertIn("handler.handoff> magic=vd handler=vd", view["lines"])
+
     def test_materialize_vd_source_exports_kernel_expression_to_json(self) -> None:
         runtime = ManagedKernelRuntime()
         fake_client = FakeClient()
@@ -310,6 +492,7 @@ class ManagedRuntimeTest(unittest.TestCase):
         manager = FakeManager()
         with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
             server = ProtocolServer(runtime=ManagedKernelRuntime())
+            self.addCleanup(server.close)
             start_messages = server.handle_message(
                 '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
             )
@@ -388,6 +571,22 @@ class ManagedRuntimeTest(unittest.TestCase):
         with patch.dict(os.environ, {"JUSI_RUNTIME": "managed"}, clear=False):
             runtime = build_runtime()
         self.assertIsInstance(runtime, ManagedKernelRuntime)
+
+    def test_build_runtime_defaults_to_managed_mode(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            runtime = build_runtime()
+        self.assertIsInstance(runtime, ManagedKernelRuntime)
+
+    def test_managed_start_target_uses_python3_for_venv_target_by_default(self) -> None:
+        manager = FakeManager()
+        client = FakeClient()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)) as start_kernel:
+            runtime = ManagedKernelRuntime()
+            runtime.start_target(
+                SessionTarget(source="start", alias="jusi", kind="venv", value="venv:///tmp/venv"),
+                "jusi",
+            )
+        start_kernel.assert_called_once_with(kernel_name="python3")
 
     def test_managed_runtime_start_execute_interrupt_and_stop(self) -> None:
         manager = FakeManager()

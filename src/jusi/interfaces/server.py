@@ -145,6 +145,13 @@ class ProtocolServer:
         self._display_handlers = display_handlers or build_display_handler_registry()
         self._active_handlers = DisplayHandlerRuntime()
         self._client_revisions: dict[tuple[str, str], int] = {}
+        self._closed = False
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def _queue_handler_message(
         self,
@@ -183,6 +190,9 @@ class ProtocolServer:
         return dump_envelopes(envelopes)
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         self._active_handlers.stop_all()
         close_runtime = getattr(self._runtime, "close", None)
         if callable(close_runtime):
@@ -362,7 +372,12 @@ class ProtocolServer:
     def _handle_interrupt_cell(self, request: Envelope) -> List[str]:
         interrupt_request = parse_interrupt_cell(request.payload)
         events = ProtocolEventSink()
-        use_case = InterruptCell(runtime=self._runtime, store=self._store, events=events)
+        use_case = InterruptCell(
+            runtime=self._runtime,
+            store=self._store,
+            events=events,
+            active_handlers=self._active_handlers,
+        )
         try:
             use_case.execute(
                 InterruptCellCommand(
@@ -513,6 +528,7 @@ class ProtocolServer:
                 use_case.finish_stop(command, session)
             except Exception:
                 return
+            self._active_handlers.remove_session(command.session_id)
             for event in events.events:
                 self._pending_events.put(event)
 
@@ -557,6 +573,7 @@ class ProtocolServer:
             return dump_envelopes([error_response(request, exc.code, str(exc))])
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        self._active_handlers.remove_client(shutdown_request.session_id, shutdown_request.client_id)
         envelopes = [response_envelope(request, ok=True)]
         envelopes.extend(events.events)
         return dump_envelopes(envelopes)

@@ -17,11 +17,12 @@ The backend core is responsible for:
 - plugin discoverability/loading
 - status consistency
 - a structured communication channel between plugin backend code and frontend code
+- spawning and supervising one handler worker process per active handler-owned cell/client
 
 The plugin is responsible for:
 
-- claiming a cell
-- starting its own display handler logic
+- providing the kernel-side magic handoff shape
+- starting its own display handler logic inside the worker process
 - interpreting plugin-specific commands and follow-up actions
 - deciding when its interaction mode changes, for example from a VisiData-like table flow into a shell terminal flow
 
@@ -44,8 +45,8 @@ So the stable split should be:
 
 If you are adding a new plugin, you should mainly think about:
 
-1. how the plugin claims a cell
-2. which display handler the plugin starts with
+1. what kernel-side magic handoff payload the plugin emits
+2. which display handler worker class the plugin starts with
 3. which frontend/backend commands the plugin needs
 4. which follow-up and completion semantics it opts into or customizes
 
@@ -61,11 +62,16 @@ Responsibilities:
 
 - identify the plugin entry, for example `%%oc`
 - parse initial plugin-specific arguments/config
-- return a plugin match/config object for execution
+- emit a Jusi handoff mime payload that tells backend which handler worker to start
+
+Important:
+
+- magic name and handler id do not have to match
+- this is required for cases like `%%sql`, where one magic may route to different handlers/providers
 
 ### `DisplayHandler`
 
-This is the real plugin runtime unit.
+This is the real plugin runtime unit inside a dedicated worker process.
 
 Responsibilities:
 
@@ -80,6 +86,9 @@ Important:
 - the display handler is not limited to one fixed UI mode
 - it may transition between modes as part of plugin logic
 - for example a plugin may begin in a VisiData-like table flow and later switch into a shell/terminal interaction flow
+- one handler worker owns exactly one active cell/client for its whole lifetime
+- normal worker exit should be interpreted by core as cell status `done`
+- unexpected worker death should be interpreted by core as cell status `error`
 
 ### `HandlerContext`
 
@@ -89,12 +98,23 @@ Minimum responsibilities:
 
 - session metadata
 - active client identity
+- active cell identity
 - structured event emission helpers
 - structured frontend-command helpers
 - subprocess/runtime helper seams
 - status publication helpers
 
 This context should stay transport-agnostic and Vim-agnostic.
+
+Expected startup identity includes:
+
+- `notebook_id`
+- `session_id`
+- `client_id`
+- `cell_id`
+- `handler_id`
+- explicit `magic_name`
+- raw kernel handoff payload and metadata
 
 ### `FrontendChannel`
 
@@ -155,6 +175,10 @@ So VisiData support should likely be a reusable first-party handler base, not a 
 
 Current code status:
 
+- backend registry now allows one magic to map to multiple handlers, with explicit handoff validation by `magic_name` and `handler_id`
+- managed runtime now recognizes a first Jusi handoff mime shape from kernel output and surfaces it as a structured handoff event
+- matched handler-owned executions now start in a dedicated `handler-worker` subprocess rather than running handler logic inside the backend root process
+- backend root process remains the router/supervisor for worker/frontend traffic
 - a reusable terminal-hosted handler base now exists in backend code and owns:
   - native-terminal transport preparation
   - terminal command/environment advertisement
@@ -170,6 +194,16 @@ Current code status:
   - ask backend core to materialize that expression into a source file
   - advertise a native-terminal attach command that launches VisiData against that source
 - the next handler-base work is about giving the shared VD hooks richer plugin-facing semantics, not about re-solving PTY lifecycle again
+
+Next architecture tightening:
+
+- one handler worker process now owns one active matched handler-owned cell/client
+- every plugin client should assume native terminal as its frontend plane
+- handler/frontend traffic should continue to route through the backend root process
+- live plugin/runtime traffic should use a worker stdin/stdout protocol, not env/argv after startup
+- validated kernel handoff now takes precedence for worker startup when present
+- backend no longer activates workers directly from header parsing in `ExecuteCell`
+- the in-memory runtime now emits synthetic handoffs for magic cells so the test/stub path still exercises the same worker-based activation model
 
 Native-terminal pivot note:
 
@@ -218,10 +252,10 @@ The first implementation slice should focus on the contract, not on a large plug
 
 Recommended order:
 
-1. define `MagicCommand`, `DisplayHandler`, `HandlerContext`, and `FrontendChannel`
-2. implement plugin discovery/loading
-3. add one tiny transcript-oriented plugin to prove the minimal path
-4. add first-party reusable handler bases, especially a VisiData-oriented base
-5. only then add larger first-party plugins like `%%vd`, `%%sql`, or `%%oc`
+1. define the kernel handoff mime contract
+2. define the handler worker startup payload and stdin/stdout protocol
+3. move live handler runtime into one worker process per active handler-owned cell/client
+4. rebase first-party reusable handler bases, especially the VisiData-oriented base, onto that worker model
+5. then rewrite concrete plugins like `%%vd`, `%%sql`, or `%%oc` against that worker model
 
 This keeps the architecture explicit before any one plugin starts defining the whole system accidentally.

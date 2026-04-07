@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Protocol
 
-from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, Session, SessionTarget
+from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, HandlerHandoff, Session, SessionTarget
 
 
 @dataclass(frozen=True)
@@ -169,6 +169,9 @@ class KernelRuntime(Protocol):
 
     def materialize_vd_source(self, session: Session, expression: str) -> dict[str, str]:
         """Resolve a VisiData source from kernel/session state and return source metadata."""
+
+    def consume_handler_handoff(self, session: Session, client_id: str) -> HandlerHandoff | None:
+        """Consume the latest kernel-emitted handler handoff for the active client, if any."""
 
 
 class SessionStore(Protocol):

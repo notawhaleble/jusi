@@ -130,7 +130,7 @@ Current direction:
   - plugin discoverability/loading
   - status consistency
   - a structured plugin/frontend communication channel
-- plugin display handlers own:
+- plugin display handlers and their worker processes own:
   - plugin-specific interaction logic
   - follow-up/completion semantics
   - mode transitions, for example VisiData-like navigation into shell-like interaction
@@ -138,6 +138,34 @@ Current direction:
 This is the level where MVP-style flexibility such as `%%sql`, `%%vd`, and `%%oc` generalizes best.
 
 See [plugins.md](/Users/niku/Documents/dev/jusi/docs/plugins.md) for the working draft.
+
+## Handler Activation Direction
+
+The next handler architecture step is stricter than the current in-process placeholder path.
+
+Current direction:
+
+- every cell still enters through the Jupyter kernel
+- backend should stop treating `%%...` header parsing as the long-term execution authority
+- kernel-side magics should emit a Jusi-specific handoff mime payload
+- backend root process should interpret that handoff and spawn one handler worker process per active handler-owned cell/client
+- that worker process owns the live plugin runtime for its whole lifetime
+- normal worker exit maps to cell status `done`
+- unexpected worker death maps to cell status `error`
+- interrupt for handler-owned cells is a structured handler interrupt first, not an OS-signal-only contract
+- follow-up/completion apply only while the worker is alive; no replay or queueing after death
+
+Worker startup context should stay small:
+
+- `notebook_id`
+- `session_id`
+- `client_id`
+- `cell_id`
+- `handler_id`
+- explicit `magic_name`
+- raw kernel handoff payload and metadata
+
+The backend root process should remain the router and supervisor for handler/frontend traffic, even if that routing is thin.
 
 ## Native Terminal Pivot
 
@@ -167,6 +195,7 @@ The preferred substrate is a bridge/client-process model built on the existing `
 Current proposal:
 
 - backend root process still owns session and handler lifecycle
+- handler-owned clients should assume native terminal as the default frontend plane
 - when a handler becomes terminal-backed, backend provisions a dedicated terminal client process for that `client_id`
 - frontend receives terminal-client metadata from backend and launches a real editor terminal buffer against that process command
 - terminal transport flows through that native terminal job attachment, not through `handler_message terminal_bytes`
@@ -204,9 +233,9 @@ The likely contract shape is:
 
 ## Next Architecture Step
 
-Define the terminal-backed client contract concretely:
+Turn the plugin seam into a real worker-based model:
 
-- how native-terminal capability is advertised
-- what attach command frontend should run
-- how the bridge/client process maps back to `session_id`, `client_id`, and optional `handler_id`
-- how stop/disconnect/backend-close tear that bridge down consistently
+- define the kernel handoff mime contract
+- define the handler worker stdin/stdout protocol
+- move live plugin runtime out of the backend root process and into one worker per active handler-owned cell/client
+- keep native-terminal transport as the default frontend plane for plugin clients

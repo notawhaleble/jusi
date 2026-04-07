@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -73,3 +74,56 @@ class ExecutableCell:
     syntax: str
     main_lines: list[str]
     keep_running: bool = False
+
+
+JUSI_HANDLER_HANDOFF_MIME = "application/vnd.jusi.handoff+json"
+
+
+@dataclass(frozen=True)
+class HandlerHandoff:
+    handler_id: str
+    magic_name: str
+    content: str = ""
+    meta: dict[str, object] = field(default_factory=dict)
+
+
+def parse_handler_handoff_payload(
+    data: object,
+    *,
+    metadata: object = None,
+) -> HandlerHandoff | None:
+    if not isinstance(data, dict):
+        return None
+    raw_payload = data.get(JUSI_HANDLER_HANDOFF_MIME)
+    if raw_payload is None:
+        return None
+    payload: dict[str, object]
+    if isinstance(raw_payload, str):
+        try:
+            decoded = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(decoded, dict):
+            return None
+        payload = decoded
+    elif isinstance(raw_payload, dict):
+        payload = dict(raw_payload)
+    else:
+        return None
+    handler_id = str(payload.get("handler_id", "")).strip()
+    magic_name = str(payload.get("magic_name", "")).strip()
+    if not handler_id or not magic_name:
+        return None
+    handoff_meta: dict[str, object] = {}
+    if isinstance(payload.get("meta"), dict):
+        handoff_meta.update(dict(payload["meta"]))
+    if isinstance(metadata, dict):
+        raw_meta = metadata.get(JUSI_HANDLER_HANDOFF_MIME)
+        if isinstance(raw_meta, dict):
+            handoff_meta.update(dict(raw_meta))
+    return HandlerHandoff(
+        handler_id=handler_id,
+        magic_name=magic_name,
+        content=str(payload.get("content", "")),
+        meta=handoff_meta,
+    )

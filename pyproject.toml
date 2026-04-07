@@ -15,6 +15,7 @@ authors = [
 dependencies = [
   "jupyter_client>=8,<9",
   "ipykernel>=6,<7",
+  "visidata>=3,<4",
 ]
 
 [project.scripts]

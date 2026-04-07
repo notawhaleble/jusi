@@ -13,6 +13,7 @@ from jusi.interfaces.server import ProtocolServer
 
 class StartSessionTest(unittest.TestCase):
     def start_and_bind(self, server: ProtocolServer, notebook_id: str = "nb-1", kernel_name: str = "python3") -> tuple[str, str]:
+        self.addCleanup(server.close)
         start_messages = server.handle_message(
             (
                 '{"version": 1, "kind": "request", "type": "start_session", '
@@ -123,6 +124,20 @@ class StartSessionTest(unittest.TestCase):
             },
             envelopes[2].payload["session"]["target"],
         )
+
+    def test_start_session_uses_python3_for_venv_target_by_default(self) -> None:
+        events = CollectingEventSink()
+        use_case = StartSession(runtime=InMemoryKernelRuntime(), store=InMemorySessionStore(), events=events)
+
+        session = use_case.execute(
+            StartSessionCommand(
+                notebook_id="nb-1",
+                kernel_name="jusi",
+                target=SessionTarget(source="start", alias="jusi", kind="venv", value="venv:///tmp/venv"),
+            )
+        )
+
+        self.assertEqual("python3", session.kernel_name)
 
     def test_attach_session_emits_external_connection_file_connected_and_binding_updates(self) -> None:
         events = CollectingEventSink()
@@ -326,12 +341,11 @@ class StartSessionTest(unittest.TestCase):
                 '{"version": 1, "kind": "request", "type": "execute_cell", '
                 '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
                 + session_id
-                + '", "cell": {"id": 12, "kind": "magic", "syntax": "sql", "main_lines": ["%%sql", "select 1"]}}}'
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
             )
         )
         followup_envelopes = [parse_envelope(message) for message in followup_messages]
         self.assertEqual("follow-up", followup_envelopes[5].payload["cell"]["status"])
-        self.assertEqual("handler", followup_envelopes[3].payload["cell"]["owner"]["kind"])
         self.assertEqual("handler", followup_envelopes[5].payload["cell"]["owner"]["kind"])
         self.assertEqual("binding", followup_envelopes[4].payload["prepared"]["state"])
 
@@ -545,7 +559,7 @@ class StartSessionTest(unittest.TestCase):
                 '{"version": 1, "kind": "request", "type": "execute_cell", '
                 '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
                 + session_id
-                + '", "cell": {"id": 12, "kind": "magic", "syntax": "sql", "main_lines": ["%%sql", "select 1"]}}}'
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
             )
         )
         interrupt_messages = server.handle_message(

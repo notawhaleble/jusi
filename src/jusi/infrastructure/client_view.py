@@ -79,6 +79,17 @@ def _render_event_lines(event: dict) -> tuple[str | None, list[str]]:
         return None, ["interrupted"]
     if event_type == "execution_state":
         return None, [f"state: {event.get('status', '')}"]
+    if event_type == "handler_handoff":
+        handler_id = str(event.get("handler_id", "")).strip() or "handler"
+        magic_name = str(event.get("magic_name", "")).strip() or "magic"
+        lines = [f"handler.handoff> magic={magic_name} handler={handler_id}"]
+        meta = event.get("meta", {})
+        if meta:
+            lines.append(f"handler.meta> {json.dumps(meta, ensure_ascii=True, sort_keys=True)}")
+        return None, lines
+    if event_type == "handler_notice":
+        text = str(event.get("text", "")).strip()
+        return None, [f"handler.notice> {text}"] if text else []
     if event_type == "handler_stream":
         text = str(event.get("text", ""))
         return None, [f"handler.out> {text}"] if text else ["handler.out>"]

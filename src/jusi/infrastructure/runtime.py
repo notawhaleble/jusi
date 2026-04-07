@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
+import pickle
 import signal
 import tempfile
 from queue import Empty
@@ -11,7 +13,7 @@ from types import SimpleNamespace
 from typing import Any, Protocol
 from uuid import uuid4
 
-from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, Session, SessionTarget
+from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, HandlerHandoff, Session, SessionTarget, parse_handler_handoff_payload
 from jusi.infrastructure.client_view import build_client_view
 from jusi.infrastructure.client_runtime import ProcessClientHandle
 
@@ -414,6 +416,41 @@ def _start_new_kernel(kernel_name: str) -> tuple[Any, Any]:
         ) from exc
 
 
+def _jusi_magic_bootstrap_code() -> str:
+    mime = json.dumps("application/vnd.jusi.handoff+json")
+    return "\n".join(
+        [
+            "import base64",
+            "import pickle",
+            "from IPython import get_ipython",
+            "_jusi_ip = get_ipython()",
+            "if _jusi_ip is None:",
+            "    raise RuntimeError('Jusi magics require an IPython kernel')",
+            "_jusi_cell_magics = getattr(getattr(_jusi_ip, 'magics_manager', None), 'magics', {}).get('cell', {})",
+            "if 'vd' not in _jusi_cell_magics:",
+            "    def _jusi_vd_magic(line, cell):",
+            "        from IPython.display import display",
+            "        _jusi_ns = getattr(_jusi_ip, 'user_ns', {})",
+            "        _jusi_value = eval(cell, _jusi_ns, _jusi_ns)",
+            "        _jusi_meta = {'line': line}",
+            "        if getattr(type(_jusi_value), '__module__', '').startswith('pandas'):",
+            "            _jusi_meta['ftype'] = 'pandas'",
+            "        _jusi_content = base64.b64encode(pickle.dumps(_jusi_value)).decode('ascii')",
+            "        _jusi_payload = {'handler_id': 'vd', 'magic_name': 'vd', 'content': _jusi_content, 'meta': _jusi_meta}",
+            f"        display({{{mime}: _jusi_payload}}, raw=True, metadata={{{mime}: {{'line': line}}}})",
+            "    _jusi_ip.register_magic_function(_jusi_vd_magic, magic_kind='cell', magic_name='vd')",
+        ]
+    )
+
+
+def _effective_target_kernel_name(target: SessionTarget, kernel_name: str) -> str:
+    requested = kernel_name.strip() or "python3"
+    if target.kind == "venv":
+        configured = str(target.config.get("kernel_name", "")).strip()
+        return configured or "python3"
+    return requested
+
+
 def _attach_existing_kernel(connection_file: str) -> Any:
     try:
         from jupyter_client import BlockingKernelClient
@@ -432,6 +469,7 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
     def __init__(self) -> None:
         super().__init__()
         self._session_counter = count(1)
+        self._handoffs: dict[tuple[str, str], HandlerHandoff] = {}
 
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         ident = next(self._session_counter)
@@ -440,8 +478,7 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
         return session_id, connection
 
     def start_target(self, target: SessionTarget, kernel_name: str) -> tuple[str, str]:
-        _ = target
-        session_id, connection = self.start_managed(kernel_name)
+        session_id, connection = self.start_managed(_effective_target_kernel_name(target, kernel_name))
         return session_id, connection
 
     def attach_target(self, target: SessionTarget) -> tuple[str, str]:
@@ -468,6 +505,20 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
             )
             return "busy"
         if cell.kind == "magic":
+            handoff = self._synthetic_handoff_for_magic(cell)
+            if handoff is not None:
+                self._handoffs[(session.session_id, client.client_id)] = handoff
+                self.append_client_execution_event(
+                    session,
+                    client.client_id,
+                    {
+                        "type": "handler_handoff",
+                        "handler_id": handoff.handler_id,
+                        "magic_name": handoff.magic_name,
+                        "content": handoff.content,
+                        "meta": dict(handoff.meta),
+                    },
+                )
             self.update_client_execution_status(session, client.client_id, "follow-up")
             self.append_client_execution_event(
                 session,
@@ -482,6 +533,27 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
             {"type": "execution_finished", "status": "done"},
         )
         return "done"
+
+    @staticmethod
+    def _synthetic_handoff_for_magic(cell: ExecutableCell) -> HandlerHandoff | None:
+        if not cell.main_lines:
+            return None
+        first_line = str(cell.main_lines[0]).strip()
+        if not first_line.startswith("%%"):
+            return None
+        magic_name = first_line[2:].split(None, 1)[0].strip()
+        if not magic_name:
+            return None
+        content = "\n".join(cell.main_lines[1:])
+        meta: dict[str, object] = {"source": "inmemory"}
+        if magic_name == "vd":
+            content = base64.b64encode(pickle.dumps(content)).decode("ascii")
+        return HandlerHandoff(
+            handler_id=magic_name,
+            magic_name=magic_name,
+            content=content,
+            meta=meta,
+        )
 
     def interrupt_kernel(self, session: Session, execution: CellExecution) -> str:
         _ = (session, execution)
@@ -550,6 +622,9 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
             json.dump({"expression": expression}, output, ensure_ascii=False, indent=2)
         return {"path": path, "format": "json"}
 
+    def consume_handler_handoff(self, session: Session, client_id: str) -> HandlerHandoff | None:
+        return self._handoffs.pop((session.session_id, client_id), None)
+
 
 class ManagedKernelRuntime(ClientRegistryRuntime):
     def __init__(self) -> None:
@@ -563,8 +638,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         return True
 
     def start_target(self, target: SessionTarget, kernel_name: str) -> tuple[str, str]:
-        _ = target
-        session_id, connection = self.start_managed(kernel_name)
+        session_id, connection = self.start_managed(_effective_target_kernel_name(target, kernel_name))
         return session_id, connection
 
     def attach_target(self, target: SessionTarget) -> tuple[str, str]:
@@ -581,6 +655,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             client=client,
             interrupted_client_ids=set(),
             pending_inputs={},
+            handoffs={},
             external=True,
             connection_file=connection_file,
         )
@@ -594,6 +669,8 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             client=kc,
             interrupted_client_ids=set(),
             pending_inputs={},
+            handoffs={},
+            jusi_magics_registered=False,
         )
         return session_id, str(getattr(km, "connection_file", ""))
 
@@ -622,17 +699,21 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             )
             return "busy"
         if cell.kind == "magic":
-            runtime_session.client.execute(code, store_history=False)
-            self.update_client_execution_status(session, client.client_id, "follow-up")
-            self.append_client_execution_event(
-                session,
-                client.client_id,
-                {"type": "execution_finished", "status": "follow-up"},
-            )
-            return "follow-up"
+            self._ensure_jusi_magics(runtime_session)
+            msg_id = runtime_session.client.execute(code, store_history=False)
+            return self._drive_execution(runtime_session, session, client, msg_id)
 
         msg_id = runtime_session.client.execute(code)
         return self._drive_execution(runtime_session, session, client, msg_id)
+
+    def _ensure_jusi_magics(self, runtime_session: Any) -> None:
+        if bool(getattr(runtime_session, "jusi_magics_registered", False)):
+            return
+        msg_id = runtime_session.client.execute(_jusi_magic_bootstrap_code(), store_history=False)
+        error = self._drive_export_execution(runtime_session.client, msg_id)
+        if error:
+            raise RuntimeError(f"Failed to register Jusi kernel magics: {error}")
+        runtime_session.jusi_magics_registered = True
 
     def materialize_vd_source(self, session: Session, expression: str) -> dict[str, str]:
         if not expression.strip():
@@ -668,6 +749,16 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                 pass
             raise RuntimeError(error)
         return {"path": path, "format": "json"}
+
+    def consume_handler_handoff(self, session: Session, client_id: str) -> HandlerHandoff | None:
+        runtime_session = self._require_session(session.session_id)
+        handoffs = getattr(runtime_session, "handoffs", None)
+        if not isinstance(handoffs, dict):
+            return None
+        handoff = handoffs.pop(client_id, None)
+        if isinstance(handoff, HandlerHandoff):
+            return handoff
+        return None
 
     def reply_input(self, session: Session, execution: CellExecution, value: str) -> str:
         runtime_session = self._require_session(session.session_id)
@@ -717,6 +808,28 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
 
     def _handle_iopub_message(self, runtime_session: Any, session: Session, client_id: str, message: dict, status: str) -> str | None:
         msg_type = message.get("msg_type", "")
+        handoff = parse_handler_handoff_payload(
+            message.get("content", {}).get("data", {}),
+            metadata=message.get("content", {}).get("metadata", {}),
+        )
+        if handoff is not None:
+            handoffs = getattr(runtime_session, "handoffs", None)
+            if not isinstance(handoffs, dict):
+                handoffs = {}
+                runtime_session.handoffs = handoffs
+            handoffs[client_id] = handoff
+            self.append_client_execution_event(
+                session,
+                client_id,
+                {
+                    "type": "handler_handoff",
+                    "handler_id": handoff.handler_id,
+                    "magic_name": handoff.magic_name,
+                    "content": handoff.content,
+                    "meta": dict(handoff.meta),
+                },
+            )
+            return "follow-up"
         if msg_type == "execute_input":
             self.append_client_execution_event(
                 session,
@@ -1032,7 +1145,7 @@ class InMemorySessionStore:
 
 
 def build_runtime() -> InMemoryKernelRuntime | ManagedKernelRuntime:
-    mode = os.environ.get("JUSI_RUNTIME", "inmemory").strip().lower()
-    if mode == "managed":
-        return ManagedKernelRuntime()
-    return InMemoryKernelRuntime()
+    mode = os.environ.get("JUSI_RUNTIME", "managed").strip().lower()
+    if mode == "inmemory":
+        return InMemoryKernelRuntime()
+    return ManagedKernelRuntime()

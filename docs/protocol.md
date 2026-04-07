@@ -183,6 +183,10 @@ Behavior:
 - consumes the session prepared client into the cell's active client
 - only after consume does replacement preparation begin
 - terminal `cell_updated` may arrive later as an async event
+- current long-term direction is:
+  - every cell still enters through the Jupyter kernel
+  - handler takeover should be driven by a kernel-emitted Jusi handoff mime payload, not by backend header parsing alone
+  - once that handoff is accepted, backend will start one handler worker process for that active handler-owned cell/client
 
 ### `interrupt_cell`
 
@@ -234,7 +238,7 @@ Behavior:
 - symmetric plugin/frontend message path
 - request form is frontend -> backend
 - event form is backend -> frontend
-- valid only while that client still has an active handler instance registered
+- valid only while that client still has an active handler runtime registered
 - current built-in `%%vd` path uses this for:
   - `handler_snapshot`
   - plugin-specific messages such as copy/follow-up/completion
@@ -246,6 +250,7 @@ Direction note:
   - follow-up
   - completion
   - plugin commands
+- backend root process remains the router for this traffic; frontend does not talk to handler workers directly
 
 Attach note for native-terminal clients:
 
@@ -255,6 +260,28 @@ Attach note for native-terminal clients:
   - observe `client.transport.kind = native_terminal`
   - launch the terminal client from `attach_cmd` + `attach_env`
 - current built-in `%%vd` uses this by materializing the cell-body expression into a source file and advertising `vd <source>` through that attach metadata
+
+### Planned Kernel Handoff Direction
+
+The next handler activation model is expected to add a kernel-emitted Jusi handoff mime payload carrying:
+
+- explicit `handler_id`
+- explicit `magic_name`
+- raw cell content/startup payload
+- handler-specific metadata
+
+That handoff should be enough for backend to start the correct handler worker process without further kernel messaging.
+
+Current first slice:
+
+- managed runtime now recognizes `application/vnd.jusi.handoff+json` in kernel `display_data` / `execute_result`
+- backend records that as a structured handoff event in the active client transcript/view
+- backend registry now supports validating `magic_name -> handler_id` handoff combinations, including one magic mapping to multiple handlers
+- matched handler-owned executions now run in a dedicated `handler-worker` subprocess
+- backend root process remains the router/supervisor for frontend <-> handler traffic
+- backend now prefers validated kernel handoff to start the worker when that handoff is present
+- backend no longer starts plugin workers from header parsing in `ExecuteCell`
+- the in-memory runtime now synthesizes handoff events for magic cells so tests and the non-managed stub path still exercise the same worker activation flow
 
 ### `healthcheck_reply`
 

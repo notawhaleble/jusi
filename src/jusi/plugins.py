@@ -2,17 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
-import signal
-import subprocess
 import sys
-import tempfile
-import shutil
 from dataclasses import dataclass, field
+from importlib import util
 from importlib import metadata
 from typing import Any, Callable, Iterable, Protocol, Sequence
 
-from jusi.domain.models import ClientTransport, ExecutableCell
+from jusi.domain.models import ClientTransport, ExecutableCell, HandlerHandoff
 
 
 DISPLAY_HANDLER_ENTRY_POINT_GROUP = "jusi.display_handlers"
@@ -43,6 +39,9 @@ class HandlerContext:
     append_execution_event: Callable[[dict[str, Any]], None]
     update_execution_status: Callable[[str], None]
     set_client_transport: Callable[[ClientTransport], None]
+    magic_name: str = ""
+    content: str = ""
+    meta: dict[str, object] = field(default_factory=dict)
 
 
 class DisplayHandler(Protocol):
@@ -64,6 +63,7 @@ class DisplayHandlerSpec:
     handler_id: str
     factory: Callable[[], DisplayHandler]
     magic_commands: tuple[MagicCommand, ...] = field(default_factory=tuple)
+    handoff_validator: Callable[[HandlerHandoff], bool] | None = None
 
     def __post_init__(self) -> None:
         if not self.handler_id.strip():
@@ -73,7 +73,7 @@ class DisplayHandlerSpec:
 class DisplayHandlerRegistry:
     def __init__(self, specs: Iterable[DisplayHandlerSpec] = ()) -> None:
         self._by_id: dict[str, DisplayHandlerSpec] = {}
-        self._by_magic: dict[str, DisplayHandlerSpec] = {}
+        self._by_magic: dict[str, list[DisplayHandlerSpec]] = {}
         for spec in specs:
             self.register(spec)
 
@@ -82,9 +82,7 @@ class DisplayHandlerRegistry:
             raise ValueError(f"Duplicate display handler id: {spec.handler_id}")
         self._by_id[spec.handler_id] = spec
         for magic in spec.magic_commands:
-            if magic.name in self._by_magic:
-                raise ValueError(f"Duplicate magic command: {magic.name}")
-            self._by_magic[magic.name] = spec
+            self._by_magic.setdefault(magic.name, []).append(spec)
 
     def get(self, handler_id: str) -> DisplayHandlerSpec | None:
         return self._by_id.get(handler_id)
@@ -98,7 +96,22 @@ class DisplayHandlerRegistry:
         magic_name = first_line[2:].split(None, 1)[0]
         if not magic_name:
             return None
-        return self._by_magic.get(magic_name)
+        specs = self._by_magic.get(magic_name, [])
+        if len(specs) != 1:
+            return None
+        return specs[0]
+
+    def validate_handoff(self, handoff: HandlerHandoff) -> DisplayHandlerSpec | None:
+        spec = self._by_id.get(handoff.handler_id)
+        if spec is None:
+            return None
+        allowed_magics = {magic.name for magic in spec.magic_commands}
+        if handoff.magic_name not in allowed_magics:
+            return None
+        validator = spec.handoff_validator
+        if validator is not None and not validator(handoff):
+            return None
+        return spec
 
     def all(self) -> tuple[DisplayHandlerSpec, ...]:
         return tuple(self._by_id.values())
@@ -212,7 +225,15 @@ class TerminalDisplayHandler:
         self._mode = "ready"
 
     def prepare_transport(self, context: HandlerContext) -> None:
-        self._prepare_native_terminal_transport(context)
+        _command, fallback_notice, _env = self._prepare_native_terminal_transport(context)
+        if fallback_notice:
+            context.append_execution_event(
+                {
+                    "type": "handler_notice",
+                    "text": fallback_notice,
+                    "handler_id": self.handler_id(),
+                }
+            )
 
     def _prepare_native_terminal_transport(self, context: HandlerContext) -> tuple[list[str], str, dict[str, str]]:
         command, fallback_notice = self.terminal_command()
@@ -335,7 +356,7 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
 class VDDisplayHandler(VDDisplayHandlerBase):
     def __init__(self) -> None:
         super().__init__()
-        self._source_info: dict[str, str] | None = None
+        self._payload: dict[str, object] | None = None
 
     def execute(self, context: HandlerContext, cell: ExecutableCell) -> str:
         self.stop()
@@ -359,12 +380,10 @@ class VDDisplayHandler(VDDisplayHandlerBase):
                 "family": "visidata",
             },
         )
-        expression = _vd_expression_from_cell(cell)
-        if expression:
-            self._source_info = context.invoke_backend_action(
-                "materialize_vd_source",
-                {"expression": expression},
-            )
+        self._payload = {
+            "content": context.content,
+            "meta": dict(context.meta),
+        }
         self.prepare_transport(context)
         context.update_execution_status("follow-up")
         context.append_execution_event(
@@ -380,26 +399,25 @@ class VDDisplayHandler(VDDisplayHandlerBase):
         return "vd"
 
     def terminal_command(self) -> tuple[list[str], str]:
-        source_path = self._source_info.get("path", "") if self._source_info else ""
-        command, fallback_notice = _build_vd_command(source_path=source_path)
+        command, fallback_notice = _build_vd_command()
         self._mode = "live"
         return command, fallback_notice
 
     def snapshot(self) -> dict[str, Any]:
         snapshot = super().snapshot()
-        if self._source_info is not None:
-            snapshot["source"] = dict(self._source_info)
+        if self._payload is not None:
+            snapshot["payload"] = dict(self._payload)
         return snapshot
 
+    def terminal_env(self) -> dict[str, str]:
+        env = _build_vd_env()
+        payload = self._payload or {"content": "", "meta": {}}
+        env["JUSI_VD_PAYLOAD_JSON"] = json.dumps(payload)
+        return env
+
     def stop(self) -> None:
-        source_path = self._source_info.get("path", "") if self._source_info else ""
         super().stop()
-        self._source_info = None
-        if source_path:
-            try:
-                os.unlink(source_path)
-            except FileNotFoundError:
-                pass
+        self._payload = None
 
 
 def default_frontend_channel(
@@ -425,7 +443,7 @@ def default_frontend_channel(
 class ActiveDisplayHandler:
     handler_id: str
     handler: DisplayHandler
-    context: HandlerContext
+    context: HandlerContext | None
 
 
 class DisplayHandlerRuntime:
@@ -442,6 +460,14 @@ class DisplayHandlerRuntime:
         active = self._active.pop((session_id, client_id), None)
         if active is not None:
             active.handler.stop()
+
+    def interrupt_client(self, session_id: str, client_id: str) -> None:
+        active = self._active.get((session_id, client_id))
+        if active is None:
+            return
+        interrupt = getattr(active.handler, "interrupt", None)
+        if callable(interrupt):
+            interrupt()
 
     def remove_session(self, session_id: str) -> None:
         stale = [key for key in self._active if key[0] == session_id]
@@ -474,31 +500,12 @@ def build_display_handler_registry() -> DisplayHandlerRegistry:
     return registry
 
 
-def _build_vd_command(*, source_path: str = "") -> tuple[list[str], str]:
-    raw = os.environ.get("JUSI_VD_CMD", "").strip()
-    if raw:
-        command = shlex.split(raw)
-        if not command:
-            raise RuntimeError("JUSI_VD_CMD did not produce an executable command")
-        return command, ""
-    vd_path = (
-        shutil.which("vd")
-        or shutil.which("visidata")
-        or _executable_sibling("vd")
-        or _executable_sibling("visidata")
-    )
-    if vd_path:
-        command = [vd_path]
-        if source_path:
-            command.append(source_path)
-        return command, ""
-    notice = "vd binary unavailable; using shell fallback"
-    if source_path:
-        notice = f"{notice} (exported source: {source_path})"
-    return (
-        ["/bin/sh", "-lc", "export PS1='vd> '; exec /bin/sh -i"],
-        notice,
-    )
+def _build_vd_command() -> tuple[list[str], str]:
+    if util.find_spec("visidata") is None:
+        raise RuntimeError(
+            "VisiData is not available for %%vd. Install the 'visidata' package in the active environment."
+        )
+    return [sys.executable, "-m", "jusi", "vd-runner"], ""
 
 
 def _build_vd_env() -> dict[str, str]:
@@ -536,29 +543,3 @@ def _native_terminal_attach_env(
     if supervisor_pid:
         attach_env["JUSI_SUPERVISOR_PID"] = supervisor_pid
     return attach_env
-
-
-def _executable_sibling(name: str) -> str:
-    executable_dir = os.path.dirname(sys.executable)
-    if not executable_dir:
-        return ""
-    candidate = os.path.join(executable_dir, name)
-    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-        return candidate
-    return ""
-
-
-def _vd_expression_from_cell(cell: ExecutableCell) -> str:
-    if not cell.main_lines:
-        return ""
-    first_line = cell.main_lines[0].strip()
-    inline = ""
-    if first_line.startswith("%%"):
-        parts = first_line[2:].split(None, 1)
-        if len(parts) > 1:
-            inline = parts[1].strip()
-    body_lines: list[str] = []
-    if inline:
-        body_lines.append(inline)
-    body_lines.extend(cell.main_lines[1:])
-    return "\n".join(body_lines).strip()
