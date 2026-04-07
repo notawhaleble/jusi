@@ -12,6 +12,7 @@ from jusi.application.ports import DisconnectSessionCommand, ReconnectSessionCom
 from jusi.application.ports import ShutdownClientCommand
 from jusi.application.use_cases import AttachSession, BindPreparedClient, DisconnectSession, ExecuteCell, HandlerMessage, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
 from jusi.domain.models import ExecutableCell
+from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore, build_runtime
 from jusi.interfaces.protocol import (
     Envelope,
@@ -436,6 +437,14 @@ class ProtocolServer:
 
     def _handle_execute_cell(self, request: Envelope) -> List[str]:
         execute_request = parse_execute_cell(request.payload)
+        emit_timing(
+            "server.execute_cell.request",
+            notebook_id=execute_request.notebook_id,
+            session_id=execute_request.session_id,
+            cell_id=execute_request.cell_id,
+            kind=execute_request.kind,
+            syntax=execute_request.syntax,
+        )
         events = ProtocolEventSink()
         use_case = ExecuteCell(
             runtime=self._runtime,
@@ -460,6 +469,15 @@ class ProtocolServer:
             )
             if self._supports_background_execute():
                 session, current_client = use_case.begin_execute(command)
+                emit_timing(
+                    "server.execute_cell.begin_done",
+                    notebook_id=execute_request.notebook_id,
+                    session_id=execute_request.session_id,
+                    cell_id=execute_request.cell_id,
+                    client_id=current_client.client_id,
+                    owner_kind=current_client.owner_kind,
+                    status=current_client.status,
+                )
                 self._spawn_execute_completion(command, session, current_client)
             else:
                 use_case.execute(command)
@@ -482,6 +500,13 @@ class ProtocolServer:
 
     def _spawn_execute_completion(self, command: ExecuteCellCommand, session, current_client) -> None:  # type: ignore[no-untyped-def]
         def _run() -> None:
+            emit_timing(
+                "server.execute_cell.finish_start",
+                notebook_id=command.notebook_id,
+                session_id=session.session_id,
+                cell_id=current_client.cell_id,
+                client_id=current_client.client_id,
+            )
             events = ProtocolEventSink()
             use_case = ExecuteCell(
                 runtime=self._runtime,
@@ -495,7 +520,23 @@ class ProtocolServer:
             try:
                 use_case.finish_execute(command, session, current_client)
             except Exception:
+                emit_timing(
+                    "server.execute_cell.finish_error",
+                    notebook_id=command.notebook_id,
+                    session_id=session.session_id,
+                    cell_id=current_client.cell_id,
+                    client_id=current_client.client_id,
+                )
                 return
+            emit_timing(
+                "server.execute_cell.finish_done",
+                notebook_id=command.notebook_id,
+                session_id=session.session_id,
+                cell_id=current_client.cell_id,
+                client_id=current_client.client_id,
+                final_status=current_client.status,
+                owner_kind=current_client.owner_kind,
+            )
             for event in events.events:
                 self._pending_events.put(event)
 
@@ -580,6 +621,12 @@ class ProtocolServer:
 
     def _handle_inspect_client(self, request: Envelope) -> List[str]:
         inspect_request = parse_inspect_client(request.payload)
+        emit_timing(
+            "server.inspect_client.request",
+            notebook_id=inspect_request.notebook_id,
+            session_id=inspect_request.session_id,
+            client_id=inspect_request.client_id,
+        )
         session = self._store.get_by_notebook(inspect_request.notebook_id)
         if session is None or session.session_id != inspect_request.session_id:
             return dump_envelopes([error_response(request, SessionNotFoundError.code, "Unknown notebook session")])
@@ -587,6 +634,14 @@ class ProtocolServer:
             client_view = self._runtime.read_client_view(session, inspect_request.client_id)
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        emit_timing(
+            "server.inspect_client.response",
+            notebook_id=inspect_request.notebook_id,
+            session_id=inspect_request.session_id,
+            client_id=inspect_request.client_id,
+            revision=int(client_view.get("revision", 0)),
+            line_count=len(list(client_view.get("lines", []))),
+        )
         return dump_envelopes([response_envelope(request, ok=True, payload={"client": client_view})])
 
     def _handle_input_reply(self, request: Envelope) -> List[str]:

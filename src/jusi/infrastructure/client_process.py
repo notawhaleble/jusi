@@ -10,6 +10,9 @@ from dataclasses import dataclass, field
 from jusi.infrastructure.client_view import build_client_view
 
 
+CLIENT_PROCESS_POLL_INTERVAL_SECONDS = 0.01
+
+
 @dataclass
 class ClientProcessState:
     client_id: str
@@ -175,7 +178,7 @@ class ClientProcessRunner:
                 self._mark_shutdown("supervisor_lost")
                 break
             self._poll_commands()
-            time.sleep(0.1)
+            time.sleep(CLIENT_PROCESS_POLL_INTERVAL_SECONDS)
         return 0
 
 

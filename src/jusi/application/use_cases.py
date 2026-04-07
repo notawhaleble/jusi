@@ -22,6 +22,7 @@ from jusi.application.ports import (
     StartSessionCommand,
 )
 from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, PreparedClient, Session, SessionTarget
+from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.handler_worker import HandlerWorkerProcess, HandlerWorkerStartup
 from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, default_frontend_channel
 
@@ -206,6 +207,14 @@ class ExecuteCell:
         return "kernel"
 
     def begin_execute(self, command: ExecuteCellCommand) -> tuple[Session, CellExecution]:
+        emit_timing(
+            "use_case.execute.begin",
+            notebook_id=command.notebook_id,
+            session_id=command.session_id,
+            cell_id=command.cell.cell_id,
+            kind=command.cell.kind,
+            syntax=command.cell.syntax,
+        )
         session = _require_matching_session(self._store, command.notebook_id, command.session_id)
         if session.state != "connected":
             raise ValueError("Cannot execute cell without a connected session")
@@ -223,6 +232,13 @@ class ExecuteCell:
         session.last_action = "execute"
         session.prepared = PreparedClient(state="spawning", client_state="active")
         self._store.save(session)
+        emit_timing(
+            "use_case.execute.session_saved_spawning",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+        )
 
         self._events.session_updated(command.notebook_id, _session_payload(session))
         self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
@@ -230,19 +246,89 @@ class ExecuteCell:
             command.notebook_id, _cell_payload(current_client)
         )
         self._store.save_execution(command.notebook_id, current_client)
+        emit_timing(
+            "use_case.execute.events_and_execution_saved",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+        )
         self._runtime.activate_client(session, current_client.client_id, current_client.cell_id)
+        emit_timing(
+            "use_case.execute.client_activate_done",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+        )
         self._runtime.update_client_execution_status(session, current_client.client_id, current_client.status)
+        emit_timing(
+            "use_case.execute.client_activated",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+            owner_kind=current_client.owner_kind,
+            status=current_client.status,
+        )
 
+        emit_timing(
+            "use_case.execute.prepare_next_start",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+        )
         client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
+        emit_timing(
+            "use_case.execute.prepare_next_done",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+            prepared_client_id=client_id,
+        )
         session.prepared = PreparedClient(state="binding", client_id=client_id, client_bufnr=-1, client_state="active")
         self._store.save(session)
         self._events.prepared_updated(command.notebook_id, _prepared_payload(session.prepared))
+        emit_timing(
+            "use_case.execute.prepared_binding_emitted",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+            prepared_client_id=client_id,
+        )
         return session, current_client
 
     def finish_execute(self, command: ExecuteCellCommand, session: Session, current_client: CellExecution) -> CellExecution:
+        emit_timing(
+            "use_case.execute.runtime_start",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+        )
         current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
+        emit_timing(
+            "use_case.execute.runtime_done",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+            runtime_status=current_client.status,
+        )
         handoff = self._runtime.consume_handler_handoff(session, current_client.client_id)
         if handoff is not None:
+            emit_timing(
+                "use_case.execute.handoff_consumed",
+                notebook_id=command.notebook_id,
+                session_id=session.session_id,
+                cell_id=current_client.cell_id,
+                client_id=current_client.client_id,
+                magic_name=handoff.magic_name,
+                handler_id=handoff.handler_id,
+            )
             matched_handler = self._display_handlers.validate_handoff(handoff)
             if matched_handler is not None:
                 current_client.owner_kind = "handler"
@@ -271,6 +357,15 @@ class ExecuteCell:
         content: str,
         meta: dict[str, object],
     ) -> str:
+        emit_timing(
+            "use_case.handler_worker.start",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+            handler_id=handler_id,
+            magic_name=magic_name,
+        )
         append_event = lambda event: self._runtime.append_client_execution_event(session, current_client.client_id, event)
         worker = HandlerWorkerProcess(
             startup=HandlerWorkerStartup(
@@ -324,7 +419,17 @@ class ExecuteCell:
                 context=None,
             ),
         )
-        return worker.wait_started()
+        status = worker.wait_started()
+        emit_timing(
+            "use_case.handler_worker.started",
+            notebook_id=command.notebook_id,
+            session_id=session.session_id,
+            cell_id=current_client.cell_id,
+            client_id=current_client.client_id,
+            handler_id=handler_id,
+            status=status,
+        )
+        return status
 
     @staticmethod
     def _cell_from_handoff(cell: ExecutableCell, magic_name: str, content: str) -> ExecutableCell:

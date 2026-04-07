@@ -10,6 +10,12 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 
+from jusi.infrastructure.debug_timing import emit_timing
+
+
+CLIENT_STATUS_POLL_INTERVAL_SECONDS = 0.005
+
+
 def _default_client_command() -> list[str]:
     return [sys.executable, "-m", "jusi", "client-process"]
 
@@ -111,7 +117,7 @@ class ProcessClientHandle:
                 return last_status
             if self.process.poll() is not None:
                 break
-            time.sleep(0.02)
+            time.sleep(CLIENT_STATUS_POLL_INTERVAL_SECONDS)
         raise RuntimeError(f"Managed client process did not report expected status for {self.client_id}")
 
     @property
@@ -125,15 +131,29 @@ class ProcessClientHandle:
         return self._read_status()
 
     def bind(self, client_bufnr: int) -> None:
+        start = time.monotonic()
         self._send_command({"kind": "bind", "client_bufnr": client_bufnr})
         self._wait_for_status(lambda status: status.get("client_bufnr") == client_bufnr)
+        emit_timing(
+            "client_runtime.bind",
+            client_id=self.client_id,
+            client_bufnr=client_bufnr,
+            duration_ms=round((time.monotonic() - start) * 1000, 3),
+        )
         self.client_bufnr = client_bufnr
         self.view_revision += 1
         self.lifecycle.append(f"bind:{client_bufnr}")
 
     def activate(self, cell_id: int) -> None:
+        start = time.monotonic()
         self._send_command({"kind": "activate", "cell_id": cell_id})
         self._wait_for_status(lambda status: status.get("active_cell_id") == cell_id)
+        emit_timing(
+            "client_runtime.activate",
+            client_id=self.client_id,
+            cell_id=cell_id,
+            duration_ms=round((time.monotonic() - start) * 1000, 3),
+        )
         self.active_cell_id = cell_id
         self.view_revision += 1
         self.lifecycle.append(f"activate:{cell_id}")
@@ -141,16 +161,30 @@ class ProcessClientHandle:
     def update_execution_status(self, status: str) -> None:
         if self.execution_status == status:
             return
+        start = time.monotonic()
         self._send_command({"kind": "execution_status", "status": status})
         self._wait_for_status(lambda snapshot: snapshot.get("execution_status") == status)
+        emit_timing(
+            "client_runtime.execution_status",
+            client_id=self.client_id,
+            status=status,
+            duration_ms=round((time.monotonic() - start) * 1000, 3),
+        )
         self.execution_status = status
         self.view_revision += 1
         self.lifecycle.append(f"status:{status}")
 
     def append_execution_event(self, event: dict) -> None:
         event_copy = dict(event)
+        start = time.monotonic()
         self._send_command({"kind": "execution_event", "event": event_copy})
         self._wait_for_status(lambda snapshot: event_copy in snapshot.get("transcript", []))
+        emit_timing(
+            "client_runtime.execution_event",
+            client_id=self.client_id,
+            event_type=str(event_copy.get("type", "")).strip() or "event",
+            duration_ms=round((time.monotonic() - start) * 1000, 3),
+        )
         self.transcript.append(event_copy)
         self.view_revision += 1
         event_type = str(event_copy.get("type", "")).strip() or "event"
@@ -158,8 +192,15 @@ class ProcessClientHandle:
 
     def set_transport(self, transport: dict) -> None:
         transport_copy = dict(transport)
+        start = time.monotonic()
         self._send_command({"kind": "transport", "transport": transport_copy})
         self._wait_for_status(lambda snapshot: snapshot.get("transport", {}) == transport_copy)
+        emit_timing(
+            "client_runtime.transport",
+            client_id=self.client_id,
+            kind=str(transport_copy.get("kind", "")),
+            duration_ms=round((time.monotonic() - start) * 1000, 3),
+        )
         self.transport = transport_copy
         self.view_revision += 1
         self.lifecycle.append(f"transport:{transport_copy.get('kind', '')}")

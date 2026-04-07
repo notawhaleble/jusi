@@ -16,10 +16,14 @@ from uuid import uuid4
 from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, HandlerHandoff, Session, SessionTarget, parse_handler_handoff_payload
 from jusi.infrastructure.client_view import build_client_view
 from jusi.infrastructure.client_runtime import ProcessClientHandle
+from jusi.infrastructure.debug_timing import emit_timing
 
 
 class RuntimeDependencyError(RuntimeError):
     """Raised when an optional runtime dependency is required but unavailable."""
+
+
+MANAGED_IOPUB_POLL_TIMEOUT_SECONDS = 0.01
 
 
 def _connection_registry_path(connection_file: str) -> str:
@@ -684,6 +688,14 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def execute_cell(self, session: Session, cell: ExecutableCell, client: CellExecution) -> str:
         runtime_session = self._require_session(session.session_id)
         code = "\n".join(cell.main_lines)
+        emit_timing(
+            "runtime.managed.execute_cell.start",
+            session_id=session.session_id,
+            client_id=client.client_id,
+            cell_id=client.cell_id,
+            kind=cell.kind,
+            syntax=cell.syntax,
+        )
         self.append_client_execution_event(
             session,
             client.client_id,
@@ -691,6 +703,13 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         )
         if cell.keep_running:
             runtime_session.client.execute(code)
+            emit_timing(
+                "runtime.managed.execute_cell.sent",
+                session_id=session.session_id,
+                client_id=client.client_id,
+                cell_id=client.cell_id,
+                keep_running=True,
+            )
             self.update_client_execution_status(session, client.client_id, "busy")
             self.append_client_execution_event(
                 session,
@@ -701,9 +720,25 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         if cell.kind == "magic":
             self._ensure_jusi_magics(runtime_session)
             msg_id = runtime_session.client.execute(code, store_history=False)
+            emit_timing(
+                "runtime.managed.execute_cell.sent",
+                session_id=session.session_id,
+                client_id=client.client_id,
+                cell_id=client.cell_id,
+                msg_id=msg_id,
+                kind=cell.kind,
+            )
             return self._drive_execution(runtime_session, session, client, msg_id)
 
         msg_id = runtime_session.client.execute(code)
+        emit_timing(
+            "runtime.managed.execute_cell.sent",
+            session_id=session.session_id,
+            client_id=client.client_id,
+            cell_id=client.cell_id,
+            msg_id=msg_id,
+            kind=cell.kind,
+        )
         return self._drive_execution(runtime_session, session, client, msg_id)
 
     def _ensure_jusi_magics(self, runtime_session: Any) -> None:
@@ -774,6 +809,8 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
 
     def _drive_execution(self, runtime_session: Any, session: Session, client: CellExecution, msg_id: str) -> str:
         status = client.status if client.status in {"error", "follow-up", "interrupted"} else "done"
+        saw_iopub = False
+        saw_stream = False
         while True:
             stdin_message = self._try_get_stdin_request(runtime_session.client, msg_id)
             if stdin_message is not None:
@@ -791,6 +828,13 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                         "password": bool(stdin_message.get("content", {}).get("password", False)),
                     },
                 )
+                emit_timing(
+                    "runtime.managed.stdin_request",
+                    session_id=session.session_id,
+                    client_id=client.client_id,
+                    cell_id=client.cell_id,
+                    msg_id=msg_id,
+                )
                 return "busy"
 
             message = self._try_get_iopub_message(runtime_session.client)
@@ -798,11 +842,47 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                 continue
             if message.get("parent_header", {}).get("msg_id") != msg_id:
                 continue
+            msg_type = str(message.get("msg_type", "")).strip()
+            emit_timing(
+                "runtime.managed.iopub",
+                session_id=session.session_id,
+                client_id=client.client_id,
+                cell_id=client.cell_id,
+                msg_id=msg_id,
+                msg_type=msg_type,
+            )
+            if not saw_iopub:
+                saw_iopub = True
+                emit_timing(
+                    "runtime.managed.first_iopub",
+                    session_id=session.session_id,
+                    client_id=client.client_id,
+                    cell_id=client.cell_id,
+                    msg_id=msg_id,
+                    msg_type=msg_type,
+                )
+            if msg_type == "stream" and not saw_stream:
+                saw_stream = True
+                emit_timing(
+                    "runtime.managed.first_stream",
+                    session_id=session.session_id,
+                    client_id=client.client_id,
+                    cell_id=client.cell_id,
+                    msg_id=msg_id,
+                )
             result = self._handle_iopub_message(runtime_session, session, client.client_id, message, status)
             if result is None:
                 continue
             status = result
-            if message.get("msg_type", "") == "status" and message.get("content", {}).get("execution_state") == "idle":
+            if msg_type == "status" and message.get("content", {}).get("execution_state") == "idle":
+                emit_timing(
+                    "runtime.managed.idle",
+                    session_id=session.session_id,
+                    client_id=client.client_id,
+                    cell_id=client.cell_id,
+                    msg_id=msg_id,
+                    final_status=status,
+                )
                 runtime_session.pending_inputs.pop(client.client_id, None)
                 return status
 
@@ -829,6 +909,13 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                     "meta": dict(handoff.meta),
                 },
             )
+            emit_timing(
+                "runtime.managed.handoff",
+                session_id=session.session_id,
+                client_id=client_id,
+                handler_id=handoff.handler_id,
+                magic_name=handoff.magic_name,
+            )
             return "follow-up"
         if msg_type == "execute_input":
             self.append_client_execution_event(
@@ -850,6 +937,13 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                     "name": message.get("content", {}).get("name", ""),
                     "text": message.get("content", {}).get("text", ""),
                 },
+            )
+            emit_timing(
+                "runtime.managed.stream",
+                session_id=session.session_id,
+                client_id=client_id,
+                name=str(message.get("content", {}).get("name", "")),
+                text_len=len(str(message.get("content", {}).get("text", ""))),
             )
             return None
         if msg_type == "error":
@@ -955,7 +1049,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
 
     def _try_get_iopub_message(self, kernel_client: Any) -> dict | None:
         try:
-            return kernel_client.get_iopub_msg(timeout=0.1)
+            return kernel_client.get_iopub_msg(timeout=MANAGED_IOPUB_POLL_TIMEOUT_SECONDS)
         except Empty:
             return None
 
