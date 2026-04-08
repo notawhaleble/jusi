@@ -21,8 +21,11 @@ dependencies = [
 [project.scripts]
 jusi = "jusi.__main__:main"
 
+[project.entry-points."jusi.display_handlers"]
+vd = "jusi_vd.plugin:display_handler_specs"
+
 [tool.hatch.build.targets.wheel]
-packages = ["src/jusi"]
+packages = ["src/jusi", "src/jusi_vd"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

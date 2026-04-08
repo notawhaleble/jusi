@@ -170,8 +170,18 @@ class InputReplyFlowClient(FakeClient):
 
 
 class MagicHandoffClient(FakeClient):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        handler_id: str = "vd",
+        magic_name: str = "vd",
+        content: str = "pods",
+        meta: Optional[dict] = None,
+    ) -> None:
         super().__init__()
+        metadata = {"source": "kernel"}
+        if meta:
+            metadata.update(meta)
         self.messages = [
             {
                 "parent_header": {"msg_id": "msg-boot"},
@@ -184,13 +194,13 @@ class MagicHandoffClient(FakeClient):
                 "content": {
                     "data": {
                         JUSI_HANDLER_HANDOFF_MIME: {
-                            "handler_id": "vd",
-                            "magic_name": "vd",
-                            "content": "pods",
+                            "handler_id": handler_id,
+                            "magic_name": magic_name,
+                            "content": content,
                         }
                     },
                     "metadata": {
-                        JUSI_HANDLER_HANDOFF_MIME: {"source": "kernel"},
+                        JUSI_HANDLER_HANDOFF_MIME: metadata,
                     },
                 },
             },
@@ -394,7 +404,7 @@ class ManagedRuntimeTest(unittest.TestCase):
             },
         ]
         with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)), patch(
-            "jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")
+            "jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")
         ):
             server, session_id, _ = self._start_bound_managed_server(client)
             execute_messages = server.handle_message(
@@ -506,37 +516,11 @@ class ManagedRuntimeTest(unittest.TestCase):
 
         self.assertEqual("follow-up", status)
         self.assertEqual(2, len(fake_client.executed))
-        self.assertIn("register_magic_function", fake_client.executed[0][0])
+        self.assertIn("importlib.import_module", fake_client.executed[0][0])
+        self.assertIn("jusi_vd.kernel", fake_client.executed[0][0])
         self.assertEqual(("%%vd\npods", False), fake_client.executed[1])
         view = runtime.read_client_view(session, client_id)
         self.assertIn("handler.handoff> magic=vd handler=vd", view["lines"])
-
-    def test_materialize_vd_source_exports_kernel_expression_to_json(self) -> None:
-        runtime = ManagedKernelRuntime()
-        fake_client = FakeClient()
-        fake_client.messages = [
-            {
-                "parent_header": {"msg_id": "msg-1"},
-                "msg_type": "status",
-                "content": {"execution_state": "idle"},
-            }
-        ]
-        runtime._sessions["sess-1"] = SimpleNamespace(
-            manager=None,
-            client=fake_client,
-            interrupted_client_ids=set(),
-            pending_inputs={},
-        )
-        session = Session(notebook_id="nb-1", session_id="sess-1")
-
-        source = runtime.materialize_vd_source(session, "pods")
-
-        self.assertEqual("json", source["format"])
-        self.assertTrue(os.path.exists(source["path"]))
-        self.assertIn("_jusi_vd_value = (pods)", fake_client.executed[0][0])
-        with open(source["path"], "r", encoding="utf-8") as handle:
-            self.assertEqual("", handle.read())
-        os.unlink(source["path"])
 
     def _start_bound_managed_server(self, client: FakeClient) -> tuple[ProtocolServer, str, str]:
         manager = FakeManager()

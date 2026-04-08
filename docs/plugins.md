@@ -159,9 +159,9 @@ The public plugin contract should stay small, but first-party reusable handler b
 
 Examples:
 
-- `BaseDisplayHandler`
-- `VDHandler`
-- `TerminalHandler`
+- `BaseHandler`
+- `BaseTerminalHandler`
+- `BaseVdHandler`
 
 These are convenience layers, not the contract itself.
 
@@ -179,21 +179,32 @@ Current code status:
 - managed runtime now recognizes a first Jusi handoff mime shape from kernel output and surfaces it as a structured handoff event
 - matched handler-owned executions now start in a dedicated `handler-worker` subprocess rather than running handler logic inside the backend root process
 - backend root process remains the router/supervisor for worker/frontend traffic
-- a reusable terminal-hosted handler base now exists in backend code and owns:
+- a reusable `BaseHandler` now exists in backend code and owns:
+  - the worker-facing lifecycle entrypoint
+  - default frontend-message recording
+  - fixed hook names for:
+    - `handle()`
+    - `complete()`
+    - `followup()`
+    - `interrupt()`
+    - `stop()`
+- a reusable terminal-hosted handler base now exists on top of that and owns:
   - native-terminal transport preparation
   - terminal command/environment advertisement
   - handler-side terminal-oriented control hooks
-- a reusable VisiData-oriented handler base now also exists on top of that terminal host and exposes shared hooks for:
+- a reusable `BaseVdHandler` now also exists on top of that terminal host and exposes shared hooks for:
   - copy
   - completion
   - follow-up
-- current built-in `%%vd` now reuses that terminal-hosted base instead of owning PTY details directly
-- current built-in `%%vd` now also reuses the VisiData-oriented base instead of defining those hook names ad hoc
-- current built-in `%%vd` now does its first real job:
+- the current `vd` plugin now lives outside the `jusi` core package in `jusi_vd`
+- that `vd` plugin now reuses those public base layers instead of defining its worker-facing hooks ad hoc
+- the current `vd` plugin now does its first real job:
   - parse a kernel-side object expression from cell body
-  - ask backend core to materialize that expression into a source file
-  - advertise a native-terminal attach command that launches VisiData against that source
-- the next handler-base work is about giving the shared VD hooks richer plugin-facing semantics, not about re-solving PTY lifecycle again
+  - carry serialized handoff data into the worker/native-terminal path
+  - run VisiData through its Python API rather than the old CLI bridge
+  - start through the generic core `plugin-runtime` entrypoint, not a VisiData-named starter
+- managed runtime no longer hardcodes `%%vd`; handler specs now contribute real kernel extension modules for magic handoff registration
+- the next handler-base work is about documenting these public bases for plugin authors and then moving a truly separate external plugin repo onto them
 
 Next architecture tightening:
 

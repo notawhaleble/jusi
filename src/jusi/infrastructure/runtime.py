@@ -5,7 +5,6 @@ import json
 import os
 import pickle
 import signal
-import tempfile
 import threading
 from queue import Empty
 from dataclasses import dataclass, field
@@ -18,6 +17,7 @@ from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, H
 from jusi.infrastructure.client_view import build_client_view
 from jusi.infrastructure.client_runtime import ProcessClientHandle
 from jusi.infrastructure.debug_timing import emit_timing
+from jusi.plugins import build_display_handler_registry, collect_kernel_extension_modules
 
 
 class RuntimeDependencyError(RuntimeError):
@@ -409,29 +409,22 @@ def _start_new_kernel(kernel_name: str) -> tuple[Any, Any]:
         ) from exc
 
 
-def _jusi_magic_bootstrap_code() -> str:
-    mime = json.dumps("application/vnd.jusi.handoff+json")
+def _jusi_magic_bootstrap_code(extension_modules: list[str] | tuple[str, ...]) -> str:
+    modules_json = json.dumps(list(extension_modules))
     return "\n".join(
         [
-            "import base64",
-            "import pickle",
+            "import importlib",
+            f"_jusi_extension_modules = {modules_json}",
             "from IPython import get_ipython",
             "_jusi_ip = get_ipython()",
             "if _jusi_ip is None:",
             "    raise RuntimeError('Jusi magics require an IPython kernel')",
-            "_jusi_cell_magics = getattr(getattr(_jusi_ip, 'magics_manager', None), 'magics', {}).get('cell', {})",
-            "if 'vd' not in _jusi_cell_magics:",
-            "    def _jusi_vd_magic(line, cell):",
-            "        from IPython.display import display",
-            "        _jusi_ns = getattr(_jusi_ip, 'user_ns', {})",
-            "        _jusi_value = eval(cell, _jusi_ns, _jusi_ns)",
-            "        _jusi_meta = {'line': line}",
-            "        if getattr(type(_jusi_value), '__module__', '').startswith('pandas'):",
-            "            _jusi_meta['ftype'] = 'pandas'",
-            "        _jusi_content = base64.b64encode(pickle.dumps(_jusi_value)).decode('ascii')",
-            "        _jusi_payload = {'handler_id': 'vd', 'magic_name': 'vd', 'content': _jusi_content, 'meta': _jusi_meta}",
-            f"        display({{{mime}: _jusi_payload}}, raw=True, metadata={{{mime}: {{'line': line}}}})",
-            "    _jusi_ip.register_magic_function(_jusi_vd_magic, magic_kind='cell', magic_name='vd')",
+            "for _jusi_module_name in _jusi_extension_modules:",
+            "    _jusi_module = importlib.import_module(_jusi_module_name)",
+            "    _jusi_loader = getattr(_jusi_module, 'load_ipython_extension', None)",
+            "    if not callable(_jusi_loader):",
+            "        raise RuntimeError(f'Jusi kernel extension lacks load_ipython_extension: {_jusi_module_name}')",
+            "    _jusi_loader(_jusi_ip)",
         ]
     )
 
@@ -606,15 +599,6 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
     def stop_session(self, session: Session) -> None:
         self.release_session_clients(session.session_id, reason="session_stop")
 
-    def materialize_vd_source(self, session: Session, expression: str) -> dict[str, str]:
-        if not expression.strip():
-            raise ValueError("%%vd requires a kernel-side expression to render")
-        handle, path = tempfile.mkstemp(prefix=f"jusi-vd-{session.session_id}-", suffix=".json")
-        os.close(handle)
-        with open(path, "w", encoding="utf-8") as output:
-            json.dump({"expression": expression}, output, ensure_ascii=False, indent=2)
-        return {"path": path, "format": "json"}
-
     def consume_handler_handoff(self, session: Session, client_id: str) -> HandlerHandoff | None:
         return self._handoffs.pop((session.session_id, client_id), None)
 
@@ -751,46 +735,15 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def _ensure_jusi_magics(self, runtime_session: Any) -> None:
         if bool(getattr(runtime_session, "jusi_magics_registered", False)):
             return
-        msg_id = runtime_session.client.execute(_jusi_magic_bootstrap_code(), store_history=False)
+        extension_modules = collect_kernel_extension_modules(build_display_handler_registry())
+        if not extension_modules:
+            runtime_session.jusi_magics_registered = True
+            return
+        msg_id = runtime_session.client.execute(_jusi_magic_bootstrap_code(extension_modules), store_history=False)
         error = self._drive_export_execution(runtime_session.client, msg_id)
         if error:
             raise RuntimeError(f"Failed to register Jusi kernel magics: {error}")
         runtime_session.jusi_magics_registered = True
-
-    def materialize_vd_source(self, session: Session, expression: str) -> dict[str, str]:
-        if not expression.strip():
-            raise ValueError("%%vd requires a kernel-side expression to render")
-        runtime_session = self._require_session(session.session_id)
-        handle, path = tempfile.mkstemp(prefix=f"jusi-vd-{session.session_id}-", suffix=".json")
-        os.close(handle)
-        code = "\n".join(
-            [
-                "import json",
-                f"_jusi_vd_value = ({expression})",
-                "if hasattr(_jusi_vd_value, 'to_json'):",
-                f"    open({path!r}, 'w', encoding='utf-8').write(_jusi_vd_value.to_json(orient='records'))",
-                "else:",
-                "    if hasattr(_jusi_vd_value, 'to_dict'):",
-                "        try:",
-                "            _jusi_vd_value = _jusi_vd_value.to_dict(orient='records')",
-                "        except TypeError:",
-                "            try:",
-                "                _jusi_vd_value = _jusi_vd_value.to_dict()",
-                "            except Exception:",
-                "                pass",
-                f"    with open({path!r}, 'w', encoding='utf-8') as _jusi_vd_output:",
-                "        json.dump(_jusi_vd_value, _jusi_vd_output, ensure_ascii=False, default=str, indent=2)",
-            ]
-        )
-        msg_id = runtime_session.client.execute(code, store_history=False)
-        error = self._drive_export_execution(runtime_session.client, msg_id)
-        if error:
-            try:
-                os.unlink(path)
-            except FileNotFoundError:
-                pass
-            raise RuntimeError(error)
-        return {"path": path, "format": "json"}
 
     def consume_handler_handoff(self, session: Session, client_id: str) -> HandlerHandoff | None:
         runtime_session = self._require_session(session.session_id)

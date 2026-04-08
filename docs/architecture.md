@@ -220,7 +220,7 @@ Backend should advertise terminal-backed clients explicitly through normal clien
 
 The likely contract shape is:
 
-- prepared/active client remains a normal backend client
+- cell-owned active client remains a normal backend client
 - backend emits client metadata indicating:
   - transport kind `native_terminal`
   - attach command for the terminal buffer

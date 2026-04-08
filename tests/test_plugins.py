@@ -8,22 +8,23 @@ from unittest.mock import patch
 
 from jusi.domain.models import HandlerHandoff
 from jusi.plugins import (
+    BaseHandler,
+    BaseVdHandler,
+    collect_kernel_extension_modules,
     DISPLAY_HANDLER_ENTRY_POINT_GROUP,
     DisplayHandlerRegistry,
     DisplayHandlerSpec,
     MagicCommand,
-    VDDisplayHandlerBase,
-    VDDisplayHandler,
-    _build_vd_env,
-    _build_vd_command,
     builtin_display_handler_specs,
     build_display_handler_registry,
     load_display_handler_specs,
 )
 from jusi.infrastructure.client_process import run_terminal_attach
+from jusi.infrastructure.plugin_runtime import run_plugin_runtime
 from jusi.infrastructure.runtime import InMemoryKernelRuntime
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
+from jusi_vd.plugin import VDDisplayHandler, _build_vd_command, _build_vd_env
 
 def inspect_client_lines(server: ProtocolServer, session_id: str, client_id: str) -> list[str]:
     inspect_messages = server.handle_message(
@@ -99,31 +100,51 @@ def build_sql_spec():
     )
 
 
-class FakeVDHandler(VDDisplayHandlerBase):
+class FakeVDHandler(BaseVdHandler):
     def handler_id(self) -> str:
         return "fake_vd"
 
     def complete(self, context, payload):  # type: ignore[no-untyped-def]
         _ = context
         prefix = str(payload.get("prefix", ""))
-        return [prefix + "_one", prefix + "_two"]
+        return [
+            {"value": prefix + "_one", "label": prefix + "_one", "kind": "row"},
+            {"value": prefix + "_two", "label": prefix + "_two", "kind": "row"},
+        ]
 
     def followup(self, context, payload):  # type: ignore[no-untyped-def]
-        _ = context
-        return {"cell_text": str(payload.get("cell_text", "")).upper()}
+        context.push_frontend_message(
+            "vd_followup_result",
+            {
+                "handler_id": self.handler_id(),
+                "payload": {"cell_text": str(payload.get("cell_text", "")).upper()},
+            },
+        )
+
+
+class AsyncBaseHandler(BaseHandler):
+    def handler_id(self) -> str:
+        return "async"
+
+    async def handle(self, context, cell):  # type: ignore[no-untyped-def]
+        _ = (context, cell)
+        return "follow-up"
 
 
 class PluginRegistryTest(unittest.TestCase):
     def test_builtin_display_handler_specs_include_vd(self) -> None:
         specs = builtin_display_handler_specs()
-        self.assertEqual("vd", specs[0].handler_id)
-        self.assertEqual("vd", specs[0].magic_commands[0].name)
-        self.assertIsInstance(specs[0].factory(), VDDisplayHandler)
+        self.assertEqual((), specs)
 
     def test_vd_env_defaults_term_to_xterm_256color(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             env = _build_vd_env()
         self.assertEqual("xterm-256color", env["TERM"])
+
+    def test_base_handler_supports_async_handle(self) -> None:
+        handler = AsyncBaseHandler()
+        status = handler.execute(object(), object())  # type: ignore[arg-type]
+        self.assertEqual("follow-up", status)
 
     def test_run_terminal_attach_execs_advertised_command(self) -> None:
         captured = {}
@@ -175,16 +196,24 @@ class PluginRegistryTest(unittest.TestCase):
         self.assertNotIn("LINES", captured["env"])
         self.assertNotIn("COLUMNS", captured["env"])
 
+    def test_run_plugin_runtime_dispatches_to_configured_callable(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"JUSI_PLUGIN_RUNTIME_CALLABLE": "jusi_vd.runner:run_vd_runner", "JUSI_VD_PAYLOAD_JSON": json.dumps({"content": "", "meta": {}})},
+            clear=True,
+        ), patch("jusi_vd.runner.run_vd_runner", return_value=7):
+            self.assertEqual(7, run_plugin_runtime())
+
     def test_build_vd_command_finds_binary_next_to_sys_executable(self) -> None:
-        with patch("jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")), patch(
-            "jusi.plugins.sys.executable", "/tmp/venv/bin/python"
+        with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")), patch(
+            "jusi_vd.plugin.sys.executable", "/tmp/venv/bin/python"
         ):
             command, notice = _build_vd_command()
-        self.assertEqual(["/tmp/venv/bin/python", "-m", "jusi", "vd-runner"], command)
+        self.assertEqual(["/tmp/venv/bin/python", "-m", "jusi", "plugin-runtime"], command)
         self.assertEqual("", notice)
 
     def test_build_vd_command_requires_visidata_module(self) -> None:
-        with patch("jusi.plugins.util.find_spec", return_value=None):
+        with patch("jusi_vd.plugin.util.find_spec", return_value=None):
             with self.assertRaisesRegex(RuntimeError, "VisiData is not available"):
                 _build_vd_command()
 
@@ -196,6 +225,7 @@ class PluginRegistryTest(unittest.TestCase):
             (),
             {
                 "push_frontend_message": lambda _self, message_type, payload: pushed.append((message_type, payload)),
+                "send_frontend_message": lambda _self, message_type, payload: pushed.append((message_type, payload)),
             },
         )()
 
@@ -205,7 +235,16 @@ class PluginRegistryTest(unittest.TestCase):
 
         self.assertEqual(("vd_copy_result", {"handler_id": "fake_vd", "text": "abc"}), pushed[0])
         self.assertEqual(
-            ("vd_complete_result", {"handler_id": "fake_vd", "items": ["pod_one", "pod_two"]}),
+            (
+                "vd_complete_result",
+                {
+                    "handler_id": "fake_vd",
+                    "items": [
+                        {"value": "pod_one", "label": "pod_one", "kind": "row"},
+                        {"value": "pod_two", "label": "pod_two", "kind": "row"},
+                    ],
+                },
+            ),
             pushed[1],
         )
         self.assertEqual(
@@ -290,6 +329,13 @@ class PluginRegistryTest(unittest.TestCase):
                 DISPLAY_HANDLER_ENTRY_POINT_GROUP: [
                     FakeEntryPoint(
                         DisplayHandlerSpec(
+                            handler_id="vd",
+                            factory=object,
+                            magic_commands=(MagicCommand("vd"),),
+                        )
+                    ),
+                    FakeEntryPoint(
+                        DisplayHandlerSpec(
                             handler_id="sql",
                             factory=object,
                             magic_commands=(MagicCommand("sql"),),
@@ -305,8 +351,13 @@ class PluginRegistryTest(unittest.TestCase):
         self.assertEqual("vd", registry.find_for_cell(["%%vd pods"]).handler_id)
         self.assertEqual("sql", registry.find_for_cell(["%%sql select 1"]).handler_id)
 
+    def test_collect_kernel_extension_modules_reads_registry_specs(self) -> None:
+        registry = build_display_handler_registry()
+        modules = collect_kernel_extension_modules(registry)
+        self.assertEqual(("jusi_vd.kernel",), modules)
+
     def test_builtin_vd_handler_executes_from_magic_cell_handoff(self) -> None:
-        with patch("jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")):
+        with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")):
             server = ProtocolServer(runtime=InMemoryKernelRuntime())
 
             start_messages = server.handle_message(
@@ -398,23 +449,24 @@ class PluginRegistryTest(unittest.TestCase):
         )()
 
         with patch.dict("os.environ", {}, clear=True), patch(
-            "jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")
-        ), patch("jusi.plugins.sys.executable", "/tmp/venv/bin/python"):
+            "jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")
+        ), patch("jusi_vd.plugin.sys.executable", "/tmp/venv/bin/python"):
             handler = VDDisplayHandler()
             status = handler.execute(context, cell)
 
         self.assertEqual("follow-up", status)
         self.assertEqual("native_terminal", captured_transport["kind"])
         advertised_command = json.loads(captured_transport["attach_env"]["JUSI_TERMINAL_CMD_JSON"])
-        self.assertEqual(["/tmp/venv/bin/python", "-m", "jusi", "vd-runner"], advertised_command)
+        self.assertEqual(["/tmp/venv/bin/python", "-m", "jusi", "plugin-runtime"], advertised_command)
         child_env = json.loads(captured_transport["attach_env"]["JUSI_TERMINAL_ENV_JSON"])
+        self.assertEqual("jusi_vd.runner:run_vd_runner", child_env["JUSI_PLUGIN_RUNTIME_CALLABLE"])
         self.assertEqual(
             {"content": "gASVBwAAAAAAAACMA2FiY5Qu", "meta": {"ftype": "pandas"}},
             json.loads(child_env["JUSI_VD_PAYLOAD_JSON"]),
         )
 
     def test_handler_message_still_records_frontend_messages(self) -> None:
-        with patch("jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")):
+        with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")):
             server, session_id, active_client_id = start_bound_vd_server()
 
             response = server.handle_message(
@@ -439,7 +491,7 @@ class PluginRegistryTest(unittest.TestCase):
             server.close()
 
     def test_bootstrap_exposes_native_terminal_transport_metadata(self) -> None:
-        with patch("jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")):
+        with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")):
             server, session_id, active_client_id = start_bound_vd_server()
 
             inspect_messages = server.handle_message(
@@ -465,7 +517,7 @@ class PluginRegistryTest(unittest.TestCase):
 
     def test_bootstrap_propagates_pythonpath_into_native_terminal_attach_env(self) -> None:
         with patch.dict("os.environ", {"PYTHONPATH": "/tmp/jusi-src"}), patch(
-            "jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")
+            "jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")
         ):
             server, session_id, active_client_id = start_bound_vd_server()
 
@@ -486,7 +538,7 @@ class PluginRegistryTest(unittest.TestCase):
             server.close()
 
     def test_native_terminal_attach_env_does_not_force_lines_or_columns(self) -> None:
-        with patch("jusi.plugins.util.find_spec", return_value=SimpleNamespace(name="visidata")):
+        with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")):
             server, session_id, active_client_id = start_bound_vd_server()
             inspect_messages = server.handle_message(
                 (

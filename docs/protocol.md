@@ -236,7 +236,7 @@ Behavior:
 - request form is frontend -> backend
 - event form is backend -> frontend
 - valid only while that client still has an active handler runtime registered
-- current built-in `%%vd` path uses this for:
+- current `%%vd` plugin path uses this for:
   - `handler_snapshot`
   - plugin-specific messages such as copy/follow-up/completion
 
@@ -256,7 +256,7 @@ Attach note for native-terminal clients:
   - execute handler cell
   - observe `client.transport.kind = native_terminal`
   - launch the terminal client from `attach_cmd` + `attach_env`
-- current built-in `%%vd` uses this by materializing the cell-body expression into a source file and advertising `vd <source>` through that attach metadata
+- current `jusi_vd` plugin uses this by carrying serialized handoff payload into the generic core `plugin-runtime` entrypoint plus a plugin-owned callable
 
 ### Planned Kernel Handoff Direction
 

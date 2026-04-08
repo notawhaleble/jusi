@@ -15,7 +15,7 @@ Jusi is responsible for:
 
 - kernel lifecycle management
 - notebook execution coordination
-- prepared client lifecycle
+- cell-owned client lifecycle
 - backend-to-editor execution events
 - transport and runtime integration around those capabilities
 
@@ -23,6 +23,7 @@ Current runtime entrypoints:
 
 - backend root process: `python -m jusi`
 - client process: `python -m jusi client-process`
+- generic plugin runtime starter: `python -m jusi plugin-runtime`
 
 The project is built around:
 
@@ -33,15 +34,22 @@ The project is built around:
 
 The Vim plugin lives in a separate repository: `../jusivim`.
 
-## Current Focus
+## Development Workflow
 
-The first implementation milestone is the backend contract and the first execution vertical slice:
+For normal local development, use an editable install in a virtual environment rather than relying on raw `PYTHONPATH=src`.
 
-- start a managed kernel
-- report session readiness
-- provision a prepared client
-- execute a cell
-- publish session, prepared-client, and cell updates back to the editor
+Why:
+
+- first-party bundled plugins such as `jusi_vd` are now discovered through real package entry points
+- that metadata exists in the installed distribution, not in source imports alone
+
+So the authoritative local path is:
+
+```sh
+venv2/bin/python -m pip install -e .
+```
+
+Then run tests and local commands through that environment.
 
 ## Repository Layout
 
@@ -50,4 +58,5 @@ The first implementation milestone is the backend contract and the first executi
 - `src/jusi/application/`: use cases and service interfaces
 - `src/jusi/infrastructure/`: Jupyter integration, transport, and process management
 - `src/jusi/interfaces/`: external entrypoints and message adapters
+- `src/jusi_vd/`: first-party bundled `vd` plugin package
 - `tests/`: backend tests

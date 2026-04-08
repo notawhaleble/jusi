@@ -153,9 +153,6 @@ class KernelRuntime(Protocol):
     def expire_session(self, session: Session) -> None:
         """Perform final timeout teardown for the session."""
 
-    def materialize_vd_source(self, session: Session, expression: str) -> dict[str, str]:
-        """Resolve a VisiData source from kernel/session state and return source metadata."""
-
     def consume_handler_handoff(self, session: Session, client_id: str) -> HandlerHandoff | None:
         """Consume the latest kernel-emitted handler handoff for the active client, if any."""
 

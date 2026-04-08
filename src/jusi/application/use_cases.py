@@ -388,9 +388,7 @@ class ExecuteCell:
         )
 
     def _invoke_handler_backend_action(self, action_name: str, session: Session, payload: dict[str, object]) -> dict[str, object]:
-        if action_name == "materialize_vd_source":
-            expression = str(payload.get("expression", "")).strip()
-            return dict(self._runtime.materialize_vd_source(session, expression))
+        _ = (session, payload)
         raise ValueError(f"Unsupported handler backend action: {action_name}")
 
     def _set_handler_client_transport(

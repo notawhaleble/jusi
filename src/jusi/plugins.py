@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import os
 import sys
+import asyncio
+import inspect
 from dataclasses import dataclass, field
-from importlib import util
 from importlib import metadata
-from typing import Any, Callable, Iterable, Protocol, Sequence
+from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from jusi.domain.models import ClientTransport, ExecutableCell, HandlerHandoff
 
@@ -43,6 +44,27 @@ class HandlerContext:
     content: str = ""
     meta: dict[str, object] = field(default_factory=dict)
 
+    def emit_frontend_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        self.channel.emit_event(event_type, payload)
+
+    def request_frontend_action(self, action_type: str, payload: dict[str, Any]) -> None:
+        self.channel.request_action(action_type, payload)
+
+    def send_frontend_message(self, message_type: str, payload: dict[str, Any]) -> None:
+        self.push_frontend_message(message_type, payload)
+
+    def call_backend_action(self, action_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.invoke_backend_action(action_name, payload)
+
+    def append_event(self, event: dict[str, Any]) -> None:
+        self.append_execution_event(event)
+
+    def set_status(self, status: str) -> None:
+        self.update_execution_status(status)
+
+    def publish_transport(self, transport: ClientTransport) -> None:
+        self.set_client_transport(transport)
+
 
 class DisplayHandler(Protocol):
     def execute(self, context: HandlerContext, cell: ExecutableCell) -> str:
@@ -64,6 +86,7 @@ class DisplayHandlerSpec:
     factory: Callable[[], DisplayHandler]
     magic_commands: tuple[MagicCommand, ...] = field(default_factory=tuple)
     handoff_validator: Callable[[HandlerHandoff], bool] | None = None
+    kernel_extension_modules: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not self.handler_id.strip():
@@ -125,20 +148,26 @@ def _entry_points_for_group(group: str) -> list[Any]:
     return list(legacy)
 
 
-def _coerce_display_handler_spec(loaded: object) -> DisplayHandlerSpec:
+def _coerce_display_handler_specs(loaded: object) -> tuple[DisplayHandlerSpec, ...]:
     if isinstance(loaded, DisplayHandlerSpec):
+        return (loaded,)
+    if isinstance(loaded, tuple) and all(isinstance(item, DisplayHandlerSpec) for item in loaded):
         return loaded
     if callable(loaded):
         spec = loaded()
         if isinstance(spec, DisplayHandlerSpec):
+            return (spec,)
+        if isinstance(spec, tuple) and all(isinstance(item, DisplayHandlerSpec) for item in spec):
             return spec
-    raise TypeError("Display handler entry point must resolve to DisplayHandlerSpec or a zero-arg factory returning one")
+    raise TypeError(
+        "Display handler entry point must resolve to DisplayHandlerSpec, a tuple of specs, or a zero-arg factory returning either"
+    )
 
 
 def load_display_handler_specs(group: str = DISPLAY_HANDLER_ENTRY_POINT_GROUP) -> tuple[DisplayHandlerSpec, ...]:
     specs: list[DisplayHandlerSpec] = []
     for entry_point in _entry_points_for_group(group):
-        specs.append(_coerce_display_handler_spec(entry_point.load()))
+        specs.extend(_coerce_display_handler_specs(entry_point.load()))
     return tuple(specs)
 
 
@@ -198,12 +227,19 @@ class RecordingFrontendChannel:
             event_payload,
         )
 
-class TerminalDisplayHandler:
-    def __init__(self) -> None:
-        self._mode = "ready"
+class BaseHandler:
+    def execute(self, context: HandlerContext, cell: ExecutableCell) -> str:
+        status = self.handle(context, cell)
+        if inspect.isawaitable(status):
+            status = asyncio.run(status)
+        normalized = str(status or "follow-up").strip() or "follow-up"
+        return normalized
+
+    def handle(self, context: HandlerContext, cell: ExecutableCell) -> str | Any:
+        raise NotImplementedError
 
     def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
-        context.channel.emit_event(
+        context.emit_frontend_event(
             "frontend_message",
             {
                 "handler_id": self.handler_id(),
@@ -212,8 +248,32 @@ class TerminalDisplayHandler:
             },
         )
 
+    def complete(self, context: HandlerContext, payload: dict[str, Any]) -> Sequence[dict[str, Any]]:
+        _ = (context, payload)
+        return ()
+
+    def followup(self, context: HandlerContext, payload: dict[str, Any]) -> None:
+        _ = (context, payload)
+
+    def interrupt(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"handler_id": self.handler_id()}
+
     def handler_id(self) -> str:
         raise NotImplementedError
+
+
+class BaseTerminalHandler(BaseHandler):
+    def __init__(self) -> None:
+        self._mode = "ready"
+
+    def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
+        super().on_frontend_message(context, message_type, payload)
 
     def terminal_command(self) -> tuple[list[str], str]:
         raise NotImplementedError
@@ -256,16 +316,16 @@ class TerminalDisplayHandler:
         return command, fallback_notice, env
 
 
-class VDDisplayHandlerBase(TerminalDisplayHandler):
+class BaseVdHandler(BaseTerminalHandler):
     def __init__(self) -> None:
         super().__init__()
         self._entry = ""
 
-    def execute(self, context: HandlerContext, cell: ExecutableCell) -> str:
+    def handle(self, context: HandlerContext, cell: ExecutableCell) -> str:
         self.stop()
         self._mode = "ready"
         self._entry = cell.main_lines[0] if cell.main_lines else f"%%{self.handler_id()}"
-        context.append_execution_event(
+        context.append_event(
             {
                 "type": "execution_started",
                 "cell_id": context.cell_id,
@@ -274,7 +334,7 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
                 "handler_id": self.handler_id(),
             }
         )
-        context.channel.emit_event(
+        context.emit_frontend_event(
             "handler_snapshot",
             {
                 "handler_id": self.handler_id(),
@@ -284,8 +344,8 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
             },
         )
         self.prepare_transport(context)
-        context.update_execution_status("follow-up")
-        context.append_execution_event(
+        context.set_status("follow-up")
+        context.append_event(
             {
                 "type": "execution_finished",
                 "status": "follow-up",
@@ -299,8 +359,8 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
             self.handle_copy(context, payload)
             return
         if message_type == "vd_complete":
-            completions = list(self.complete(context, payload))
-            context.push_frontend_message(
+            completions = [_normalize_completion_item(item) for item in self.complete(context, payload)]
+            context.send_frontend_message(
                 "vd_complete_result",
                 {
                     "handler_id": self.handler_id(),
@@ -309,20 +369,13 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
             )
             return
         if message_type == "vd_followup":
-            followup_payload = self.followup(context, payload)
-            context.push_frontend_message(
-                "vd_followup_result",
-                {
-                    "handler_id": self.handler_id(),
-                    "payload": dict(followup_payload),
-                },
-            )
+            self.followup(context, payload)
             return
         super().on_frontend_message(context, message_type, payload)
 
     def handle_copy(self, context: HandlerContext, payload: dict[str, Any]) -> None:
         content = str(payload.get("text", ""))
-        context.push_frontend_message(
+        context.send_frontend_message(
             "vd_copy_result",
             {
                 "handler_id": self.handler_id(),
@@ -330,13 +383,13 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
             },
         )
 
-    def complete(self, context: HandlerContext, payload: dict[str, Any]) -> Sequence[str]:
+    def complete(self, context: HandlerContext, payload: dict[str, Any]) -> Sequence[dict[str, Any]]:
         _ = (context, payload)
         return ()
 
-    def followup(self, context: HandlerContext, payload: dict[str, Any]) -> dict[str, Any]:
+    def followup(self, context: HandlerContext, payload: dict[str, Any]) -> None:
         _ = (context, payload)
-        return {}
+        return None
 
     def terminal_command(self) -> tuple[list[str], str]:
         command, fallback_notice = _build_vd_command()
@@ -353,71 +406,8 @@ class VDDisplayHandlerBase(TerminalDisplayHandler):
         return snapshot
 
 
-class VDDisplayHandler(VDDisplayHandlerBase):
-    def __init__(self) -> None:
-        super().__init__()
-        self._payload: dict[str, object] | None = None
-
-    def execute(self, context: HandlerContext, cell: ExecutableCell) -> str:
-        self.stop()
-        self._mode = "ready"
-        self._entry = cell.main_lines[0] if cell.main_lines else f"%%{self.handler_id()}"
-        context.append_execution_event(
-            {
-                "type": "execution_started",
-                "cell_id": context.cell_id,
-                "kind": cell.kind,
-                "syntax": cell.syntax,
-                "handler_id": self.handler_id(),
-            }
-        )
-        context.channel.emit_event(
-            "handler_snapshot",
-            {
-                "handler_id": self.handler_id(),
-                "mode": self._mode,
-                "entry": self._entry,
-                "family": "visidata",
-            },
-        )
-        self._payload = {
-            "content": context.content,
-            "meta": dict(context.meta),
-        }
-        self.prepare_transport(context)
-        context.update_execution_status("follow-up")
-        context.append_execution_event(
-            {
-                "type": "execution_finished",
-                "status": "follow-up",
-                "handler_id": self.handler_id(),
-            }
-        )
-        return "follow-up"
-
-    def handler_id(self) -> str:
-        return "vd"
-
-    def terminal_command(self) -> tuple[list[str], str]:
-        command, fallback_notice = _build_vd_command()
-        self._mode = "live"
-        return command, fallback_notice
-
-    def snapshot(self) -> dict[str, Any]:
-        snapshot = super().snapshot()
-        if self._payload is not None:
-            snapshot["payload"] = dict(self._payload)
-        return snapshot
-
-    def terminal_env(self) -> dict[str, str]:
-        env = _build_vd_env()
-        payload = self._payload or {"content": "", "meta": {}}
-        env["JUSI_VD_PAYLOAD_JSON"] = json.dumps(payload)
-        return env
-
-    def stop(self) -> None:
-        super().stop()
-        self._payload = None
+TerminalDisplayHandler = BaseTerminalHandler
+VDDisplayHandlerBase = BaseVdHandler
 
 
 def default_frontend_channel(
@@ -484,13 +474,7 @@ class DisplayHandlerRuntime:
 
 
 def builtin_display_handler_specs() -> tuple[DisplayHandlerSpec, ...]:
-    return (
-        DisplayHandlerSpec(
-            handler_id="vd",
-            factory=VDDisplayHandler,
-            magic_commands=(MagicCommand("vd"),),
-        ),
-    )
+    return ()
 
 
 def build_display_handler_registry() -> DisplayHandlerRegistry:
@@ -500,18 +484,21 @@ def build_display_handler_registry() -> DisplayHandlerRegistry:
     return registry
 
 
-def _build_vd_command() -> tuple[list[str], str]:
-    if util.find_spec("visidata") is None:
-        raise RuntimeError(
-            "VisiData is not available for %%vd. Install the 'visidata' package in the active environment."
-        )
-    return [sys.executable, "-m", "jusi", "vd-runner"], ""
+def collect_kernel_extension_modules(registry: DisplayHandlerRegistry) -> tuple[str, ...]:
+    modules: list[str] = []
+    for spec in registry.all():
+        modules.extend(spec.kernel_extension_modules)
+    return tuple(dict.fromkeys(modules))
 
 
-def _build_vd_env() -> dict[str, str]:
-    env = os.environ.copy()
-    env["TERM"] = os.environ.get("JUSI_VD_TERM", "").strip() or "xterm-256color"
-    return env
+def _normalize_completion_item(item: str | Mapping[str, Any]) -> dict[str, Any]:
+    if isinstance(item, str):
+        return {"value": item, "label": None, "kind": None}
+    return {
+        "value": str(item.get("value", "")),
+        "label": None if item.get("label") is None else str(item.get("label")),
+        "kind": None if item.get("kind") is None else str(item.get("kind")),
+    }
 
 
 def _native_terminal_attach_command() -> list[str]:
