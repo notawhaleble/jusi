@@ -226,6 +226,7 @@ class ProtocolServer:
                         reason="frontend_unreachable",
                     )
                 )
+                self._active_handlers.remove_session(session.session_id)
                 for event in events.events:
                     self._pending_events.put(event)
                 continue

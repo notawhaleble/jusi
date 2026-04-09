@@ -798,6 +798,20 @@ class StartSessionTest(unittest.TestCase):
         self.assertIsNotNone(session.expires_at)
         self.assertEqual([], runtime.list_clients(session_id))
 
+    def test_poll_frontend_health_disconnect_timeout_removes_active_handlers(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        session.frontend_healthcheck_id = "hc-stale"
+        session.frontend_healthcheck_deadline = 0
+
+        with patch.object(server._active_handlers, "remove_session") as remove_session:
+            server.poll_frontend_health()
+
+        remove_session.assert_called_once_with(session_id)
+
     def test_poll_client_updates_emits_revision_invalidation_event(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
