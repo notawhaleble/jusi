@@ -73,12 +73,14 @@ class ProcessClientHandle:
     control_dir: str = field(init=False)
     commands_path: str = field(init=False)
     status_path: str = field(init=False)
+    plugin_runtime_pid_path: str = field(init=False)
     runtime_kind: str = "process"
 
     def __post_init__(self) -> None:
         self.control_dir = tempfile.mkdtemp(prefix=f"jusi-client-{self.client_id}-")
         self.commands_path = os.path.join(self.control_dir, "commands.jsonl")
         self.status_path = os.path.join(self.control_dir, "status.json")
+        self.plugin_runtime_pid_path = os.path.join(self.control_dir, "plugin-runtime.pid")
         self.process = _spawn_client_process(
             client_id=self.client_id,
             notebook_id=self.notebook_id,
@@ -226,6 +228,7 @@ class ProcessClientHandle:
         self.client_bufnr = -1
         self.view_revision += 1
         self.lifecycle.append(f"shutdown:{reason}")
+        self._shutdown_plugin_runtime()
         if self.process.poll() is None:
             self._send_command({"kind": "shutdown", "reason": reason})
             try:
@@ -251,3 +254,33 @@ class ProcessClientHandle:
             self._wait_for_status(lambda status: status.get("shutdown_reason") == reason)
         except RuntimeError:
             pass
+
+    def _shutdown_plugin_runtime(self) -> None:
+        try:
+            with open(self.plugin_runtime_pid_path, "r", encoding="utf-8") as handle:
+                raw = handle.read().strip()
+        except FileNotFoundError:
+            return
+        try:
+            plugin_pid = int(raw)
+        except ValueError:
+            return
+        if plugin_pid <= 0:
+            return
+        try:
+            os.kill(plugin_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            try:
+                os.kill(plugin_pid, 0)
+            except ProcessLookupError:
+                return
+            except PermissionError:
+                break
+            time.sleep(CLIENT_STATUS_POLL_INTERVAL_SECONDS)
+        try:
+            os.kill(plugin_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return

@@ -20,7 +20,7 @@ from jusi.plugins import (
     load_display_handler_specs,
 )
 from jusi.infrastructure.client_process import run_terminal_attach
-from jusi.infrastructure.plugin_runtime import run_plugin_runtime
+from jusi.infrastructure.plugin_runtime import _monitor_supervisor_liveness, run_plugin_runtime
 from jusi.infrastructure.runtime import InMemoryKernelRuntime
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
@@ -203,6 +203,73 @@ class PluginRegistryTest(unittest.TestCase):
             clear=True,
         ), patch("jusi_vd.runner.run_vd_runner", return_value=7):
             self.assertEqual(7, run_plugin_runtime())
+
+    def test_run_plugin_runtime_starts_supervisor_monitor_when_configured(self) -> None:
+        events: list[str] = []
+
+        class FakeThread:
+            def __init__(self, *, target=None, args=(), daemon=False):  # type: ignore[no-untyped-def]
+                _ = target, args, daemon
+                self._alive = False
+
+            def start(self) -> None:
+                events.append("start")
+                self._alive = True
+
+            def is_alive(self) -> bool:
+                return self._alive
+
+            def join(self, timeout=None) -> None:  # type: ignore[no-untyped-def]
+                _ = timeout
+                events.append("join")
+                self._alive = False
+
+        with patch.dict(
+            "os.environ",
+            {
+                "JUSI_PLUGIN_RUNTIME_CALLABLE": "jusi_vd.runner:run_vd_runner",
+                "JUSI_VD_PAYLOAD_JSON": json.dumps({"content": "", "meta": {}}),
+                "JUSI_SUPERVISOR_PID": "123",
+            },
+            clear=True,
+        ), patch("jusi_vd.runner.run_vd_runner", return_value=7), patch(
+            "jusi.infrastructure.plugin_runtime.threading.Thread", FakeThread
+        ):
+            self.assertEqual(7, run_plugin_runtime())
+
+        self.assertEqual(["start", "join"], events)
+
+    def test_plugin_runtime_monitor_requests_shutdown_when_supervisor_is_lost(self) -> None:
+        stop_event = SimpleNamespace(is_set=lambda: False, wait=lambda _seconds: None)
+        with patch("jusi.infrastructure.plugin_runtime._supervisor_is_alive", return_value=False), patch(
+            "jusi.infrastructure.plugin_runtime._request_process_shutdown"
+        ) as request_shutdown:
+            _monitor_supervisor_liveness(123, stop_event)  # type: ignore[arg-type]
+        request_shutdown.assert_called_once_with()
+
+    def test_run_plugin_runtime_writes_and_removes_pid_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pid_path = os.path.join(tmpdir, "plugin-runtime.pid")
+            observed: dict[str, int] = {}
+
+            def fake_runner() -> int:
+                with open(pid_path, "r", encoding="utf-8") as handle:
+                    observed["pid"] = int(handle.read().strip())
+                return 7
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "JUSI_PLUGIN_RUNTIME_CALLABLE": "jusi_vd.runner:run_vd_runner",
+                    "JUSI_VD_PAYLOAD_JSON": json.dumps({"content": "", "meta": {}}),
+                    "JUSI_PLUGIN_RUNTIME_PID_FILE": pid_path,
+                },
+                clear=True,
+            ), patch("jusi_vd.runner.run_vd_runner", side_effect=fake_runner):
+                self.assertEqual(7, run_plugin_runtime())
+
+            self.assertEqual(os.getpid(), observed["pid"])
+            self.assertFalse(os.path.exists(pid_path))
 
     def test_build_vd_command_finds_binary_next_to_sys_executable(self) -> None:
         with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")), patch(
