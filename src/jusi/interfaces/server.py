@@ -507,14 +507,18 @@ class ProtocolServer:
             )
             try:
                 use_case.finish_execute(command, session, current_client)
-            except Exception:
+            except Exception as exc:
                 emit_timing(
                     "server.execute_cell.finish_error",
                     notebook_id=command.notebook_id,
                     session_id=session.session_id,
                     cell_id=current_client.cell_id,
                     client_id=current_client.client_id,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
                 )
+                for event in events.events:
+                    self._pending_events.put(event)
                 return
             emit_timing(
                 "server.execute_cell.finish_done",

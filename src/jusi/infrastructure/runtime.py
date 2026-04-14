@@ -25,6 +25,8 @@ class RuntimeDependencyError(RuntimeError):
 
 
 MANAGED_IOPUB_POLL_TIMEOUT_SECONDS = 0.01
+JUSI_SESSION_CONFIG_ENV = "JUSI_SESSION_CONFIG_JSON"
+JUSI_KERNEL_EXTENSIONS_ENV = "JUSI_KERNEL_EXTENSION_MODULES_JSON"
 
 
 def _connection_registry_path(connection_file: str) -> str:
@@ -403,7 +405,22 @@ class ClientRegistryRuntime:
         return session_clients.clients[client_id]
 
 
-def _start_new_kernel(kernel_name: str) -> tuple[Any, Any]:
+def _jusi_kernel_env(
+    extension_modules: list[str] | tuple[str, ...],
+    session_config: dict[str, object] | None = None,
+) -> dict[str, str]:
+    return {
+        JUSI_SESSION_CONFIG_ENV: json.dumps(dict(session_config or {})),
+        JUSI_KERNEL_EXTENSIONS_ENV: json.dumps(list(extension_modules)),
+    }
+
+
+def _start_new_kernel(
+    kernel_name: str,
+    *,
+    env: dict[str, str] | None = None,
+    extra_arguments: list[str] | None = None,
+) -> tuple[Any, Any]:
     try:
         from jupyter_client.manager import start_new_kernel
         from jupyter_client.kernelspec import NoSuchKernel
@@ -413,32 +430,19 @@ def _start_new_kernel(kernel_name: str) -> tuple[Any, Any]:
         ) from exc
 
     try:
-        return start_new_kernel(kernel_name=kernel_name)
+        kwargs: dict[str, Any] = {"kernel_name": kernel_name}
+        if env:
+            merged_env = os.environ.copy()
+            merged_env.update(env)
+            kwargs["env"] = merged_env
+        if extra_arguments:
+            kwargs["extra_arguments"] = list(extra_arguments)
+        return start_new_kernel(**kwargs)
     except NoSuchKernel as exc:
         raise RuntimeDependencyError(
             "Managed runtime requires an installed kernelspec for "
             f"'{kernel_name}'. Install ipykernel in the active environment."
         ) from exc
-
-
-def _jusi_magic_bootstrap_code(extension_modules: list[str] | tuple[str, ...]) -> str:
-    modules_json = json.dumps(list(extension_modules))
-    return "\n".join(
-        [
-            "import importlib",
-            f"_jusi_extension_modules = {modules_json}",
-            "from IPython import get_ipython",
-            "_jusi_ip = get_ipython()",
-            "if _jusi_ip is None:",
-            "    raise RuntimeError('Jusi magics require an IPython kernel')",
-            "for _jusi_module_name in _jusi_extension_modules:",
-            "    _jusi_module = importlib.import_module(_jusi_module_name)",
-            "    _jusi_loader = getattr(_jusi_module, 'load_ipython_extension', None)",
-            "    if not callable(_jusi_loader):",
-            "        raise RuntimeError(f'Jusi kernel extension lacks load_ipython_extension: {_jusi_module_name}')",
-            "    _jusi_loader(_jusi_ip)",
-        ]
-    )
 
 
 def _effective_target_kernel_name(target: SessionTarget, kernel_name: str) -> str:
@@ -636,8 +640,25 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         return True
 
     def start_target(self, target: SessionTarget, kernel_name: str) -> tuple[str, str]:
-        session_id, connection = self.start_managed(_effective_target_kernel_name(target, kernel_name))
-        return session_id, connection
+        effective_kernel_name = _effective_target_kernel_name(target, kernel_name)
+        extension_modules = collect_kernel_extension_modules(build_display_handler_registry())
+        kernel_env = _jusi_kernel_env(extension_modules, target.config)
+        km, kc = _start_new_kernel(
+            kernel_name=effective_kernel_name,
+            env=kernel_env,
+            extra_arguments=["--ext", "jusi.kernel"],
+        )
+        session_id = f"sess-{uuid4().hex}"
+        self._sessions[session_id] = SimpleNamespace(
+            manager=km,
+            client=kc,
+            interrupted_client_ids=set(),
+            pending_inputs={},
+            handoffs={},
+            execute_lock=threading.RLock(),
+            jusi_magics_registered=True,
+        )
+        return session_id, str(getattr(km, "connection_file", ""))
 
     def attach_target(self, target: SessionTarget) -> tuple[str, str]:
         if target.kind != "connection_file":
@@ -721,7 +742,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                 )
                 return "busy"
             if cell.kind == "magic":
-                self._ensure_jusi_magics(runtime_session)
+                self._ensure_jusi_magics(runtime_session, session.target.config)
                 msg_id = runtime_session.client.execute(code, store_history=False)
                 emit_timing(
                     "runtime.managed.execute_cell.sent",
@@ -744,18 +765,14 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             )
             return self._drive_execution(runtime_session, session, client, msg_id)
 
-    def _ensure_jusi_magics(self, runtime_session: Any) -> None:
+    def _ensure_jusi_magics(self, runtime_session: Any, session_config: dict[str, object] | None = None) -> None:
         if bool(getattr(runtime_session, "jusi_magics_registered", False)):
             return
-        extension_modules = collect_kernel_extension_modules(build_display_handler_registry())
-        if not extension_modules:
-            runtime_session.jusi_magics_registered = True
-            return
-        msg_id = runtime_session.client.execute(_jusi_magic_bootstrap_code(extension_modules), store_history=False)
-        error = self._drive_export_execution(runtime_session.client, msg_id)
-        if error:
-            raise RuntimeError(f"Failed to register Jusi kernel magics: {error}")
-        runtime_session.jusi_magics_registered = True
+        if bool(getattr(runtime_session, "external", False)):
+            raise RuntimeError(
+                "Plugin magics on attached kernels require the 'jusi.kernel' IPython extension to be preloaded"
+            )
+        raise RuntimeError("Jusi kernel magics were not preloaded for this managed session")
 
     def consume_handler_handoff(self, session: Session, client_id: str) -> HandlerHandoff | None:
         runtime_session = self._require_session(session.session_id)
@@ -1036,7 +1053,7 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             msg_type = message.get("msg_type", "")
             if msg_type == "error":
                 content = message.get("content", {})
-                return f"%%vd export failed: {content.get('ename', '')}: {content.get('evalue', '')}"
+                return f"Jusi kernel bootstrap failed: {content.get('ename', '')}: {content.get('evalue', '')}"
             if msg_type == "status" and message.get("content", {}).get("execution_state") == "idle":
                 return ""
 

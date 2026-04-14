@@ -13,7 +13,16 @@ from typing import Optional
 from unittest.mock import patch
 
 from jusi.domain.models import CellExecution, ExecutableCell, Session, SessionTarget, JUSI_HANDLER_HANDOFF_MIME
-from jusi.infrastructure.runtime import InMemoryKernelRuntime, ManagedClientHandle, ManagedKernelRuntime, RuntimeDependencyError, build_runtime
+from jusi.infrastructure.runtime import (
+    JUSI_KERNEL_EXTENSIONS_ENV,
+    JUSI_SESSION_CONFIG_ENV,
+    InMemoryKernelRuntime,
+    ManagedClientHandle,
+    ManagedKernelRuntime,
+    RuntimeDependencyError,
+    _jusi_kernel_env,
+    build_runtime,
+)
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
 
@@ -377,6 +386,18 @@ class FakeManager:
 
 
 class ManagedRuntimeTest(unittest.TestCase):
+    def test_jusi_kernel_env_injects_session_config_and_extension_modules(self) -> None:
+        env = _jusi_kernel_env(
+            ("jusi_sql.kernel",),
+            {"sql": {"my_sqlite_db": {"provider": "sqlite", "path": "/tmp/demo.sqlite"}}},
+        )
+
+        self.assertEqual(
+            '{"sql": {"my_sqlite_db": {"provider": "sqlite", "path": "/tmp/demo.sqlite"}}}',
+            env[JUSI_SESSION_CONFIG_ENV],
+        )
+        self.assertEqual('["jusi_sql.kernel"]', env[JUSI_KERNEL_EXTENSIONS_ENV])
+
     def test_protocol_server_managed_handoff_starts_handler_worker(self) -> None:
         manager = FakeManager()
         client = FakeClient()
@@ -495,13 +516,14 @@ class ManagedRuntimeTest(unittest.TestCase):
         runtime = ManagedKernelRuntime()
         self.addCleanup(runtime.close)
         fake_client = MagicHandoffClient()
+        fake_client._execute_ids = ["msg-magic"]
         runtime._sessions["sess-1"] = SimpleNamespace(
             manager=None,
             client=fake_client,
             interrupted_client_ids=set(),
             pending_inputs={},
             handoffs={},
-            jusi_magics_registered=False,
+            jusi_magics_registered=True,
         )
         session = Session(notebook_id="nb-1", session_id="sess-1")
         client_id = runtime.prepare_client("nb-1", "sess-1")
@@ -515,10 +537,8 @@ class ManagedRuntimeTest(unittest.TestCase):
         )
 
         self.assertEqual("follow-up", status)
-        self.assertEqual(2, len(fake_client.executed))
-        self.assertIn("importlib.import_module", fake_client.executed[0][0])
-        self.assertIn("jusi_vd.kernel", fake_client.executed[0][0])
-        self.assertEqual(("%%vd\npods", False), fake_client.executed[1])
+        self.assertEqual(1, len(fake_client.executed))
+        self.assertEqual(("%%vd\npods", False), fake_client.executed[0])
         view = runtime.read_client_view(session, client_id)
         self.assertIn("handler.handoff> magic=vd handler=vd", view["lines"])
 
@@ -606,7 +626,12 @@ class ManagedRuntimeTest(unittest.TestCase):
                 SessionTarget(source="start", alias="jusi", kind="venv", value="venv:///tmp/venv"),
                 "jusi",
             )
-        start_kernel.assert_called_once_with(kernel_name="python3")
+        start_kernel.assert_called_once()
+        kwargs = start_kernel.call_args.kwargs
+        self.assertEqual("python3", kwargs["kernel_name"])
+        self.assertEqual(["--ext", "jusi.kernel"], kwargs["extra_arguments"])
+        self.assertIn(JUSI_SESSION_CONFIG_ENV, kwargs["env"])
+        self.assertIn(JUSI_KERNEL_EXTENSIONS_ENV, kwargs["env"])
 
     def test_managed_runtime_start_execute_interrupt_and_stop(self) -> None:
         manager = FakeManager()

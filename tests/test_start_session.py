@@ -11,6 +11,15 @@ from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
 
 
+class ExplodingExecuteRuntime(InMemoryKernelRuntime):
+    def supports_background_execute(self) -> bool:
+        return True
+
+    def execute_cell(self, session, cell, client):  # type: ignore[no-untyped-def]
+        _ = (session, cell, client)
+        raise RuntimeError("boom")
+
+
 class StartSessionTest(unittest.TestCase):
     def start_and_bind(self, server: ProtocolServer, notebook_id: str = "nb-1", kernel_name: str = "python3") -> tuple[str, str]:
         self.addCleanup(server.close)
@@ -290,6 +299,45 @@ class StartSessionTest(unittest.TestCase):
             },
             runtime.read_client_view(session, active_client.client_id),
         )
+
+    def test_background_execute_failure_marks_cell_error_and_records_client_error_event(self) -> None:
+        runtime = ExplodingExecuteRuntime()
+        server = ProtocolServer(runtime=runtime)
+        self.addCleanup(server.close)
+        start_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "start_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+        )
+        session_id = [parse_envelope(message) for message in start_messages][2].payload["session"]["id"]
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "sql", "main_lines": ["%%sql test_sqlite", "select 1"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        self.assertTrue(execute_envelopes[0].ok)
+
+        time.sleep(0.05)
+
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        cell_updates = [env for env in pending if env.type == "cell_updated"]
+        self.assertTrue(cell_updates)
+        self.assertEqual("error", cell_updates[-1].payload["cell"]["status"])
+
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        client_view = runtime.read_client_view(session, "client-1")
+        self.assertEqual("error", client_view["execution_status"])
+        runtime_client = runtime.get_client(session_id, "client-1")
+        self.assertIsNotNone(runtime_client)
+        self.assertEqual("error", runtime_client.handle.transcript[-1]["type"])
+        self.assertIn("RuntimeError: boom", runtime_client.handle.transcript[-1]["message"])
 
     def test_follow_up_cell_does_not_block_later_execution(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())

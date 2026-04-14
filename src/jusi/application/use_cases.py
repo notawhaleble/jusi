@@ -252,7 +252,29 @@ class ExecuteCell:
             cell_id=current_client.cell_id,
             client_id=current_client.client_id,
         )
-        current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
+        try:
+            current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            emit_timing(
+                "use_case.execute.runtime_error",
+                notebook_id=command.notebook_id,
+                session_id=session.session_id,
+                cell_id=current_client.cell_id,
+                client_id=current_client.client_id,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            current_client.status = "error"
+            self._runtime.update_client_execution_status(session, current_client.client_id, current_client.status)
+            self._runtime.append_client_execution_event(
+                session,
+                current_client.client_id,
+                {"type": "error", "message": message},
+            )
+            self._store.save_execution(command.notebook_id, current_client)
+            self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
+            raise
         emit_timing(
             "use_case.execute.runtime_done",
             notebook_id=command.notebook_id,

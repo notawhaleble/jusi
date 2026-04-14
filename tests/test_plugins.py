@@ -421,7 +421,7 @@ class PluginRegistryTest(unittest.TestCase):
     def test_collect_kernel_extension_modules_reads_registry_specs(self) -> None:
         registry = build_display_handler_registry()
         modules = collect_kernel_extension_modules(registry)
-        self.assertEqual(("jusi_vd.kernel",), modules)
+        self.assertEqual(("jusi_vd.kernel", "jusi_sql.kernel"), modules)
 
     def test_builtin_vd_handler_executes_from_magic_cell_handoff(self) -> None:
         with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")):
