@@ -20,7 +20,10 @@ from jusi.plugins import (
     load_display_handler_specs,
 )
 from jusi.infrastructure.client_process import run_terminal_attach
-from jusi.infrastructure.plugin_runtime import _monitor_supervisor_liveness, run_plugin_runtime
+from jusi.infrastructure.plugin_runtime import (
+    _monitor_supervisor_liveness,
+    run_plugin_runtime,
+)
 from jusi.infrastructure.runtime import InMemoryKernelRuntime
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
@@ -114,7 +117,7 @@ class FakeVDHandler(BaseVdHandler):
 
     def followup(self, context, payload):  # type: ignore[no-untyped-def]
         context.push_frontend_message(
-            "vd_followup_result",
+            "followup_result",
             {
                 "handler_id": self.handler_id(),
                 "payload": {"cell_text": str(payload.get("cell_text", "")).upper()},
@@ -129,6 +132,26 @@ class AsyncBaseHandler(BaseHandler):
     async def handle(self, context, cell):  # type: ignore[no-untyped-def]
         _ = (context, cell)
         return "follow-up"
+
+
+class FakeGenericHandler(BaseHandler):
+    def handler_id(self) -> str:
+        return "generic"
+
+    def handle(self, context, cell):  # type: ignore[no-untyped-def]
+        _ = (context, cell)
+        return "follow-up"
+
+    def complete(self, context, payload):  # type: ignore[no-untyped-def]
+        _ = context
+        prefix = str(payload.get("current_word", ""))
+        return [{"value": prefix + "_done", "label": None, "kind": None}]
+
+    def followup(self, context, payload):  # type: ignore[no-untyped-def]
+        context.send_frontend_message(
+            "followup_result",
+            {"handler_id": self.handler_id(), "payload": {"cell_text": str(payload.get("cell_text", ""))}},
+        )
 
 
 class PluginRegistryTest(unittest.TestCase):
@@ -297,26 +320,64 @@ class PluginRegistryTest(unittest.TestCase):
         )()
 
         handler.handle_copy(context, {"text": "abc"})  # type: ignore[arg-type]
-        handler.on_frontend_message(context, "vd_complete", {"prefix": "pod"})  # type: ignore[arg-type]
-        handler.on_frontend_message(context, "vd_followup", {"cell_text": "show pods"})  # type: ignore[arg-type]
+        handler.on_frontend_message(context, "complete", {"prefix": "pod"})  # type: ignore[arg-type]
+        handler.on_frontend_message(context, "followup", {"cell_text": "show pods"})  # type: ignore[arg-type]
 
         self.assertEqual(("vd_copy_result", {"handler_id": "fake_vd", "text": "abc"}), pushed[0])
         self.assertEqual(
             (
-                "vd_complete_result",
+                "complete_result",
                 {
                     "handler_id": "fake_vd",
                     "items": [
-                        {"value": "pod_one", "label": "pod_one", "kind": "row"},
-                        {"value": "pod_two", "label": "pod_two", "kind": "row"},
+                        {"value": "pod_one", "label": "pod_one", "kind": "row", "detail": None, "documentation": None},
+                        {"value": "pod_two", "label": "pod_two", "kind": "row", "detail": None, "documentation": None},
                     ],
                 },
             ),
             pushed[1],
         )
         self.assertEqual(
-            ("vd_followup_result", {"handler_id": "fake_vd", "payload": {"cell_text": "SHOW PODS"}}),
+            ("followup_result", {"handler_id": "fake_vd", "payload": {"cell_text": "SHOW PODS"}}),
             pushed[2],
+        )
+
+    def test_base_handler_generic_complete_and_followup_hooks_emit_results(self) -> None:
+        handler = FakeGenericHandler()
+        pushed: list[tuple[str, dict]] = []
+        context = type(
+            "Ctx",
+            (),
+            {
+                "emit_frontend_event": lambda _self, event_type, payload: pushed.append((event_type, payload)),
+                "send_frontend_message": lambda _self, message_type, payload: pushed.append((message_type, payload)),
+            },
+        )()
+
+        handler.on_frontend_message(
+            context,
+            "complete",
+            {"cell_text": "select 1", "current_word": "sel", "line_text": "select 1", "cursor_row": 0, "cursor_col": 3},
+        )  # type: ignore[arg-type]
+        handler.on_frontend_message(
+            context,
+            "followup",
+            {"cell_text": "select 2", "cursor_row": 0, "cursor_col": 8},
+        )  # type: ignore[arg-type]
+
+        self.assertEqual(
+            (
+                "complete_result",
+                {
+                    "handler_id": "generic",
+                    "items": [{"value": "sel_done", "label": None, "kind": None, "detail": None, "documentation": None}],
+                },
+            ),
+            pushed[0],
+        )
+        self.assertEqual(
+            ("followup_result", {"handler_id": "generic", "payload": {"cell_text": "select 2"}}),
+            pushed[1],
         )
 
     def test_registry_matches_magic_cell_to_handler(self) -> None:

@@ -365,6 +365,7 @@ class ExecuteCell:
             invoke_backend_action=lambda action_name, payload: self._invoke_handler_backend_action(
                 action_name,
                 session,
+                current_client.client_id,
                 payload,
             ),
             on_exit=lambda exit_status: self._handle_worker_exit(
@@ -409,8 +410,46 @@ class ExecuteCell:
             keep_running=cell.keep_running,
         )
 
-    def _invoke_handler_backend_action(self, action_name: str, session: Session, payload: dict[str, object]) -> dict[str, object]:
-        _ = (session, payload)
+    def _invoke_handler_backend_action(
+        self,
+        action_name: str,
+        session: Session,
+        client_id: str,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        if action_name == "plugin_runtime_request":
+            message_type = str(payload.get("message_type", "")).strip()
+            emit_timing(
+                "use_case.plugin_runtime_request.start",
+                session_id=session.session_id,
+                client_id=client_id,
+                message_type=message_type,
+            )
+            request = getattr(self._runtime, "request_plugin_runtime", None)
+            if not callable(request):
+                raise ValueError("Runtime does not support plugin runtime requests")
+            try:
+                response = request(session, client_id, payload)
+            except Exception as exc:
+                emit_timing(
+                    "use_case.plugin_runtime_request.error",
+                    session_id=session.session_id,
+                    client_id=client_id,
+                    message_type=message_type,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                raise
+            emit_timing(
+                "use_case.plugin_runtime_request.done",
+                session_id=session.session_id,
+                client_id=client_id,
+                message_type=message_type,
+                response_keys=sorted(list(response.keys())) if isinstance(response, dict) else [],
+            )
+            if isinstance(response, dict):
+                return dict(response)
+            return {}
         raise ValueError(f"Unsupported handler backend action: {action_name}")
 
     def _set_handler_client_transport(
@@ -668,6 +707,14 @@ class HandlerMessage:
         self._active_handlers = active_handlers
 
     def execute(self, command: HandlerMessageCommand) -> Session:
+        emit_timing(
+            "use_case.handler_message.start",
+            notebook_id=command.notebook_id,
+            session_id=command.session_id,
+            client_id=command.client_id,
+            handler_id=command.handler_id,
+            message_type=command.message_type,
+        )
         session = _require_matching_session(self._store, command.notebook_id, command.session_id)
         active_handler = self._active_handlers.get(command.session_id, command.client_id)
         if active_handler is None:
@@ -675,4 +722,12 @@ class HandlerMessage:
         if active_handler.handler_id != command.handler_id:
             raise ValueError("Handler message does not match the active handler")
         active_handler.handler.on_frontend_message(active_handler.context, command.message_type, command.payload)
+        emit_timing(
+            "use_case.handler_message.done",
+            notebook_id=command.notebook_id,
+            session_id=command.session_id,
+            client_id=command.client_id,
+            handler_id=command.handler_id,
+            message_type=command.message_type,
+        )
         return session

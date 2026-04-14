@@ -239,6 +239,19 @@ class BaseHandler:
         raise NotImplementedError
 
     def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
+        if message_type == "complete":
+            completions = [_normalize_completion_item(item) for item in self.complete(context, payload)]
+            context.send_frontend_message(
+                "complete_result",
+                {
+                    "handler_id": self.handler_id(),
+                    "items": completions,
+                },
+            )
+            return
+        if message_type == "followup":
+            self.followup(context, payload)
+            return
         context.emit_frontend_event(
             "frontend_message",
             {
@@ -357,19 +370,6 @@ class BaseVdHandler(BaseTerminalHandler):
     def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
         if message_type == "vd_copy":
             self.handle_copy(context, payload)
-            return
-        if message_type == "vd_complete":
-            completions = [_normalize_completion_item(item) for item in self.complete(context, payload)]
-            context.send_frontend_message(
-                "vd_complete_result",
-                {
-                    "handler_id": self.handler_id(),
-                    "items": completions,
-                },
-            )
-            return
-        if message_type == "vd_followup":
-            self.followup(context, payload)
             return
         super().on_frontend_message(context, message_type, payload)
 
@@ -493,11 +493,13 @@ def collect_kernel_extension_modules(registry: DisplayHandlerRegistry) -> tuple[
 
 def _normalize_completion_item(item: str | Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(item, str):
-        return {"value": item, "label": None, "kind": None}
+        return {"value": item, "label": None, "kind": None, "detail": None, "documentation": None}
     return {
         "value": str(item.get("value", "")),
         "label": None if item.get("label") is None else str(item.get("label")),
         "kind": None if item.get("kind") is None else str(item.get("kind")),
+        "detail": None if item.get("detail") is None else str(item.get("detail")),
+        "documentation": None if item.get("documentation") is None else str(item.get("documentation")),
     }
 
 

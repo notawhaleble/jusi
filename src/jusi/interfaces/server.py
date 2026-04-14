@@ -672,6 +672,14 @@ class ProtocolServer:
 
     def _handle_handler_message(self, request: Envelope) -> List[str]:
         handler_request = parse_handler_message(request.payload)
+        emit_timing(
+            "server.handler_message.request",
+            notebook_id=handler_request.notebook_id,
+            session_id=handler_request.session_id,
+            client_id=handler_request.client_id,
+            handler_id=handler_request.handler_id,
+            message_type=handler_request.message_type,
+        )
         use_case = HandlerMessage(store=self._store, active_handlers=self._active_handlers)
         try:
             use_case.execute(
@@ -685,7 +693,35 @@ class ProtocolServer:
                 )
             )
         except SessionError as exc:
+            emit_timing(
+                "server.handler_message.error",
+                notebook_id=handler_request.notebook_id,
+                session_id=handler_request.session_id,
+                client_id=handler_request.client_id,
+                handler_id=handler_request.handler_id,
+                message_type=handler_request.message_type,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
             return dump_envelopes([error_response(request, exc.code, str(exc))])
         except ValueError as exc:
+            emit_timing(
+                "server.handler_message.error",
+                notebook_id=handler_request.notebook_id,
+                session_id=handler_request.session_id,
+                client_id=handler_request.client_id,
+                handler_id=handler_request.handler_id,
+                message_type=handler_request.message_type,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        emit_timing(
+            "server.handler_message.done",
+            notebook_id=handler_request.notebook_id,
+            session_id=handler_request.session_id,
+            client_id=handler_request.client_id,
+            handler_id=handler_request.handler_id,
+            message_type=handler_request.message_type,
+        )
         return dump_envelopes([response_envelope(request, ok=True)])

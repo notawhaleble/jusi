@@ -313,6 +313,9 @@ class ClientRegistryRuntime:
         pid_path = getattr(runtime_client.handle, "plugin_runtime_pid_path", "")
         if pid_path:
             transport_env["JUSI_PLUGIN_RUNTIME_PID_FILE"] = pid_path
+        socket_path = getattr(runtime_client.handle, "plugin_runtime_socket_path", "")
+        if socket_path:
+            transport_env["JUSI_PLUGIN_RUNTIME_CONTROL_SOCKET"] = socket_path
         transport = ClientTransport(
             kind=transport.kind,
             attach_cmd=list(transport.attach_cmd),
@@ -345,6 +348,16 @@ class ClientRegistryRuntime:
         runtime_client.shutdown_reason = reason
         runtime_client.client_bufnr = -1
         session_clients.clients.pop(client_id, None)
+
+    def request_plugin_runtime(self, session: Session, client_id: str, payload: dict[str, object]) -> dict[str, object]:
+        runtime_client = self._require_client(session.session_id, client_id)
+        request = getattr(runtime_client.handle, "request_plugin_runtime", None)
+        if not callable(request):
+            raise RuntimeError("runtime client does not support plugin runtime control")
+        response = request(dict(payload))
+        if isinstance(response, dict):
+            return dict(response)
+        return {}
 
     def release_session_clients(self, session_id: str, reason: str) -> None:
         session_clients = self._session_clients.pop(session_id, None)

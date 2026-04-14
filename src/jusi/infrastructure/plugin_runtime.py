@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import signal
+import socket
 import sys
 import threading
 from typing import Callable
 
+from jusi.infrastructure.debug_timing import emit_timing
+
 
 PLUGIN_RUNTIME_SUPERVISOR_POLL_INTERVAL_SECONDS = 0.25
+_PLUGIN_CONTROL_HANDLER: Callable[[dict], dict] | None = None
 
 
 def _parse_supervisor_pid(raw: str) -> int:
@@ -61,6 +66,74 @@ def _remove_runtime_pid_file(path: str) -> None:
         return
 
 
+def set_plugin_control_handler(handler: Callable[[dict], dict]) -> None:
+    global _PLUGIN_CONTROL_HANDLER
+    _PLUGIN_CONTROL_HANDLER = handler
+
+
+def _plugin_control_socket_path() -> str:
+    return str(os.environ.get("JUSI_PLUGIN_RUNTIME_CONTROL_SOCKET", "")).strip()
+
+
+def _run_plugin_control_server(socket_path: str, stop_event: threading.Event) -> None:
+    if not socket_path:
+        return
+    try:
+        os.unlink(socket_path)
+    except FileNotFoundError:
+        pass
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        server.bind(socket_path)
+        server.listen(5)
+        server.settimeout(0.25)
+        while not stop_event.is_set():
+            try:
+                conn, _addr = server.accept()
+            except socket.timeout:
+                continue
+            with conn:
+                raw = b""
+                while not raw.endswith(b"\n"):
+                    chunk = conn.recv(4096)
+                    if not chunk:
+                        break
+                    raw += chunk
+                response: dict[str, object]
+                try:
+                    request = json.loads(raw.decode("utf-8").strip() or "{}")
+                    if not isinstance(request, dict):
+                        raise RuntimeError("invalid plugin runtime control request")
+                    emit_timing(
+                        "plugin_runtime.control.request",
+                        message_type=str(request.get("message_type", "")).strip(),
+                        socket_path=socket_path,
+                    )
+                    handler = _PLUGIN_CONTROL_HANDLER
+                    if handler is None:
+                        raise RuntimeError("plugin runtime control handler is not ready")
+                    payload = handler(dict(request))
+                    emit_timing(
+                        "plugin_runtime.control.done",
+                        message_type=str(request.get("message_type", "")).strip(),
+                        response_keys=sorted(list(payload.keys())) if isinstance(payload, dict) else [],
+                        socket_path=socket_path,
+                    )
+                    response = {"ok": True, "payload": dict(payload)}
+                except Exception as exc:
+                    emit_timing(
+                        "plugin_runtime.control.error",
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                        socket_path=socket_path,
+                    )
+                    response = {"ok": False, "error": str(exc), "payload": {}}
+                conn.sendall(json.dumps(response).encode("utf-8") + b"\n")
+    try:
+        os.unlink(socket_path)
+    except FileNotFoundError:
+        pass
+
+
 def run_plugin_runtime() -> int:
     raw = os.environ.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "").strip()
     if not raw or ":" not in raw:
@@ -83,6 +156,7 @@ def run_plugin_runtime() -> int:
     supervisor_pid = _parse_supervisor_pid(os.environ.get("JUSI_SUPERVISOR_PID", ""))
     stop_event = threading.Event()
     monitor: threading.Thread | None = None
+    control_server: threading.Thread | None = None
     if supervisor_pid > 0:
         monitor = threading.Thread(
             target=_monitor_supervisor_liveness,
@@ -90,11 +164,21 @@ def run_plugin_runtime() -> int:
             daemon=True,
         )
         monitor.start()
+    socket_path = _plugin_control_socket_path()
+    if socket_path:
+        control_server = threading.Thread(
+            target=_run_plugin_control_server,
+            args=(socket_path, stop_event),
+            daemon=True,
+        )
+        control_server.start()
     pid_file = _write_runtime_pid_file()
     try:
         return int(target())
     finally:
         stop_event.set()
+        if control_server is not None and control_server.is_alive():
+            control_server.join(timeout=0.5)
         if monitor is not None and monitor.is_alive():
             monitor.join(timeout=0.5)
         _remove_runtime_pid_file(pid_file)

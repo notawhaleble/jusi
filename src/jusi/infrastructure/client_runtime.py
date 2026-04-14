@@ -4,6 +4,7 @@ import json
 import os
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -74,6 +75,7 @@ class ProcessClientHandle:
     commands_path: str = field(init=False)
     status_path: str = field(init=False)
     plugin_runtime_pid_path: str = field(init=False)
+    plugin_runtime_socket_path: str = field(init=False)
     runtime_kind: str = "process"
 
     def __post_init__(self) -> None:
@@ -81,6 +83,7 @@ class ProcessClientHandle:
         self.commands_path = os.path.join(self.control_dir, "commands.jsonl")
         self.status_path = os.path.join(self.control_dir, "status.json")
         self.plugin_runtime_pid_path = os.path.join(self.control_dir, "plugin-runtime.pid")
+        self.plugin_runtime_socket_path = os.path.join(self.control_dir, "plugin-runtime.sock")
         self.process = _spawn_client_process(
             client_id=self.client_id,
             notebook_id=self.notebook_id,
@@ -284,3 +287,49 @@ class ProcessClientHandle:
             os.kill(plugin_pid, signal.SIGKILL)
         except ProcessLookupError:
             return
+        finally:
+            try:
+                os.unlink(self.plugin_runtime_socket_path)
+            except FileNotFoundError:
+                pass
+
+    def request_plugin_runtime(self, payload: dict, timeout: float = 2.0) -> dict:
+        message_type = str(payload.get("message_type", "")).strip()
+        emit_timing(
+            "client_runtime.plugin_runtime_request.start",
+            client_id=self.client_id,
+            message_type=message_type,
+            socket_path=self.plugin_runtime_socket_path,
+        )
+        if not os.path.exists(self.plugin_runtime_socket_path):
+            raise RuntimeError("plugin runtime control socket is not available")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(timeout)
+            client.connect(self.plugin_runtime_socket_path)
+            client.sendall(json.dumps(dict(payload)).encode("utf-8") + b"\n")
+            chunks: list[bytes] = []
+            while True:
+                chunk = client.recv(4096)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                if b"\n" in chunk:
+                    break
+        raw = b"".join(chunks).decode("utf-8").strip()
+        if not raw:
+            raise RuntimeError("plugin runtime control response was empty")
+        response = json.loads(raw)
+        if not isinstance(response, dict):
+            raise RuntimeError("plugin runtime control returned invalid response")
+        if not bool(response.get("ok", False)):
+            raise RuntimeError(str(response.get("error", "plugin runtime control failed")))
+        payload = response.get("payload", {})
+        emit_timing(
+            "client_runtime.plugin_runtime_request.done",
+            client_id=self.client_id,
+            message_type=message_type,
+            response_keys=sorted(list(payload.keys())) if isinstance(payload, dict) else [],
+        )
+        if isinstance(payload, dict):
+            return dict(payload)
+        return {}

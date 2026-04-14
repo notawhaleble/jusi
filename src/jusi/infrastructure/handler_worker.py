@@ -13,6 +13,7 @@ from queue import Queue
 from typing import Any, Callable
 
 from jusi.domain.models import ClientTransport, ExecutableCell
+from jusi.infrastructure.debug_timing import emit_timing
 from jusi.plugins import DisplayHandlerRegistry, HandlerContext, build_display_handler_registry
 
 
@@ -126,6 +127,13 @@ class HandlerWorkerProcess:
         raise RuntimeError(f"Handler worker did not report execute_result for {self._startup.handler_id}")
 
     def on_frontend_message(self, _context: object, message_type: str, payload: dict[str, Any]) -> None:
+        emit_timing(
+            "handler_worker.frontend_message.send",
+            client_id=self._startup.client_id,
+            handler_id=self._startup.handler_id,
+            message_type=message_type,
+            payload_keys=sorted(list(payload.keys())),
+        )
         self._send(
             {
                 "kind": "frontend_message",
@@ -421,6 +429,13 @@ def run_handler_worker() -> int:
         message = json.loads(raw_line)
         kind = str(message.get("kind", "")).strip()
         if kind == "frontend_message":
+            emit_timing(
+                "handler_worker.frontend_message.recv",
+                client_id=startup.client_id,
+                handler_id=startup.handler_id,
+                message_type=str(message.get("message_type", "")).strip(),
+                payload_keys=sorted(list(dict(message.get("payload", {})).keys())),
+            )
             handler.on_frontend_message(
                 context,
                 str(message.get("message_type", "")).strip(),
