@@ -62,9 +62,10 @@ def _cell_payload(execution: CellExecution) -> dict:
         "id": execution.cell_id,
         "status": execution.status,
         "owner": {"kind": execution.owner_kind},
-        "client_id": execution.client_id,
         "client_state": execution.client_state,
     }
+    if execution.client_id:
+        payload["client_id"] = execution.client_id
     if execution.client_bufnr >= 0:
         payload["client_bufnr"] = execution.client_bufnr
     if execution.transport.kind:
@@ -674,6 +675,7 @@ class ShutdownClient:
         if execution is None or execution.client_id != command.client_id:
             raise ValueError("No tracked client ownership for shutdown request")
 
+        self._normalize_closed_handler_followup(execution)
         execution.client_state = "shutting_down"
         self._store.save_execution(command.notebook_id, execution)
         self._events.cell_updated(command.notebook_id, _cell_payload(execution))
@@ -682,6 +684,14 @@ class ShutdownClient:
         execution.client_bufnr = -1
         self._store.save_execution(command.notebook_id, execution)
         self._events.cell_updated(command.notebook_id, _cell_payload(execution))
+
+    def _normalize_closed_handler_followup(self, execution: CellExecution) -> None:
+        if execution.status != "follow-up":
+            return
+        execution.status = "done"
+        execution.owner_kind = "unknown"
+        execution.client_id = ""
+        execution.transport = ClientTransport()
 
 
 class HealthcheckReply:

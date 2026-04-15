@@ -421,9 +421,15 @@ class StartSessionTest(unittest.TestCase):
         shutdown_envelopes = [parse_envelope(message) for message in shutdown_messages]
         self.assertTrue(shutdown_envelopes[0].ok)
         self.assertEqual("shutting_down", shutdown_envelopes[1].payload["cell"]["client_state"])
-        self.assertEqual("follow-up", shutdown_envelopes[1].payload["cell"]["status"])
+        self.assertEqual("done", shutdown_envelopes[1].payload["cell"]["status"])
+        self.assertEqual("unknown", shutdown_envelopes[1].payload["cell"]["owner"]["kind"])
+        self.assertNotIn("client_id", shutdown_envelopes[1].payload["cell"])
+        self.assertNotIn("transport", shutdown_envelopes[1].payload["cell"])
         self.assertEqual("shutdown", shutdown_envelopes[2].payload["cell"]["client_state"])
-        self.assertEqual("follow-up", shutdown_envelopes[2].payload["cell"]["status"])
+        self.assertEqual("done", shutdown_envelopes[2].payload["cell"]["status"])
+        self.assertEqual("unknown", shutdown_envelopes[2].payload["cell"]["owner"]["kind"])
+        self.assertNotIn("client_id", shutdown_envelopes[2].payload["cell"])
+        self.assertNotIn("transport", shutdown_envelopes[2].payload["cell"])
         self.assertNotIn("client_bufnr", shutdown_envelopes[2].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, active_client_id))
 
