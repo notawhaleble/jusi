@@ -270,7 +270,7 @@ class PluginRegistryTest(unittest.TestCase):
             _monitor_supervisor_liveness(123, stop_event)  # type: ignore[arg-type]
         request_shutdown.assert_called_once_with()
 
-    def test_run_plugin_runtime_writes_and_removes_pid_file(self) -> None:
+    def test_run_plugin_runtime_writes_pid_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             pid_path = os.path.join(tmpdir, "plugin-runtime.pid")
             observed: dict[str, int] = {}
@@ -292,7 +292,7 @@ class PluginRegistryTest(unittest.TestCase):
                 self.assertEqual(7, run_plugin_runtime())
 
             self.assertEqual(os.getpid(), observed["pid"])
-            self.assertFalse(os.path.exists(pid_path))
+            self.assertTrue(os.path.exists(pid_path))
 
     def test_build_vd_command_finds_binary_next_to_sys_executable(self) -> None:
         with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")), patch(
@@ -323,12 +323,13 @@ class PluginRegistryTest(unittest.TestCase):
         handler.on_frontend_message(context, "complete", {"prefix": "pod"})  # type: ignore[arg-type]
         handler.on_frontend_message(context, "followup", {"cell_text": "show pods"})  # type: ignore[arg-type]
 
-        self.assertEqual(("vd_copy_result", {"handler_id": "fake_vd", "text": "abc"}), pushed[0])
+        self.assertEqual(("vd_copy_result", {"handler_id": "fake_vd", "message_type": "vd_copy", "text": "abc"}), pushed[0])
         self.assertEqual(
             (
                 "complete_result",
                 {
                     "handler_id": "fake_vd",
+                    "message_type": "complete",
                     "items": [
                         {"value": "pod_one", "label": "pod_one", "kind": "row", "detail": None, "documentation": None},
                         {"value": "pod_two", "label": "pod_two", "kind": "row", "detail": None, "documentation": None},
@@ -370,6 +371,7 @@ class PluginRegistryTest(unittest.TestCase):
                 "complete_result",
                 {
                     "handler_id": "generic",
+                    "message_type": "complete",
                     "items": [{"value": "sel_done", "label": None, "kind": None, "detail": None, "documentation": None}],
                 },
             ),
@@ -482,7 +484,7 @@ class PluginRegistryTest(unittest.TestCase):
     def test_collect_kernel_extension_modules_reads_registry_specs(self) -> None:
         registry = build_display_handler_registry()
         modules = collect_kernel_extension_modules(registry)
-        self.assertEqual(("jusi_vd.kernel", "jusi_sql.kernel"), modules)
+        self.assertEqual(("jusi_vd.kernel", "jusi_shell.kernel", "jusi_sql.kernel"), modules)
 
     def test_builtin_vd_handler_executes_from_magic_cell_handoff(self) -> None:
         with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")):

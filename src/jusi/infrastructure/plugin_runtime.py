@@ -181,4 +181,3 @@ def run_plugin_runtime() -> int:
             control_server.join(timeout=0.5)
         if monitor is not None and monitor.is_alive():
             monitor.join(timeout=0.5)
-        _remove_runtime_pid_file(pid_file)

@@ -12,6 +12,7 @@ from jusi.application.ports import DisconnectSessionCommand, ReconnectSessionCom
 from jusi.application.ports import ShutdownClientCommand
 from jusi.application.use_cases import AttachSession, DisconnectSession, ExecuteCell, HandlerMessage, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
 from jusi.domain.models import ExecutableCell
+from jusi.domain.models import ClientTransport
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore, build_runtime
 from jusi.interfaces.protocol import (
@@ -605,6 +606,11 @@ class ProtocolServer:
             client_view = self._runtime.read_client_view(session, inspect_request.client_id)
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        self._normalize_dead_handler_client(
+            inspect_request.notebook_id,
+            inspect_request.session_id,
+            inspect_request.client_id,
+        )
         emit_timing(
             "server.inspect_client.response",
             notebook_id=inspect_request.notebook_id,
@@ -614,6 +620,46 @@ class ProtocolServer:
             line_count=len(list(client_view.get("lines", []))),
         )
         return dump_envelopes([response_envelope(request, ok=True, payload={"client": client_view})])
+
+    def _normalize_dead_handler_client(self, notebook_id: str, session_id: str, client_id: str) -> None:
+        runtime_client = self._runtime.get_client(session_id, client_id)
+        if runtime_client is None:
+            return
+        handle = getattr(runtime_client, "handle", None)
+        is_alive = getattr(handle, "plugin_runtime_is_alive", None)
+        if not callable(is_alive):
+            return
+        if is_alive() is not False:
+            return
+        session = self._store.get_by_notebook(notebook_id)
+        if session is None or session.session_id != session_id:
+            return
+        self._runtime.shutdown_client(session, client_id, "plugin_runtime_exit")
+        self._active_handlers.remove_client(session_id, client_id)
+        for execution in self._store.list_executions(notebook_id):
+            if execution.client_id != client_id:
+                continue
+            if execution.status == "follow-up":
+                execution.status = "done"
+                execution.owner_kind = "unknown"
+            execution.client_state = "shutdown"
+            execution.client_bufnr = -1
+            execution.client_id = ""
+            execution.transport = ClientTransport()
+            self._store.save_execution(notebook_id, execution)
+            self._pending_events.put(
+                Envelope(
+                    version=1,
+                    kind="event",
+                    type="cell_updated",
+                    payload={"notebook_id": notebook_id, "cell": {
+                        "id": execution.cell_id,
+                        "status": execution.status,
+                        "owner": {"kind": execution.owner_kind},
+                        "client_state": execution.client_state,
+                    }},
+                )
+            )
 
     def _handle_input_reply(self, request: Envelope) -> List[str]:
         input_request = parse_input_reply(request.payload)

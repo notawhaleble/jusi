@@ -224,9 +224,11 @@ Behavior:
   "notebook_id": "nb-1",
   "session_id": "sess-1",
   "client_id": "client-7",
-  "handler_id": "vd",
-  "message_type": "vd_followup",
-  "payload": {}
+  "handler_id": "sqlite",
+  "message_type": "followup",
+  "payload": {
+    "cell_text": "select 2"
+  }
 }
 ```
 
@@ -236,9 +238,24 @@ Behavior:
 - request form is frontend -> backend
 - event form is backend -> frontend
 - valid only while that client still has an active handler runtime registered
-- current `%%vd` plugin path uses this for:
-  - `handler_snapshot`
-  - plugin-specific messages such as copy/follow-up/completion
+Design direction:
+
+- frontend -> backend structured call
+- backend -> frontend structured callback
+
+Current live handler usage:
+
+- frontend -> backend call:
+  - `followup`
+  - `complete`
+- backend -> frontend callback:
+  - intended future example: `open`
+
+Boundary note:
+
+- if an operation can be completed entirely on the backend/plugin side, it should stay there
+- `copy` is not currently part of the generic frontend callback model
+- frontend should not be expected to implement plugin-specific operational logic for such paths
 
 Direction note:
 
@@ -248,6 +265,31 @@ Direction note:
   - completion
   - plugin commands
 - backend root process remains the router for this traffic; frontend does not talk to handler workers directly
+
+Current generic completion result shape on the handler channel:
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "client_id": "client-7",
+  "handler_id": "sqlite",
+  "message_type": "complete_result",
+  "payload": {
+    "handler_id": "sqlite",
+    "message_type": "complete",
+    "items": [
+      {
+        "value": "SELECT",
+        "label": "SELECT",
+        "kind": "keyword",
+        "detail": "keyword",
+        "documentation": null
+      }
+    ]
+  }
+}
+```
 
 Attach note for native-terminal clients:
 

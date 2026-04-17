@@ -245,6 +245,7 @@ class BaseHandler:
                 "complete_result",
                 {
                     "handler_id": self.handler_id(),
+                    "message_type": message_type,
                     "items": completions,
                 },
             )
@@ -379,6 +380,7 @@ class BaseVdHandler(BaseTerminalHandler):
             "vd_copy_result",
             {
                 "handler_id": self.handler_id(),
+                "message_type": "vd_copy",
                 "text": content,
             },
         )

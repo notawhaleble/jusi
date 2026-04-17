@@ -224,6 +224,26 @@ class ProcessClientHandle:
             view["transport"] = dict(transport)
         return view
 
+    def plugin_runtime_is_alive(self) -> bool | None:
+        try:
+            with open(self.plugin_runtime_pid_path, "r", encoding="utf-8") as handle:
+                raw = handle.read().strip()
+        except FileNotFoundError:
+            return None
+        try:
+            plugin_pid = int(raw)
+        except ValueError:
+            return False
+        if plugin_pid <= 0:
+            return False
+        try:
+            os.kill(plugin_pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
     def shutdown(self, reason: str) -> None:
         if self.shutdown_reason:
             return
@@ -290,6 +310,10 @@ class ProcessClientHandle:
         finally:
             try:
                 os.unlink(self.plugin_runtime_socket_path)
+            except FileNotFoundError:
+                pass
+            try:
+                os.unlink(self.plugin_runtime_pid_path)
             except FileNotFoundError:
                 pass
 

@@ -5,7 +5,7 @@ import time
 from jusi.application.ports import AttachSessionCommand, StartSessionCommand
 from jusi.application.use_cases import AttachSession, StartSession
 from jusi.domain.models import SessionTarget
-from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore
+from jusi.infrastructure.runtime import InMemoryClientHandle, InMemoryKernelRuntime, InMemorySessionStore
 from jusi.interfaces.events import CollectingEventSink
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
@@ -18,6 +18,20 @@ class ExplodingExecuteRuntime(InMemoryKernelRuntime):
     def execute_cell(self, session, cell, client):  # type: ignore[no-untyped-def]
         _ = (session, cell, client)
         raise RuntimeError("boom")
+
+
+class DeadPluginRuntimeHandle(InMemoryClientHandle):
+    def plugin_runtime_is_alive(self):
+        return False
+
+
+class DeadPluginRuntimeRuntime(InMemoryKernelRuntime):
+    def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str):  # type: ignore[no-untyped-def]
+        return DeadPluginRuntimeHandle(
+            client_id=client_id,
+            notebook_id=notebook_id,
+            session_id=session_id,
+        )
 
 
 class StartSessionTest(unittest.TestCase):
@@ -475,6 +489,45 @@ class StartSessionTest(unittest.TestCase):
             },
             inspect_envelopes[0].payload["client"],
         )
+
+    def test_inspect_client_demotes_dead_handler_followup_session(self) -> None:
+        runtime = DeadPluginRuntimeRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        followup_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
+            )
+        )
+        followup_envelopes = [parse_envelope(message) for message in followup_messages]
+        client_id = followup_envelopes[3].payload["cell"]["client_id"]
+
+        inspect_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "inspect_client", '
+                '"request_id": "req-inspect-dead", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "client_id": "'
+                + client_id
+                + '"}}'
+            )
+        )
+        inspect_envelopes = [parse_envelope(message) for message in inspect_messages]
+        self.assertTrue(inspect_envelopes[0].ok)
+
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        cell_updates = [env for env in pending if env.type == "cell_updated"]
+        self.assertTrue(cell_updates)
+        self.assertEqual("done", cell_updates[-1].payload["cell"]["status"])
+        self.assertEqual("unknown", cell_updates[-1].payload["cell"]["owner"]["kind"])
+        self.assertEqual("shutdown", cell_updates[-1].payload["cell"]["client_state"])
+        self.assertNotIn("client_id", cell_updates[-1].payload["cell"])
+        self.assertNotIn("transport", cell_updates[-1].payload["cell"])
+        self.assertIsNone(runtime.get_client(session_id, client_id))
 
     def test_inspect_client_renders_busy_execution_state(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())

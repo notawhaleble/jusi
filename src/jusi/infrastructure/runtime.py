@@ -164,6 +164,9 @@ class RuntimeClientHandle(Protocol):
     def shutdown(self, reason: str) -> None:
         ...
 
+    def plugin_runtime_is_alive(self) -> bool | None:
+        ...
+
 
 @dataclass
 class PendingInputRequest:
@@ -233,6 +236,9 @@ class InMemoryClientHandle:
         self.client_bufnr = -1
         self.view_revision += 1
         self.lifecycle.append(f"shutdown:{reason}")
+
+    def plugin_runtime_is_alive(self) -> bool | None:
+        return None
 
 
 @dataclass
