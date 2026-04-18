@@ -76,6 +76,7 @@ class ProcessClientHandle:
     status_path: str = field(init=False)
     plugin_runtime_pid_path: str = field(init=False)
     plugin_runtime_socket_path: str = field(init=False)
+    plugin_frontend_actions_path: str = field(init=False)
     runtime_kind: str = "process"
 
     def __post_init__(self) -> None:
@@ -84,6 +85,8 @@ class ProcessClientHandle:
         self.status_path = os.path.join(self.control_dir, "status.json")
         self.plugin_runtime_pid_path = os.path.join(self.control_dir, "plugin-runtime.pid")
         self.plugin_runtime_socket_path = os.path.join(self.control_dir, "plugin-runtime.sock")
+        self.plugin_frontend_actions_path = os.path.join(self.control_dir, "plugin-runtime-actions.jsonl")
+        self._frontend_actions_offset = 0
         self.process = _spawn_client_process(
             client_id=self.client_id,
             notebook_id=self.notebook_id,
@@ -243,6 +246,25 @@ class ProcessClientHandle:
         except PermissionError:
             return True
         return True
+
+    def drain_frontend_actions(self) -> list[dict]:
+        if not os.path.exists(self.plugin_frontend_actions_path):
+            return []
+        actions: list[dict] = []
+        with open(self.plugin_frontend_actions_path, "r", encoding="utf-8") as handle:
+            handle.seek(self._frontend_actions_offset)
+            for raw_line in handle:
+                raw_line = raw_line.strip()
+                if not raw_line:
+                    continue
+                try:
+                    payload = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(payload, dict):
+                    actions.append(dict(payload))
+            self._frontend_actions_offset = handle.tell()
+        return actions
 
     def shutdown(self, reason: str) -> None:
         if self.shutdown_reason:

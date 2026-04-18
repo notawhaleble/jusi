@@ -50,6 +50,23 @@ class HandlerContext:
     def request_frontend_action(self, action_type: str, payload: dict[str, Any]) -> None:
         self.channel.request_action(action_type, payload)
 
+    def open_path(
+        self,
+        path: str,
+        *,
+        open_in: str | None = None,
+        line: int | None = None,
+        column: int | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"path": path}
+        if open_in is not None:
+            payload["open_in"] = str(open_in)
+        if line is not None:
+            payload["line"] = int(line)
+        if column is not None:
+            payload["column"] = int(column)
+        self.request_frontend_action("open_path", payload)
+
     def send_frontend_message(self, message_type: str, payload: dict[str, Any]) -> None:
         self.push_frontend_message(message_type, payload)
 

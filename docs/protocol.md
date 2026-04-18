@@ -249,13 +249,43 @@ Current live handler usage:
   - `followup`
   - `complete`
 - backend -> frontend callback:
-  - intended future example: `open`
+  - current structured action callback:
+    - `action_request`
 
 Boundary note:
 
 - if an operation can be completed entirely on the backend/plugin side, it should stay there
 - `copy` is not currently part of the generic frontend callback model
 - frontend should not be expected to implement plugin-specific operational logic for such paths
+
+Current backend -> frontend built-in action shape:
+
+```json
+{
+  "notebook_id": "nb-1",
+  "session_id": "sess-1",
+  "client_id": "client-7",
+  "handler_id": "oc",
+  "message_type": "action_request",
+  "payload": {
+    "action_type": "open_path",
+    "payload": {
+      "path": "/tmp/example.txt",
+      "open_in": "split",
+      "line": 12,
+      "column": 3
+    }
+  }
+}
+```
+
+Current built-in frontend action:
+
+- `action_type = open_path`
+  - `path` is required
+  - `open_in` is optional
+  - `line` is optional and 1-based
+  - `column` is optional and 1-based
 
 Direction note:
 

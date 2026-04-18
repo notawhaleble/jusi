@@ -4,7 +4,7 @@ import time
 
 from jusi.application.ports import AttachSessionCommand, StartSessionCommand
 from jusi.application.use_cases import AttachSession, StartSession
-from jusi.domain.models import SessionTarget
+from jusi.domain.models import ClientTransport, SessionTarget
 from jusi.infrastructure.runtime import InMemoryClientHandle, InMemoryKernelRuntime, InMemorySessionStore
 from jusi.interfaces.events import CollectingEventSink
 from jusi.interfaces.protocol import parse_envelope
@@ -28,6 +28,26 @@ class DeadPluginRuntimeHandle(InMemoryClientHandle):
 class DeadPluginRuntimeRuntime(InMemoryKernelRuntime):
     def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str):  # type: ignore[no-untyped-def]
         return DeadPluginRuntimeHandle(
+            client_id=client_id,
+            notebook_id=notebook_id,
+            session_id=session_id,
+        )
+
+
+class FrontendActionHandle(InMemoryClientHandle):
+    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self.pending_actions: list[dict] = []
+
+    def drain_frontend_actions(self) -> list[dict]:
+        actions = list(self.pending_actions)
+        self.pending_actions.clear()
+        return actions
+
+
+class FrontendActionRuntime(InMemoryKernelRuntime):
+    def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str):  # type: ignore[no-untyped-def]
+        return FrontendActionHandle(
             client_id=client_id,
             notebook_id=notebook_id,
             session_id=session_id,
@@ -555,6 +575,60 @@ class StartSessionTest(unittest.TestCase):
         self.assertNotIn("client_id", cell_updates[-1].payload["cell"])
         self.assertNotIn("transport", cell_updates[-1].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, client_id))
+
+    def test_poll_client_updates_emits_frontend_action_request(self) -> None:
+        runtime = FrontendActionRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, client_id = self.start_and_bind(server)
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        runtime.set_client_transport(
+            session,
+            client_id,
+            ClientTransport(
+                kind="native_terminal",
+                attach_cmd=["/bin/sh"],
+                attach_env={},
+                session_id=session_id,
+                client_id=client_id,
+                handler_id="shell",
+            ),
+        )
+        runtime_client = runtime.get_client(session_id, client_id)
+        self.assertIsNotNone(runtime_client)
+        handle = runtime_client.handle
+        self.assertIsInstance(handle, FrontendActionHandle)
+        handle.pending_actions.append(
+            {
+                "action_type": "open_path",
+                "payload": {
+                    "path": "/tmp/example.txt",
+                    "open_in": "tab",
+                    "line": 12,
+                    "column": 3,
+                },
+            }
+        )
+
+        server.poll_client_updates()
+
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        action_messages = [env for env in pending if env.type == "handler_message"]
+        self.assertEqual(1, len(action_messages))
+        self.assertEqual("action_request", action_messages[0].payload["message_type"])
+        self.assertEqual("shell", action_messages[0].payload["handler_id"])
+        self.assertEqual(
+            {
+                "action_type": "open_path",
+                "payload": {
+                    "path": "/tmp/example.txt",
+                    "open_in": "tab",
+                    "line": 12,
+                    "column": 3,
+                },
+            },
+            action_messages[0].payload["payload"],
+        )
 
     def test_inspect_client_renders_busy_execution_state(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())

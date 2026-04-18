@@ -264,6 +264,7 @@ class ProtocolServer:
                     runtime_client.client_id,
                 ):
                     continue
+                self._drain_client_frontend_actions(session.notebook_id, session, runtime_client)
                 key = (session.session_id, runtime_client.client_id)
                 live_keys.add(key)
                 try:
@@ -293,6 +294,41 @@ class ProtocolServer:
         stale_keys = [key for key in self._client_revisions if key not in live_keys]
         for key in stale_keys:
             self._client_revisions.pop(key, None)
+
+    def _drain_client_frontend_actions(self, notebook_id: str, session, runtime_client) -> None:  # type: ignore[no-untyped-def]
+        drain = getattr(runtime_client.handle, "drain_frontend_actions", None)
+        if not callable(drain):
+            return
+        handler_id = str(getattr(runtime_client.transport, "handler_id", "") or "").strip()
+        if not handler_id:
+            return
+        for action in drain():
+            if not isinstance(action, dict):
+                continue
+            action_type = str(action.get("action_type", "")).strip()
+            payload = action.get("payload", {})
+            if not action_type or not isinstance(payload, dict):
+                continue
+            self._runtime.append_client_execution_event(
+                session,
+                runtime_client.client_id,
+                {
+                    "type": "frontend_action_request",
+                    "action_type": action_type,
+                    "payload": dict(payload),
+                },
+            )
+            self._queue_handler_message(
+                notebook_id,
+                session.session_id,
+                runtime_client.client_id,
+                handler_id,
+                "action_request",
+                {
+                    "action_type": action_type,
+                    "payload": dict(payload),
+                },
+            )
 
     def handle_message(self, raw: str) -> List[str]:
         request = parse_envelope(raw)

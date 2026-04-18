@@ -322,6 +322,9 @@ class ClientRegistryRuntime:
         socket_path = getattr(runtime_client.handle, "plugin_runtime_socket_path", "")
         if socket_path:
             transport_env["JUSI_PLUGIN_RUNTIME_CONTROL_SOCKET"] = socket_path
+        actions_path = getattr(runtime_client.handle, "plugin_frontend_actions_path", "")
+        if actions_path:
+            transport_env["JUSI_PLUGIN_FRONTEND_ACTIONS_FILE"] = actions_path
         transport = ClientTransport(
             kind=transport.kind,
             attach_cmd=list(transport.attach_cmd),

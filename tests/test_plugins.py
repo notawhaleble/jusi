@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 import time
+from typing import Any
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -14,10 +15,12 @@ from jusi.plugins import (
     DISPLAY_HANDLER_ENTRY_POINT_GROUP,
     DisplayHandlerRegistry,
     DisplayHandlerSpec,
+    HandlerContext,
     MagicCommand,
     builtin_display_handler_specs,
     build_display_handler_registry,
     load_display_handler_specs,
+    default_frontend_channel,
 )
 from jusi.infrastructure.client_process import run_terminal_attach
 from jusi.infrastructure.plugin_runtime import (
@@ -154,6 +157,16 @@ class FakeGenericHandler(BaseHandler):
         )
 
 
+class FakeOpenHandler(BaseHandler):
+    def handler_id(self) -> str:
+        return "open_handler"
+
+    def handle(self, context, cell):  # type: ignore[no-untyped-def]
+        _ = cell
+        context.open_path("/tmp/example.txt", open_in="split", line=12, column=3)
+        return "follow-up"
+
+
 class PluginRegistryTest(unittest.TestCase):
     def test_builtin_display_handler_specs_include_vd(self) -> None:
         specs = builtin_display_handler_specs()
@@ -168,6 +181,66 @@ class PluginRegistryTest(unittest.TestCase):
         handler = AsyncBaseHandler()
         status = handler.execute(object(), object())  # type: ignore[arg-type]
         self.assertEqual("follow-up", status)
+
+    def test_handler_context_open_path_requests_frontend_action(self) -> None:
+        pushed: list[tuple[str, dict[str, Any]]] = []
+        channel = default_frontend_channel(
+            handler_id="open_handler",
+            notebook_id="nb-1",
+            session_id="sess-1",
+            client_id="client-1",
+            append_execution_event=lambda _event: None,
+            emit_handler_message=lambda notebook_id, session_id, client_id, handler_id, message_type, payload: pushed.append(
+                (
+                    message_type,
+                    {
+                        "notebook_id": notebook_id,
+                        "session_id": session_id,
+                        "client_id": client_id,
+                        "handler_id": handler_id,
+                        "payload": dict(payload),
+                    },
+                )
+            ),
+        )
+        context = HandlerContext(
+            notebook_id="nb-1",
+            session_id="sess-1",
+            cell_id=5,
+            client_id="client-1",
+            channel=channel,
+            push_frontend_message=lambda *_args: None,
+            invoke_backend_action=lambda *_args: {},
+            append_execution_event=lambda *_args: None,
+            update_execution_status=lambda *_args: None,
+            set_client_transport=lambda *_args: None,
+        )
+
+        FakeOpenHandler().execute(context, object())  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [
+                (
+                    "action_request",
+                    {
+                        "notebook_id": "nb-1",
+                        "session_id": "sess-1",
+                        "client_id": "client-1",
+                        "handler_id": "open_handler",
+                        "payload": {
+                            "action_type": "open_path",
+                            "payload": {
+                                "path": "/tmp/example.txt",
+                                "open_in": "split",
+                                "line": 12,
+                                "column": 3,
+                            },
+                        },
+                    },
+                )
+            ],
+            pushed,
+        )
 
     def test_run_terminal_attach_execs_advertised_command(self) -> None:
         captured = {}
