@@ -284,12 +284,21 @@ Current generic completion result shape on the handler channel:
         "label": "SELECT",
         "kind": "keyword",
         "detail": "keyword",
-        "documentation": null
+        "documentation": null,
+        "start_col": 0,
+        "end_col": 6
       }
     ]
   }
 }
 ```
+
+Completion replacement semantics:
+
+- `start_col` / `end_col` are optional
+- when present, frontend should replace exactly that 0-based half-open range in `line_text`
+- `end_col` is exclusive
+- when absent, frontend may fall back to generic token replacement
 
 Attach note for native-terminal clients:
 

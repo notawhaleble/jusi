@@ -495,14 +495,27 @@ def collect_kernel_extension_modules(registry: DisplayHandlerRegistry) -> tuple[
 
 def _normalize_completion_item(item: str | Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(item, str):
-        return {"value": item, "label": None, "kind": None, "detail": None, "documentation": None}
-    return {
+        return {
+            "value": item,
+            "label": None,
+            "kind": None,
+            "detail": None,
+            "documentation": None,
+            "start_col": None,
+            "end_col": None,
+        }
+    normalized = {
         "value": str(item.get("value", "")),
         "label": None if item.get("label") is None else str(item.get("label")),
         "kind": None if item.get("kind") is None else str(item.get("kind")),
         "detail": None if item.get("detail") is None else str(item.get("detail")),
         "documentation": None if item.get("documentation") is None else str(item.get("documentation")),
     }
+    start_col = item.get("start_col")
+    end_col = item.get("end_col")
+    normalized["start_col"] = int(start_col) if isinstance(start_col, int) else None
+    normalized["end_col"] = int(end_col) if isinstance(end_col, int) else None
+    return normalized
 
 
 def _native_terminal_attach_command() -> list[str]:

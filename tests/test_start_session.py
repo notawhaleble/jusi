@@ -529,6 +529,33 @@ class StartSessionTest(unittest.TestCase):
         self.assertNotIn("transport", cell_updates[-1].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, client_id))
 
+    def test_poll_client_updates_demotes_dead_handler_followup_session(self) -> None:
+        runtime = DeadPluginRuntimeRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        followup_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
+            )
+        )
+        followup_envelopes = [parse_envelope(message) for message in followup_messages]
+        client_id = followup_envelopes[3].payload["cell"]["client_id"]
+
+        server.poll_client_updates()
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        cell_updates = [env for env in pending if env.type == "cell_updated"]
+        self.assertTrue(cell_updates)
+        self.assertEqual("done", cell_updates[-1].payload["cell"]["status"])
+        self.assertEqual("unknown", cell_updates[-1].payload["cell"]["owner"]["kind"])
+        self.assertEqual("shutdown", cell_updates[-1].payload["cell"]["client_state"])
+        self.assertNotIn("client_id", cell_updates[-1].payload["cell"])
+        self.assertNotIn("transport", cell_updates[-1].payload["cell"])
+        self.assertIsNone(runtime.get_client(session_id, client_id))
+
     def test_inspect_client_renders_busy_execution_state(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         session_id, _client_id = self.start_and_bind(server)

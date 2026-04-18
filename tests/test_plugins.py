@@ -331,8 +331,8 @@ class PluginRegistryTest(unittest.TestCase):
                     "handler_id": "fake_vd",
                     "message_type": "complete",
                     "items": [
-                        {"value": "pod_one", "label": "pod_one", "kind": "row", "detail": None, "documentation": None},
-                        {"value": "pod_two", "label": "pod_two", "kind": "row", "detail": None, "documentation": None},
+                        {"value": "pod_one", "label": "pod_one", "kind": "row", "detail": None, "documentation": None, "start_col": None, "end_col": None},
+                        {"value": "pod_two", "label": "pod_two", "kind": "row", "detail": None, "documentation": None, "start_col": None, "end_col": None},
                     ],
                 },
             ),
@@ -372,7 +372,7 @@ class PluginRegistryTest(unittest.TestCase):
                 {
                     "handler_id": "generic",
                     "message_type": "complete",
-                    "items": [{"value": "sel_done", "label": None, "kind": None, "detail": None, "documentation": None}],
+                    "items": [{"value": "sel_done", "label": None, "kind": None, "detail": None, "documentation": None, "start_col": None, "end_col": None}],
                 },
             ),
             pushed[0],

@@ -257,7 +257,13 @@ class ProtocolServer:
             return
         live_keys: set[tuple[str, str]] = set()
         for session in self._store.list_sessions():
-            for runtime_client in list_clients(session.session_id):
+            for runtime_client in list(list_clients(session.session_id)):
+                if self._normalize_dead_handler_client(
+                    session.notebook_id,
+                    session.session_id,
+                    runtime_client.client_id,
+                ):
+                    continue
                 key = (session.session_id, runtime_client.client_id)
                 live_keys.add(key)
                 try:
@@ -621,19 +627,19 @@ class ProtocolServer:
         )
         return dump_envelopes([response_envelope(request, ok=True, payload={"client": client_view})])
 
-    def _normalize_dead_handler_client(self, notebook_id: str, session_id: str, client_id: str) -> None:
+    def _normalize_dead_handler_client(self, notebook_id: str, session_id: str, client_id: str) -> bool:
         runtime_client = self._runtime.get_client(session_id, client_id)
         if runtime_client is None:
-            return
+            return False
         handle = getattr(runtime_client, "handle", None)
         is_alive = getattr(handle, "plugin_runtime_is_alive", None)
         if not callable(is_alive):
-            return
+            return False
         if is_alive() is not False:
-            return
+            return False
         session = self._store.get_by_notebook(notebook_id)
         if session is None or session.session_id != session_id:
-            return
+            return False
         self._runtime.shutdown_client(session, client_id, "plugin_runtime_exit")
         self._active_handlers.remove_client(session_id, client_id)
         for execution in self._store.list_executions(notebook_id):
@@ -660,6 +666,7 @@ class ProtocolServer:
                     }},
                 )
             )
+        return True
 
     def _handle_input_reply(self, request: Envelope) -> List[str]:
         input_request = parse_input_reply(request.payload)
