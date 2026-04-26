@@ -370,7 +370,12 @@ class ProtocolServer:
     def _handle_start_session(self, request: Envelope) -> List[str]:
         start_request = parse_start_session(request.payload)
         events = ProtocolEventSink()
-        use_case = StartSession(runtime=self._runtime, store=self._store, events=events)
+        use_case = StartSession(
+            runtime=self._runtime,
+            store=self._store,
+            events=events,
+            display_handlers=self._display_handlers,
+        )
         use_case.execute(
             StartSessionCommand(
                 notebook_id=start_request.notebook_id,
@@ -385,7 +390,12 @@ class ProtocolServer:
     def _handle_attach_session(self, request: Envelope) -> List[str]:
         attach_request = parse_attach_session(request.payload)
         events = ProtocolEventSink()
-        use_case = AttachSession(runtime=self._runtime, store=self._store, events=events)
+        use_case = AttachSession(
+            runtime=self._runtime,
+            store=self._store,
+            events=events,
+            display_handlers=self._display_handlers,
+        )
         try:
             use_case.execute(
                 AttachSessionCommand(

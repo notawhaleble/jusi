@@ -35,6 +35,7 @@ Rules:
 - backend now actively tears timed-out disconnected sessions down on the backend side
 - stale frontend reconnectable entries may still be discovered later on attach/reconnect attempts
 - backend session metadata currently keeps explicit `target` only
+- backend session payloads may include `plugin_specs`, which are frontend presentation defaults keyed by magic name for plugins installed in this kernel environment
 - disconnected sessions now also carry `expires_at` timeout metadata
 - backend now also drives frontend-link liveness with explicit healthchecks while sessions are `connected`
 - missed frontend healthcheck replies transition the session into normal `disconnected` timeout handling
@@ -64,6 +65,7 @@ Rules:
 - `follow-up` does not block later execution
 - `parked` remains reserved for deliberate keep-output semantics
 - `input_reply` resumes the same active execution after `input_request`
+- handler-owned cells may publish `presentation` after execution handoff, when the backend has resolved the concrete plugin/provider presentation better than the session-level defaults
 
 ## Client Lifecycle
 

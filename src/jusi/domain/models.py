@@ -43,6 +43,7 @@ class Session:
     frontend_healthcheck_deadline: float | None = None
     last_error: str = ""
     last_action: str = ""
+    plugin_specs: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass
@@ -54,6 +55,7 @@ class CellExecution:
     client_bufnr: int = -1
     client_state: ClientState = "active"
     transport: ClientTransport = field(default_factory=ClientTransport)
+    presentation: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ from jusi.infrastructure.runtime import InMemoryClientHandle, InMemoryKernelRunt
 from jusi.interfaces.events import CollectingEventSink
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
+from jusi.plugins import DisplayHandlerRegistry, DisplayHandlerSpec, MagicCommand
 
 
 class ExplodingExecuteRuntime(InMemoryKernelRuntime):
@@ -97,6 +98,7 @@ class StartSessionTest(unittest.TestCase):
             {"source": "start", "alias": "python3", "kind": "kernel", "value": "", "config": {}},
             events.events[1]["payload"]["target"],
         )
+
     def test_protocol_server_start_connects_without_prepared_client_updates(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         messages = server.handle_message(
@@ -120,6 +122,33 @@ class StartSessionTest(unittest.TestCase):
             envelopes[2].payload["session"]["target"],
         )
         self.assertEqual(3, len(envelopes))
+
+    def test_start_session_includes_plugin_presentation_specs(self) -> None:
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="acme",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("acme"),),
+                    presentation={"syntax": "sh", "indent": "sh", "followup": True, "completion": False},
+                ),
+            )
+        )
+        server = ProtocolServer(runtime=InMemoryKernelRuntime(), display_handlers=registry)
+        self.addCleanup(server.close)
+
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "start_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+        )
+        envelopes = [parse_envelope(message) for message in messages]
+
+        self.assertEqual(
+            {"acme": {"syntax": "sh", "indent": "sh", "followup": True, "completion": False}},
+            envelopes[2].payload["session"]["plugin_specs"],
+        )
 
     def test_protocol_server_start_accepts_explicit_target_identity(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
@@ -401,6 +430,36 @@ class StartSessionTest(unittest.TestCase):
         self.assertTrue(next_envelopes[0].ok)
         self.assertEqual("busy", next_envelopes[2].payload["cell"]["status"])
         self.assertEqual("done", next_envelopes[3].payload["cell"]["status"])
+
+    def test_handler_handoff_cell_update_includes_presentation(self) -> None:
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="vd",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("vd"),),
+                    presentation={"syntax": "python", "indent": "python", "followup": True, "completion": False},
+                ),
+            )
+        )
+        server = ProtocolServer(runtime=InMemoryKernelRuntime(), display_handlers=registry)
+        session_id, _client_id = self.start_and_bind(server)
+
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
+            )
+        )
+        envelopes = [parse_envelope(message) for message in messages]
+
+        self.assertEqual("follow-up", envelopes[3].payload["cell"]["status"])
+        self.assertEqual(
+            {"syntax": "python", "indent": "python", "followup": True, "completion": False},
+            envelopes[3].payload["cell"]["presentation"],
+        )
 
     def test_interrupt_finished_execution_fails_explicitly(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())

@@ -98,5 +98,6 @@ def display_handler_specs() -> tuple[DisplayHandlerSpec, ...]:
             factory=VDDisplayHandler,
             magic_commands=(MagicCommand("vd"),),
             kernel_extension_modules=("jusi_vd.kernel",),
+            presentation={"syntax": "python", "indent": "python", "followup": True, "completion": False},
         ),
     )

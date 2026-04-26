@@ -23,7 +23,7 @@ from jusi.application.ports import (
 from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, Session, SessionTarget
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.handler_worker import HandlerWorkerProcess, HandlerWorkerStartup
-from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, default_frontend_channel
+from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, collect_plugin_presentation_specs, default_frontend_channel
 
 
 def _target_payload(target: SessionTarget) -> dict:
@@ -43,6 +43,7 @@ def _session_payload(session: Session) -> dict:
         "kernel_name": session.kernel_name,
         "connection": session.connection,
         "target": _target_payload(session.target),
+        "plugin_specs": {key: dict(value) for key, value in session.plugin_specs.items()},
         "expires_at": session.expires_at,
         "last_error": session.last_error,
         "last_action": session.last_action,
@@ -70,6 +71,8 @@ def _cell_payload(execution: CellExecution) -> dict:
         payload["client_bufnr"] = execution.client_bufnr
     if execution.transport.kind:
         payload["transport"] = _transport_payload(execution.transport)
+    if execution.presentation:
+        payload["presentation"] = dict(execution.presentation)
     return payload
 
 
@@ -95,10 +98,17 @@ def _require_matching_session(store: SessionStore, notebook_id: str, session_id:
 
 
 class StartSession:
-    def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
+    def __init__(
+        self,
+        runtime: KernelRuntime,
+        store: SessionStore,
+        events: SessionEventSink,
+        display_handlers: DisplayHandlerRegistry | None = None,
+    ) -> None:
         self._runtime = runtime
         self._store = store
         self._events = events
+        self._display_handlers = display_handlers or DisplayHandlerRegistry()
 
     def execute(self, command: StartSessionCommand) -> Session:
         kernel_name = _effective_kernel_name(command.target, command.kernel_name)
@@ -108,6 +118,7 @@ class StartSession:
             kernel_name=kernel_name,
             target=command.target,
             last_action="start",
+            plugin_specs=collect_plugin_presentation_specs(self._display_handlers),
         )
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
@@ -127,10 +138,17 @@ class StartSession:
 
 
 class AttachSession:
-    def __init__(self, runtime: KernelRuntime, store: SessionStore, events: SessionEventSink) -> None:
+    def __init__(
+        self,
+        runtime: KernelRuntime,
+        store: SessionStore,
+        events: SessionEventSink,
+        display_handlers: DisplayHandlerRegistry | None = None,
+    ) -> None:
         self._runtime = runtime
         self._store = store
         self._events = events
+        self._display_handlers = display_handlers or DisplayHandlerRegistry()
 
     def execute(self, command: AttachSessionCommand) -> Session:
         if command.target.kind != "connection_file":
@@ -140,6 +158,7 @@ class AttachSession:
             state="starting",
             target=command.target,
             last_action="attach",
+            plugin_specs=collect_plugin_presentation_specs(self._display_handlers),
         )
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
@@ -298,6 +317,7 @@ class ExecuteCell:
             matched_handler = self._display_handlers.validate_handoff(handoff)
             if matched_handler is not None:
                 current_client.owner_kind = "handler"
+                current_client.presentation = self._presentation_for_handoff(handoff, matched_handler)
                 current_client.status = self._start_handler_worker(
                     command,
                     session,
@@ -311,6 +331,14 @@ class ExecuteCell:
         self._store.save_execution(command.notebook_id, current_client)
         self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
         return current_client
+
+    @staticmethod
+    def _presentation_for_handoff(handoff, matched_handler) -> dict[str, object]:  # type: ignore[no-untyped-def]
+        presentation = dict(matched_handler.presentation)
+        raw_override = handoff.meta.get("presentation")
+        if isinstance(raw_override, dict):
+            presentation.update(dict(raw_override))
+        return presentation
 
     def _start_handler_worker(
         self,

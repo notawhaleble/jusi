@@ -487,6 +487,20 @@ Behavior:
       "value": "",
       "config": {}
     },
+    "plugin_specs": {
+      "sql": {
+        "syntax": "sql",
+        "indent": "sql",
+        "followup": true,
+        "completion": true
+      },
+      "shell": {
+        "syntax": "sh",
+        "indent": "sh",
+        "followup": true,
+        "completion": true
+      }
+    },
     "expires_at": null,
     "last_error": "",
     "last_action": "start"
@@ -504,7 +518,11 @@ Behavior:
     "status": "busy",
     "owner": {"kind": "kernel"},
     "client_id": "client-1",
-    "client_state": "active"
+    "client_state": "active",
+    "presentation": {
+      "syntax": "pgsql",
+      "indent": "sql"
+    }
   }
 }
 ```
@@ -515,6 +533,8 @@ Notes:
 - `client_bufnr` may be omitted when frontend has not yet bound a local buffer
 - native-terminal transport metadata belongs to that real execution client, not to any session-level prepared slot
 - `owner` is independent from `status`
+- `presentation` is optional and only appears when backend has authoritative editor presentation metadata for this cell
+- session-level `plugin_specs` are broad pre-execution defaults keyed by magic name
 
 ### `client_updated`
 

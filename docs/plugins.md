@@ -116,6 +116,30 @@ Expected startup identity includes:
 - explicit `magic_name`
 - raw kernel handoff payload and metadata
 
+### Presentation Metadata
+
+`DisplayHandlerSpec.presentation` lets plugins declare editor presentation defaults for their claimed magic names.
+
+The backend exposes these defaults through `session.plugin_specs` so the frontend can select syntax, indentation, follow-up, and completion behavior before a cell executes. These values are broad family defaults, not parsed frontend knowledge of plugin flags or config.
+
+After a kernel handoff resolves the concrete handler/provider, backend may also send `cell.presentation` on `cell_updated`. The cell-level value starts from the matched handler spec and may be overridden by a `presentation` object in the handoff metadata.
+
+Example spec fragment:
+
+```python
+DisplayHandlerSpec(
+    handler_id="sqlite",
+    magic_commands=(MagicCommand("sql"),),
+    presentation={"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+)
+```
+
+Important:
+
+- frontend should treat `session.plugin_specs` as pre-execution defaults keyed by magic name
+- frontend should treat `cell.presentation` as authoritative for that executed cell when present
+- frontend should not parse plugin-specific magic arguments or user config to infer dialect
+
 ### `FrontendChannel`
 
 Core-owned structured channel between plugin backend and frontend.

@@ -12,6 +12,7 @@ from jusi.plugins import (
     BaseHandler,
     BaseVdHandler,
     collect_kernel_extension_modules,
+    collect_plugin_presentation_specs,
     DISPLAY_HANDLER_ENTRY_POINT_GROUP,
     DisplayHandlerRegistry,
     DisplayHandlerSpec,
@@ -558,6 +559,37 @@ class PluginRegistryTest(unittest.TestCase):
         registry = build_display_handler_registry()
         modules = collect_kernel_extension_modules(registry)
         self.assertEqual(("jusi_vd.kernel", "jusi_shell.kernel", "jusi_sql.kernel"), modules)
+
+    def test_collect_plugin_presentation_specs_uses_magic_names(self) -> None:
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="one",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("one"), MagicCommand("shared")),
+                    presentation={"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+                ),
+                DisplayHandlerSpec(
+                    handler_id="two",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("shared"),),
+                    presentation={"syntax": "pgsql"},
+                ),
+                DisplayHandlerSpec(
+                    handler_id="empty",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("empty"),),
+                ),
+            )
+        )
+
+        self.assertEqual(
+            {
+                "one": {"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+                "shared": {"syntax": "pgsql", "indent": "sql", "followup": True, "completion": True},
+            },
+            collect_plugin_presentation_specs(registry),
+        )
 
     def test_builtin_vd_handler_executes_from_magic_cell_handoff(self) -> None:
         with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")):
