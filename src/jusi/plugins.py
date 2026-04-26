@@ -105,6 +105,7 @@ class DisplayHandlerSpec:
     handoff_validator: Callable[[HandlerHandoff], bool] | None = None
     kernel_extension_modules: tuple[str, ...] = field(default_factory=tuple)
     presentation: Mapping[str, object] = field(default_factory=dict)
+    family_presentation: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.handler_id.strip():
@@ -514,7 +515,7 @@ def collect_kernel_extension_modules(registry: DisplayHandlerRegistry) -> tuple[
 def collect_plugin_presentation_specs(registry: DisplayHandlerRegistry) -> dict[str, dict[str, object]]:
     specs: dict[str, dict[str, object]] = {}
     for spec in registry.all():
-        presentation = dict(spec.presentation)
+        presentation = dict(spec.family_presentation or spec.presentation)
         if not presentation:
             continue
         for magic in spec.magic_commands:

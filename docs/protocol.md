@@ -535,6 +535,7 @@ Notes:
 - `owner` is independent from `status`
 - `presentation` is optional and only appears when backend has authoritative editor presentation metadata for this cell
 - session-level `plugin_specs` are broad pre-execution defaults keyed by magic name
+- provider-family plugins should keep `plugin_specs` provider-neutral and use cell-level `presentation` for concrete provider dialects
 
 ### `client_updated`
 

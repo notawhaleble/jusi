@@ -118,11 +118,11 @@ Expected startup identity includes:
 
 ### Presentation Metadata
 
-`DisplayHandlerSpec.presentation` lets plugins declare editor presentation defaults for their claimed magic names.
+`DisplayHandlerSpec.family_presentation` lets plugins declare editor presentation defaults for their claimed magic names. `DisplayHandlerSpec.presentation` describes the concrete handler/provider once a cell has been resolved by kernel handoff.
 
-The backend exposes these defaults through `session.plugin_specs` so the frontend can select syntax, indentation, follow-up, and completion behavior before a cell executes. These values are broad family defaults, not parsed frontend knowledge of plugin flags or config.
+The backend exposes family defaults through `session.plugin_specs` so the frontend can select syntax, indentation, follow-up, and completion behavior before a cell executes. These values are broad family defaults, not parsed frontend knowledge of plugin flags or config.
 
-After a kernel handoff resolves the concrete handler/provider, backend may also send `cell.presentation` on `cell_updated`. The cell-level value starts from the matched handler spec and may be overridden by a `presentation` object in the handoff metadata.
+After a kernel handoff resolves the concrete handler/provider, backend may also send `cell.presentation` on `cell_updated`. The cell-level value starts from the matched handler spec `presentation` and may be overridden by a `presentation` object in the handoff metadata.
 
 Example spec fragment:
 
@@ -130,7 +130,8 @@ Example spec fragment:
 DisplayHandlerSpec(
     handler_id="sqlite",
     magic_commands=(MagicCommand("sql"),),
-    presentation={"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+    family_presentation={"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+    presentation={"syntax": "sqlite", "indent": "sql", "followup": True, "completion": True},
 )
 ```
 
@@ -139,6 +140,7 @@ Important:
 - frontend should treat `session.plugin_specs` as pre-execution defaults keyed by magic name
 - frontend should treat `cell.presentation` as authoritative for that executed cell when present
 - frontend should not parse plugin-specific magic arguments or user config to infer dialect
+- simple one-handler magic families may omit `family_presentation`; backend then falls back to `presentation` for session defaults
 
 ### `FrontendChannel`
 

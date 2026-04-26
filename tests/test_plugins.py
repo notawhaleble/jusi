@@ -560,7 +560,7 @@ class PluginRegistryTest(unittest.TestCase):
         modules = collect_kernel_extension_modules(registry)
         self.assertEqual(("jusi_vd.kernel", "jusi_shell.kernel", "jusi_sql.kernel"), modules)
 
-    def test_collect_plugin_presentation_specs_uses_magic_names(self) -> None:
+    def test_collect_plugin_presentation_specs_uses_family_presentation_by_magic_name(self) -> None:
         registry = DisplayHandlerRegistry(
             (
                 DisplayHandlerSpec(
@@ -573,7 +573,8 @@ class PluginRegistryTest(unittest.TestCase):
                     handler_id="two",
                     factory=object,  # type: ignore[arg-type]
                     magic_commands=(MagicCommand("shared"),),
-                    presentation={"syntax": "pgsql"},
+                    presentation={"syntax": "pgsql", "indent": "sql", "followup": True, "completion": True},
+                    family_presentation={"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
                 ),
                 DisplayHandlerSpec(
                     handler_id="empty",
@@ -586,7 +587,7 @@ class PluginRegistryTest(unittest.TestCase):
         self.assertEqual(
             {
                 "one": {"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
-                "shared": {"syntax": "pgsql", "indent": "sql", "followup": True, "completion": True},
+                "shared": {"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
             },
             collect_plugin_presentation_specs(registry),
         )
