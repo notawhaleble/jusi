@@ -524,6 +524,28 @@ def collect_plugin_presentation_specs(registry: DisplayHandlerRegistry) -> dict[
     return specs
 
 
+def collect_plugin_palette(
+    registry: DisplayHandlerRegistry,
+    session_config: Mapping[str, object] | None,
+) -> dict[str, dict[str, object]]:
+    palette: dict[str, dict[str, object]] = {}
+    root = dict(session_config or {})
+    for spec in registry.all():
+        for magic in spec.magic_commands:
+            current = palette.setdefault(magic.name, {"entries": []})
+            current_entries = current.setdefault("entries", [])
+            if not isinstance(current_entries, list):
+                continue
+            raw_section = root.get(magic.name, {})
+            if not isinstance(raw_section, Mapping):
+                continue
+            entries = [str(key).strip() for key in raw_section.keys() if str(key).strip()]
+            for entry in entries:
+                if entry not in current_entries:
+                    current_entries.append(entry)
+    return palette
+
+
 def _normalize_completion_item(item: str | Mapping[str, Any]) -> dict[str, Any]:
     if isinstance(item, str):
         return {

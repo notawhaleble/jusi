@@ -150,6 +150,42 @@ class StartSessionTest(unittest.TestCase):
             envelopes[2].payload["session"]["plugin_specs"],
         )
 
+    def test_start_session_includes_plugin_palette_from_target_config(self) -> None:
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="vd",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("vd"),),
+                ),
+                DisplayHandlerSpec(
+                    handler_id="sqlite",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("sql"),),
+                ),
+            )
+        )
+        server = ProtocolServer(runtime=InMemoryKernelRuntime(), display_handlers=registry)
+        self.addCleanup(server.close)
+
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "start_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "py", '
+                '"target": {"source": "start", "alias": "py", "kind": "venv", "value": "venv://myenv1", '
+                '"config": {"sql": {"analyticsdb": {"provider": "postgres"}, "mysqlitedb": {"provider": "sqlite"}}}}}}'
+            )
+        )
+        envelopes = [parse_envelope(message) for message in messages]
+
+        self.assertEqual(
+            {
+                "vd": {"entries": []},
+                "sql": {"entries": ["analyticsdb", "mysqlitedb"]},
+            },
+            envelopes[2].payload["session"]["palette"],
+        )
+
     def test_protocol_server_start_accepts_explicit_target_identity(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         messages = server.handle_message(

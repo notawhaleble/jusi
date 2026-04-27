@@ -36,6 +36,7 @@ Rules:
 - stale frontend reconnectable entries may still be discovered later on attach/reconnect attempts
 - backend session metadata currently keeps explicit `target` only
 - backend session payloads may include `plugin_specs`, which are frontend presentation defaults keyed by magic name for plugins installed in this kernel environment
+- backend session payloads may include `palette`, which is the frontend creation palette keyed by magic name and may include empty entry lists for built-in or non-config plugins
 - disconnected sessions now also carry `expires_at` timeout metadata
 - backend now also drives frontend-link liveness with explicit healthchecks while sessions are `connected`
 - missed frontend healthcheck replies transition the session into normal `disconnected` timeout handling

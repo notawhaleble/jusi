@@ -501,6 +501,14 @@ Behavior:
         "completion": true
       }
     },
+    "palette": {
+      "vd": {
+        "entries": []
+      },
+      "sql": {
+        "entries": ["analyticsdb", "mysqlitedb"]
+      }
+    },
     "expires_at": null,
     "last_error": "",
     "last_action": "start"
@@ -536,6 +544,8 @@ Notes:
 - `presentation` is optional and only appears when backend has authoritative editor presentation metadata for this cell
 - session-level `plugin_specs` are broad pre-execution defaults keyed by magic name
 - provider-family plugins should keep `plugin_specs` provider-neutral and use cell-level `presentation` for concrete provider dialects
+- session-level `palette` is optional and exposes the frontend creation palette keyed by magic name
+- installed plugins without named config entries should still appear in `palette` with an empty `entries` list
 
 ### `client_updated`
 

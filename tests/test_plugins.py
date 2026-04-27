@@ -11,6 +11,7 @@ from jusi.domain.models import HandlerHandoff
 from jusi.plugins import (
     BaseHandler,
     BaseVdHandler,
+    collect_plugin_palette,
     collect_kernel_extension_modules,
     collect_plugin_presentation_specs,
     DISPLAY_HANDLER_ENTRY_POINT_GROUP,
@@ -590,6 +591,76 @@ class PluginRegistryTest(unittest.TestCase):
                 "shared": {"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
             },
             collect_plugin_presentation_specs(registry),
+        )
+
+    def test_collect_plugin_palette_uses_magic_names(self) -> None:
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="sqlite",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("sql"),),
+                ),
+                DisplayHandlerSpec(
+                    handler_id="postgres",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("sql"),),
+                ),
+                DisplayHandlerSpec(
+                    handler_id="mail",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("mail"),),
+                ),
+            )
+        )
+
+        self.assertEqual(
+            {
+                "sql": {"entries": ["analyticsdb", "mysqlitedb"]},
+                "mail": {"entries": ["mymail"]},
+            },
+            collect_plugin_palette(
+                registry,
+                {
+                    "sql": {"analyticsdb": {"provider": "postgres"}, "mysqlitedb": {"provider": "sqlite"}},
+                    "mail": {"mymail": {"provider": "imap"}},
+                },
+            ),
+        )
+
+    def test_collect_plugin_palette_includes_plugins_without_config_entries(self) -> None:
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="vd",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("vd"),),
+                ),
+                DisplayHandlerSpec(
+                    handler_id="shell",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("shell"),),
+                ),
+                DisplayHandlerSpec(
+                    handler_id="sqlite",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("sql"),),
+                ),
+            )
+        )
+
+        self.assertEqual(
+            {
+                "vd": {"entries": []},
+                "shell": {"entries": []},
+                "sql": {"entries": ["mysqlitedb"]},
+            },
+            collect_plugin_palette(
+                registry,
+                {
+                    "sql": {"mysqlitedb": {"provider": "sqlite"}},
+                },
+            ),
         )
 
     def test_builtin_vd_handler_executes_from_magic_cell_handoff(self) -> None:

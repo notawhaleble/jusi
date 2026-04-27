@@ -142,6 +142,42 @@ Important:
 - frontend should not parse plugin-specific magic arguments or user config to infer dialect
 - simple one-handler magic families may omit `family_presentation`; backend then falls back to `presentation` for session defaults
 
+### Palette Metadata
+
+Core exposes the frontend creation palette through `session.palette` using the magic names claimed by each handler spec.
+
+Core reads aliases from `session.target.config[magic_name]` and publishes them under that same magic name:
+
+```python
+DisplayHandlerSpec(
+    handler_id="sqlite",
+    magic_commands=(MagicCommand("sql"),),
+)
+```
+
+This produces session metadata such as:
+
+```json
+{
+  "palette": {
+    "vd": {
+      "entries": []
+    },
+    "sql": {
+      "entries": ["analyticsdb", "mysqlitedb"]
+    }
+  }
+}
+```
+
+Important:
+
+- `session.palette` is session-scoped metadata intended for frontend cell discovery / creation flows
+- section names match claimed magic names exactly
+- plugins without config-backed aliases still appear with `entries: []`
+- ordering of config-backed entries follows the order of keys in the delivered session config
+- multiple providers claiming the same magic contribute to the same palette section
+
 ### `FrontendChannel`
 
 Core-owned structured channel between plugin backend and frontend.

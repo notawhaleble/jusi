@@ -44,6 +44,7 @@ class Session:
     last_error: str = ""
     last_action: str = ""
     plugin_specs: dict[str, dict[str, object]] = field(default_factory=dict)
+    palette: dict[str, dict[str, object]] = field(default_factory=dict)
 
 
 @dataclass

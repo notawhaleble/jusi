@@ -23,7 +23,7 @@ from jusi.application.ports import (
 from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, Session, SessionTarget
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.handler_worker import HandlerWorkerProcess, HandlerWorkerStartup
-from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, collect_plugin_presentation_specs, default_frontend_channel
+from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, collect_plugin_palette, collect_plugin_presentation_specs, default_frontend_channel
 
 
 def _target_payload(target: SessionTarget) -> dict:
@@ -44,6 +44,7 @@ def _session_payload(session: Session) -> dict:
         "connection": session.connection,
         "target": _target_payload(session.target),
         "plugin_specs": {key: dict(value) for key, value in session.plugin_specs.items()},
+        "palette": {key: {"entries": list(value.get("entries", []))} for key, value in session.palette.items()},
         "expires_at": session.expires_at,
         "last_error": session.last_error,
         "last_action": session.last_action,
@@ -119,6 +120,7 @@ class StartSession:
             target=command.target,
             last_action="start",
             plugin_specs=collect_plugin_presentation_specs(self._display_handlers),
+            palette=collect_plugin_palette(self._display_handlers, command.target.config),
         )
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
@@ -159,6 +161,7 @@ class AttachSession:
             target=command.target,
             last_action="attach",
             plugin_specs=collect_plugin_presentation_specs(self._display_handlers),
+            palette=collect_plugin_palette(self._display_handlers, command.target.config),
         )
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
