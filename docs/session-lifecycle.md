@@ -1,4 +1,4 @@
-# Session Lifecycle Draft
+# Session Lifecycle
 
 This document defines the intended backend state transitions for the current contract slice.
 
@@ -27,19 +27,19 @@ Transitions:
 
 Rules:
 
-- backend is launched by `jusivim`
+- backend is launched by the editor plugin
 - sessions are durable/reconnectable by default
 - one backend root process is expected to hold one durable session record
-- frontend may keep a persisted reconnectables registry across Vim lifetimes
-- timed-out durable sessions do not need proactive frontend expiry events
+- the editor plugin may keep a persisted reconnectables registry across editor lifetimes
+- timed-out durable sessions do not need proactive editor expiry events
 - backend now actively tears timed-out disconnected sessions down on the backend side
-- stale frontend reconnectable entries may still be discovered later on attach/reconnect attempts
+- stale reconnectable entries may still be discovered later on attach/reconnect attempts
 - backend session metadata currently keeps explicit `target` only
-- backend session payloads may include `plugin_specs`, which are frontend presentation defaults keyed by magic name for plugins installed in this kernel environment
-- backend session payloads may include `palette`, which is the frontend creation palette keyed by magic name and may include empty entry lists for built-in or non-config plugins
+- backend session payloads may include `plugin_specs`, which are editor-facing presentation defaults keyed by magic name for plugins installed in this kernel environment
+- backend session payloads may include `palette`, which is the editor-facing creation palette keyed by magic name and may include empty entry lists for built-in or non-config plugins
 - disconnected sessions now also carry `expires_at` timeout metadata
-- backend now also drives frontend-link liveness with explicit healthchecks while sessions are `connected`
-- missed frontend healthcheck replies transition the session into normal `disconnected` timeout handling
+- backend now also drives editor-link liveness with explicit healthchecks while sessions are `connected`
+- missed editor healthcheck replies transition the session into normal `disconnected` timeout handling
 - `endpoint`/backend residence stays outside core backend session state
 - `disconnected` is not equivalent to kernel death
 - `failed` should record a reason

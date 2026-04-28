@@ -285,6 +285,52 @@ class StartSessionTest(unittest.TestCase):
         )
         self.assertEqual(3, len(envelopes))
 
+    def test_attach_session_includes_plugin_metadata(self) -> None:
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="vd",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("vd"),),
+                    presentation={"syntax": "python", "indent": "python", "followup": True, "completion": False},
+                ),
+                DisplayHandlerSpec(
+                    handler_id="sqlite",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("sql"),),
+                    family_presentation={"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+                    presentation={"syntax": "sqlite", "indent": "sql", "followup": True, "completion": True},
+                ),
+            )
+        )
+        server = ProtocolServer(runtime=InMemoryKernelRuntime(), display_handlers=registry)
+        self.addCleanup(server.close)
+
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "attach_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", '
+                '"target": {"source": "attach", "kind": "connection_file", "value": "/tmp/kernel.json", '
+                '"config": {"sql": {"analyticsdb": {"provider": "postgres"}}}}}}'
+            )
+        )
+        envelopes = [parse_envelope(message) for message in messages]
+
+        self.assertEqual(
+            {
+                "vd": {"syntax": "python", "indent": "python", "followup": True, "completion": False},
+                "sql": {"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+            },
+            envelopes[2].payload["session"]["plugin_specs"],
+        )
+        self.assertEqual(
+            {
+                "vd": {"entries": []},
+                "sql": {"entries": ["analyticsdb"]},
+            },
+            envelopes[2].payload["session"]["palette"],
+        )
+
     def test_protocol_server_attach_rejects_non_connection_file_target_kind(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         messages = server.handle_message(
@@ -853,8 +899,35 @@ class StartSessionTest(unittest.TestCase):
 
     def test_disconnect_marks_active_execution_owner_unknown_and_reconnect_restores_binding_state(self) -> None:
         runtime = InMemoryKernelRuntime()
-        server = ProtocolServer(runtime=runtime)
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="vd",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("vd"),),
+                    presentation={"syntax": "python", "indent": "python", "followup": True, "completion": False},
+                ),
+                DisplayHandlerSpec(
+                    handler_id="sqlite",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("sql"),),
+                    family_presentation={"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+                    presentation={"syntax": "sqlite", "indent": "sql", "followup": True, "completion": True},
+                ),
+            )
+        )
+        server = ProtocolServer(runtime=runtime, display_handlers=registry)
         session_id, _client_id = self.start_and_bind(server)
+
+        start_session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(start_session)
+        self.assertEqual(
+            {
+                "vd": {"entries": []},
+                "sql": {"entries": []},
+            },
+            start_session.palette,
+        )
 
         server.handle_message(
             (
@@ -892,8 +965,24 @@ class StartSessionTest(unittest.TestCase):
         self.assertTrue(reconnect_envelopes[0].ok)
         self.assertEqual("starting", reconnect_envelopes[1].payload["session"]["state"])
         self.assertIsNone(reconnect_envelopes[1].payload["session"]["expires_at"])
+        self.assertEqual(
+            {
+                "vd": {"syntax": "python", "indent": "python", "followup": True, "completion": False},
+                "sql": {"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
+            },
+            reconnect_envelopes[1].payload["session"]["plugin_specs"],
+        )
+        self.assertEqual(
+            {
+                "vd": {"entries": []},
+                "sql": {"entries": []},
+            },
+            reconnect_envelopes[1].payload["session"]["palette"],
+        )
         self.assertEqual("connected", reconnect_envelopes[2].payload["session"]["state"])
         self.assertIsNone(reconnect_envelopes[2].payload["session"]["expires_at"])
+        self.assertEqual(reconnect_envelopes[1].payload["session"]["plugin_specs"], reconnect_envelopes[2].payload["session"]["plugin_specs"])
+        self.assertEqual(reconnect_envelopes[1].payload["session"]["palette"], reconnect_envelopes[2].payload["session"]["palette"])
 
     def test_disconnect_marks_started_session_disconnected(self) -> None:
         runtime = InMemoryKernelRuntime()

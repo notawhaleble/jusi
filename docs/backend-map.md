@@ -12,8 +12,8 @@ It is meant to answer:
 
 ## Glossary
 
-- `frontend`
-  - the Jusivim side
+- `editor plugin`
+  - the Vim/Neovim side
   - starts the backend
   - sends protocol requests
   - consumes protocol events and responses
@@ -27,7 +27,7 @@ It is meant to answer:
 - `session`
   - the durable execution identity for one notebook/backend pairing
   - addressed by `session_id`
-  - has a `target` describing what kernel/runtime environment should be used
+  - has a `target` describing what kernel/runtime environment is used
 
 - `cell execution`
   - backend-tracked state for one notebook cell
@@ -78,15 +78,15 @@ It is meant to answer:
 - `native terminal attach`
   - current outer attach entrypoint:
     - `python -m jusi client-process terminal-attach`
-  - launched by frontend in a real terminal buffer
+  - launched by the editor plugin in a real terminal buffer
   - then `exec`s into plugin runtime
 
 - `handler_message`
-  - structured control channel between frontend and backend for handler-owned clients
+  - structured control channel between editor plugin and backend for handler-owned clients
   - not the fullscreen terminal byte transport
 
 - `action_request`
-  - backend -> frontend structured callback over `handler_message`
+  - backend -> editor-plugin structured callback over `handler_message`
   - first built-in action:
     - `open_path`
 
@@ -117,7 +117,7 @@ This layer decides:
 
 - when state changes
 - when runtime methods are called
-- when protocol events should be emitted
+- when protocol events are emitted
 
 ### `jusi.infrastructure`
 
@@ -142,7 +142,7 @@ Owns protocol and top-level server entry:
 
 ```mermaid
 flowchart LR
-    F[Frontend / Jusivim]
+    F[Editor Plugin]
     B[Backend Root Process\\npython -m jusi]
     K[Kernel Handle\\nmanaged or attached]
     C[Managed Client Process\\npython -m jusi client-process]
@@ -164,7 +164,7 @@ flowchart LR
 
 ## Protocol Surfaces
 
-### Frontend <-> Backend Root
+### Editor Plugin <-> Backend Root
 
 Main notebook protocol.
 
@@ -240,7 +240,7 @@ Current example:
 
 Current mechanism:
 
-- append JSON lines to the per-client frontend-action mailbox file
+- append JSON lines to the per-client action mailbox file
 - backend root drains that file during `poll_client_updates()`
 - backend root converts records into:
   - transcript `frontend_action_request`
@@ -248,7 +248,7 @@ Current mechanism:
 
 This is not the same path as normal `followup` / `complete`.
 
-## Current Built-in Frontend Callback
+## Current Built-in Editor Callback
 
 ```mermaid
 classDiagram

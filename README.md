@@ -1,62 +1,77 @@
 # Jusi
 
-Jusi is the standalone Python backend for notebook-style execution used by Jusivim.
+Jusi is the Python backend for notebook-style execution used by a Vim/Neovim plugin.
 
-Deployment model:
-
-- Jusi is intended to remain a two-component system:
-  - local Vim plugin (`../jusivim`)
-  - Jusi backend
-- the backend is launched by `jusivim`, not as a separately user-managed service
-- the backend may reside locally or remotely depending on the target/workflow
-- remote support should not require inventing a third user-facing helper component in addition to the plugin and backend
-
-Jusi is responsible for:
+It is responsible for:
 
 - kernel lifecycle management
 - notebook execution coordination
-- cell-owned client lifecycle
-- backend-to-editor execution events
-- transport and runtime integration around those capabilities
+- per-cell client lifecycle
+- plugin handler supervision
+- protocol events and transport metadata for the editor side
 
-Current runtime entrypoints:
+Jusi is designed as part of a two-component system:
+
+- editor plugin
+- Jusi backend
+
+The backend may run locally or remotely depending on the selected session target.
+
+## Runtime Entrypoints
 
 - backend root process: `python -m jusi`
 - client process: `python -m jusi client-process`
-- generic plugin runtime starter: `python -m jusi plugin-runtime`
+- plugin runtime starter: `python -m jusi plugin-runtime`
 
-The project is built around:
+## Protocol Features
 
-- explicit protocol and state transitions
-- clean architecture boundaries
-- transport isolation from domain logic
-- operationally safer session and process management
+Current backend protocol supports:
 
-The Vim plugin lives in a separate repository: `../jusivim`.
+- session start and attach
+- cell execution
+- interrupt and input reply
+- disconnect and reconnect
+- client inspection and shutdown
+- structured handler messaging for plugin follow-up and completion
+- native terminal transport advertisement for interactive handlers
 
-## Development Workflow
+Session metadata may also include:
 
-For normal local development, use an editable install in a virtual environment rather than relying on raw `PYTHONPATH=src`.
+- `plugin_specs`
+  - editor-facing presentation defaults keyed by magic name
+- `palette`
+  - editor-facing plugin creation metadata keyed by magic name
 
-Why:
+Cell metadata may include:
 
-- first-party bundled plugins such as `jusi_vd` are now discovered through real package entry points
-- that metadata exists in the installed distribution, not in source imports alone
-
-So the authoritative local path is:
-
-```sh
-venv2/bin/python -m pip install -e .
-```
-
-Then run tests and local commands through that environment.
+- `presentation`
+  - authoritative post-handoff presentation metadata for an executed cell
 
 ## Repository Layout
 
-- `docs/`: protocol, lifecycle, and architecture notes
-- `src/jusi/domain/`: core entities and policies
-- `src/jusi/application/`: use cases and service interfaces
-- `src/jusi/infrastructure/`: Jupyter integration, transport, and process management
-- `src/jusi/interfaces/`: external entrypoints and message adapters
-- `src/jusi_vd/`: first-party bundled `vd` plugin package
-- `tests/`: backend tests
+- `src/jusi/domain/`
+  - core models and policies
+- `src/jusi/application/`
+  - use cases and service interfaces
+- `src/jusi/infrastructure/`
+  - Jupyter/runtime integration and process management
+- `src/jusi/interfaces/`
+  - protocol parsing and server entrypoints
+- `src/jusi_vd/`
+  - bundled first-party `%%vd` plugin
+- `docs/`
+  - protocol and architecture reference
+- `tests/`
+  - backend test suite
+
+## Documentation
+
+- [Protocol](docs/protocol.md)
+- [Session Lifecycle](docs/session-lifecycle.md)
+- [Plugin Contract](docs/plugins.md)
+- [Architecture](docs/architecture.md)
+- [Backend Map](docs/backend-map.md)
+
+## Contributing
+
+Development workflow and contributor notes live in [CONTRIBUTING.md](CONTRIBUTING.md).

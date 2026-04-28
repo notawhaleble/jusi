@@ -2,33 +2,31 @@
 
 ## Goal
 
-Jusi is the standalone backend process for notebook execution used by Jusivim.
-
-It should preserve the useful MVP behavior while moving to explicit contracts, explicit state transitions, and clearer runtime boundaries.
+Jusi is the standalone backend process for notebook execution used by an editor plugin.
 
 ## Design Principles
 
 - backend domain logic must not depend on Vim rendering details
 - transport is an adapter concern
 - state transitions must be explicit and observable
-- protocol must stay stable enough for cross-repo coordination
-- deployment should remain conceptually two-component:
-  - Vim plugin
+- protocol must stay stable enough for editor/backend coordination
+- deployment is conceptually two-component:
+  - editor plugin
   - Jusi backend
 
 ## Deployment Direction
 
-- `jusivim` starts the backend
+- the editor plugin starts the backend
 - backend is not treated as a separately user-managed daemon in the normal workflow
 - backend may run locally or remotely depending on workflow
-- remote support should not introduce a third mandatory user-facing helper component
+- remote support does not require a third mandatory user-facing helper component
 
 ## Runtime Vocabulary
 
 Use these terms consistently:
 
 - `backend root process`
-  - the main `jusi` process started by `jusivim`
+  - the main `jusi` process started by the editor plugin
   - current entrypoint: `python -m jusi`
 - `session runtime state`
   - in-memory supervision state held by the backend root process for the current session
@@ -40,7 +38,7 @@ Use these terms consistently:
   - the execution-side resource for the session
   - may be a managed child process, an attached external connection, or another runtime handle
 
-Current architecture should not call the backend-side single-session structure a `registry`.
+The backend-side single-session structure is not a `registry`.
 That word suggests one process indexing many independent session records, which is not the current shape.
 
 ## Current Session Model
@@ -55,12 +53,12 @@ Backend core currently keeps explicit session `target` and nothing more in the d
 
 Current interpretation:
 
-- `target` describes what session/kernel environment the backend should start or attach to
-- backend residence/endpoint is a frontend transport concern for now
+- `target` describes what session/kernel environment the backend starts or attaches to
+- backend residence is an editor-plugin transport concern
 - sessions are durable/reconnectable by default
 - one backend root process supervises one current durable session record
 - that same root process may also supervise multiple child client processes for that session
-- frontend may keep the real persisted reconnectables list across Vim lifetimes
+- the editor plugin may keep the real persisted reconnectables list across editor lifetimes
 - durable ids are backend-generated with high-entropy `sess-...` values rather than local counters
 
 ## Current Honest Runtime Slice
@@ -74,7 +72,7 @@ Current interpretation:
 - `execute_cell` allocates the real execution client directly for that cell
 - `disconnect_session` preserves durable session identity as `disconnected`
 - `reconnect_session` restores the durable session linkage without inventing false execution ownership
-- backend root process now also drives frontend-link liveness with backend-issued healthchecks and converts missed replies into the normal disconnect/timeout path
+- backend root process now also drives editor-link liveness with backend-issued healthchecks and converts missed replies into the normal disconnect/timeout path
 - session-level health and teardown decisions remain centralized in the backend root process rather than delegated to clients making independent suicide decisions
 
 ## Layering
@@ -117,9 +115,7 @@ Owns:
 
 ## Plugin Direction
 
-Handler/plugin support should not be modeled as “just another runtime” or “just a renderer taxonomy”.
-
-Current direction:
+Handler/plugin support is not modeled as “just another runtime” or “just a renderer taxonomy”.
 
 - a plugin has at least:
   - magic command definition
@@ -128,33 +124,29 @@ Current direction:
   - session/client lifecycle framing
   - plugin discoverability/loading
   - status consistency
-  - a structured plugin/frontend communication channel
+  - a structured plugin/editor communication channel
 - plugin display handlers and their worker processes own:
   - plugin-specific interaction logic
   - follow-up/completion semantics
   - mode transitions, for example VisiData-like navigation into shell-like interaction
 
-This is the level where MVP-style flexibility such as `%%sql`, `%%vd`, and `%%oc` generalizes best.
+See [plugins.md](plugins.md) for the current plugin contract.
 
-See [plugins.md](/Users/niku/Documents/dev/jusi/docs/plugins.md) for the working draft.
+## Handler Activation
 
-## Handler Activation Direction
-
-The next handler architecture step is stricter than the current in-process placeholder path.
-
-Current direction:
+Handler-owned execution now follows this model:
 
 - every cell still enters through the Jupyter kernel
-- backend should stop treating `%%...` header parsing as the long-term execution authority
-- kernel-side magics should emit a Jusi-specific handoff mime payload
-- backend root process should interpret that handoff and spawn one handler worker process per active handler-owned cell/client
-- that worker process owns the live plugin runtime for its whole lifetime
+- handler takeover is driven by a kernel-emitted Jusi handoff mime payload
+- backend root process validates that handoff against the registered handler spec
+- backend root process starts one `handler-worker` process per active handler-owned cell/client
+- the worker owns the live plugin handler for that client lifetime
 - normal worker exit maps to cell status `done`
 - unexpected worker death maps to cell status `error`
-- interrupt for handler-owned cells is a structured handler interrupt first, not an OS-signal-only contract
-- follow-up/completion apply only while the worker is alive; no replay or queueing after death
+- interrupt for handler-owned cells is a structured handler interrupt first
+- follow-up/completion apply only while the worker is alive
 
-Worker startup context should stay small:
+Worker startup context is intentionally small:
 
 - `notebook_id`
 - `session_id`
@@ -164,39 +156,18 @@ Worker startup context should stay small:
 - explicit `magic_name`
 - raw kernel handoff payload and metadata
 
-The backend root process should remain the router and supervisor for handler/frontend traffic, even if that routing is thin.
+The backend root process remains the router and supervisor for handler/editor traffic.
 
-## Native Terminal Pivot
+## Native Terminal Transport
 
-The first PTY-backed handler slice was useful to prove:
+Interactive terminal-hosted plugins use native terminal attachment rather than notebook-buffer terminal emulation.
 
-- plugin/frontend control messages
-- live interactive child-process ownership
-- handler follow-up/control ideas
-
-It was not a good final UX for fullscreen interactive tools when rendered through:
-
-- PTY bytes over the backend control channel
-- frontend terminal parsing in pure Vimscript
-- projection into a normal notebook buffer
-
-So the current architecture direction is:
-
-- keep notebook/session/handler ownership in backend core
-- keep structured `handler_message` for control semantics
-- stop treating PTY byte transport over the notebook control channel as the long-term terminal surface
-- pivot interactive terminal-hosted clients toward native editor terminal buffers
-
-### Concrete Backend Proposal
-
-The preferred substrate is a bridge/client-process model built on the existing `jusi client-process` split.
-
-Current proposal:
+Current model:
 
 - backend root process still owns session and handler lifecycle
-- handler-owned clients should assume native terminal as the default frontend plane
+- handler-owned clients use native terminal as the default editor plane
 - when a handler becomes terminal-backed, backend provisions a dedicated terminal client process for that `client_id`
-- frontend receives terminal-client metadata from backend and launches a real editor terminal buffer against that process command
+- the editor plugin receives terminal-client metadata from backend and launches a real terminal buffer against that process command
 - terminal transport flows through that native terminal job attachment, not through `handler_message terminal_bytes`
 - `handler_message` stays available for:
   - follow-up
@@ -204,21 +175,15 @@ Current proposal:
   - plugin commands
   - other control semantics that are not raw terminal traffic
 
-### Terminal Client Identity
-
-When backend exposes a terminal-backed client, the identity should still remain within the normal Jusi client model:
+Terminal-backed clients still remain within the normal Jusi client model:
 
 - `session_id`
 - `client_id`
 - optional `handler_id`
 
-The terminal bridge/client process must map back to those ids so stop/disconnect/cleanup stay centralized in backend supervision.
+The terminal bridge/client process maps back to those ids so stop/disconnect/cleanup stay centralized in backend supervision.
 
-### Advertising A Terminal-Backed Client
-
-Backend should advertise terminal-backed clients explicitly through normal client transport metadata.
-
-The likely contract shape is:
+Backend advertises terminal-backed clients explicitly through normal client transport metadata:
 
 - cell-owned active client remains a normal backend client
 - backend emits client metadata indicating:
@@ -228,13 +193,4 @@ The likely contract shape is:
   - the owning `client_id`
   - optional `handler_id`
 
-`inspect_client` can remain a debug/recovery seam, but should no longer be the hot rendering path for native-terminal clients.
-
-## Next Architecture Step
-
-Turn the plugin seam into a real worker-based model:
-
-- define the kernel handoff mime contract
-- define the handler worker stdin/stdout protocol
-- move live plugin runtime out of the backend root process and into one worker per active handler-owned cell/client
-- keep native-terminal transport as the default frontend plane for plugin clients
+`inspect_client` remains a debug/recovery seam rather than the hot rendering path for native-terminal clients.

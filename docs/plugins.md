@@ -1,130 +1,128 @@
-# Plugin Architecture Draft
+# Plugin Contract
 
-This document defines the first concrete direction for Jusi handler/plugin support.
+This document defines the current backend contract for Jusi display-handler plugins.
 
-The goal is to preserve MVP-level flexibility without letting plugin-specific behavior leak into the backend core session model.
+## Overview
 
-## Core Idea
+A plugin has two backend-facing pieces:
 
-A plugin has at least two parts:
+- a kernel-side magic implementation that emits a Jusi handoff payload
+- a display-handler implementation that runs in a dedicated handler worker
 
-- magic command definition
-- display handler
+Core backend responsibilities:
 
-The backend core is responsible for:
+- session lifecycle
+- client lifecycle
+- handler worker supervision
+- structured frontend/backend routing through `handler_message`
+- native-terminal transport advertisement for interactive handlers
 
-- incorporating plugin execution into normal Jusi session/client lifecycle
-- plugin discoverability/loading
-- status consistency
-- a structured communication channel between plugin backend code and frontend code
-- spawning and supervising one handler worker process per active handler-owned cell/client
+Plugin responsibilities:
 
-The plugin is responsible for:
+- claim one or more magic names
+- emit a valid handoff from the kernel side
+- implement handler interaction semantics
+- define any plugin-specific follow-up or completion behavior
 
-- providing the kernel-side magic handoff shape
-- starting its own display handler logic inside the worker process
-- interpreting plugin-specific commands and follow-up actions
-- deciding when its interaction mode changes, for example from a VisiData-like table flow into a shell terminal flow
+## `MagicCommand`
 
-## Why This Model
-
-The MVP showed that plugin behavior is broader than “cell execution adapter” or “renderer kind”.
-
-Examples:
-
-- `%%pplx` fits the current transcript/view pipeline well
-- `%%sql` wants reusable VisiData-oriented follow-up and completion behavior
-- `%%oc` starts as a VisiData-oriented workflow and may later transition into an interactive shell session while still needing plugin-defined frontend/backend commands such as container copy
-
-So the stable split should be:
-
-- core owns lifecycle, supervision, consistency, and channel plumbing
-- plugin owns interaction semantics through its display handler
-
-## Plugin Author Mental Model
-
-If you are adding a new plugin, you should mainly think about:
-
-1. what kernel-side magic handoff payload the plugin emits
-2. which display handler worker class the plugin starts with
-3. which frontend/backend commands the plugin needs
-4. which follow-up and completion semantics it opts into or customizes
-
-You should not have to redesign session lifecycle, reconnect policy, client allocation, or supervision.
-
-## Public Contract Draft
-
-### `MagicCommand`
-
-Defines how a plugin claims a cell.
-
-Responsibilities:
-
-- identify the plugin entry, for example `%%oc`
-- parse initial plugin-specific arguments/config
-- emit a Jusi handoff mime payload that tells backend which handler worker to start
+`MagicCommand` declares the magic names a handler can serve, for example `%%vd` or `%%sql`.
 
 Important:
 
-- magic name and handler id do not have to match
-- this is required for cases like `%%sql`, where one magic may route to different handlers/providers
+- magic name and handler id do not need to match
+- multiple handlers may claim the same magic name
+- final routing is decided by validated kernel handoff, not by frontend header parsing
 
-### `DisplayHandler`
+## `DisplayHandlerSpec`
 
-This is the real plugin runtime unit inside a dedicated worker process.
+`DisplayHandlerSpec` is the backend registration unit for a handler.
 
-Responsibilities:
+Core fields:
 
-- start plugin-owned interaction
-- receive frontend-originated plugin messages
-- emit plugin state changes and action requests through the core channel
-- expose runtime snapshot/state
+- `handler_id`
+- `factory`
+- `magic_commands`
+- `handoff_validator`
+- `kernel_extension_modules`
+- `presentation`
+- `family_presentation`
+
+The registry uses these specs to:
+
+- load plugin handlers from `jusi.display_handlers`
+- advertise session-level metadata
+- validate handoff payloads
+- start the correct handler worker after execution
+
+## `DisplayHandler`
+
+A display handler runs inside a dedicated handler worker and owns one active handler-controlled cell/client pair for its lifetime.
+
+Handler responsibilities:
+
+- start plugin interaction
+- process frontend-originated plugin messages
+- emit frontend events or action requests
+- expose handler snapshot state
 - handle interrupt and stop
 
-Important:
+Worker lifecycle rules:
 
-- the display handler is not limited to one fixed UI mode
-- it may transition between modes as part of plugin logic
-- for example a plugin may begin in a VisiData-like table flow and later switch into a shell/terminal interaction flow
-- one handler worker owns exactly one active cell/client for its whole lifetime
-- normal worker exit should be interpreted by core as cell status `done`
-- unexpected worker death should be interpreted by core as cell status `error`
+- normal worker exit maps to cell status `done`
+- unexpected worker death maps to cell status `error`
+- interrupt routing depends on execution owner kind
 
-### `HandlerContext`
+## `HandlerContext`
 
-Core-owned context passed to the display handler.
+`HandlerContext` is the core-owned runtime context passed into a handler.
 
-Minimum responsibilities:
+It provides:
 
-- session metadata
-- active client identity
-- active cell identity
-- structured event emission helpers
-- structured frontend-command helpers
-- subprocess/runtime helper seams
-- status publication helpers
+- active notebook/session/client/cell identity
+- resolved `magic_name`
+- raw handoff content and metadata
+- event emission helpers
+- frontend action helpers
+- backend action helpers
+- status and transport publication helpers
 
-This context should stay transport-agnostic and Vim-agnostic.
+The context stays transport-agnostic and Vim-agnostic.
 
-Expected startup identity includes:
+## Base Classes
 
-- `notebook_id`
-- `session_id`
-- `client_id`
-- `cell_id`
-- `handler_id`
-- explicit `magic_name`
-- raw kernel handoff payload and metadata
+The current supported base classes are:
 
-### Presentation Metadata
+- `BaseHandler`
+- `BaseTerminalHandler`
+- `BaseVdHandler`
 
-`DisplayHandlerSpec.family_presentation` lets plugins declare editor presentation defaults for their claimed magic names. `DisplayHandlerSpec.presentation` describes the concrete handler/provider once a cell has been resolved by kernel handoff.
+Use them as convenience layers, not as protocol replacements.
 
-The backend exposes family defaults through `session.plugin_specs` so the frontend can select syntax, indentation, follow-up, and completion behavior before a cell executes. These values are broad family defaults, not parsed frontend knowledge of plugin flags or config.
+Current purpose:
 
-After a kernel handoff resolves the concrete handler/provider, backend may also send `cell.presentation` on `cell_updated`. The cell-level value starts from the matched handler spec `presentation` and may be overridden by a `presentation` object in the handoff metadata.
+- `BaseHandler` defines the worker-facing hook shape
+- `BaseTerminalHandler` advertises native-terminal transport and terminal startup
+- `BaseVdHandler` adds reusable VisiData-oriented follow-up/completion/copy seams
 
-Example spec fragment:
+## Session Metadata
+
+Core may publish three plugin-related metadata surfaces.
+
+### `session.plugin_specs`
+
+`session.plugin_specs` describes broad pre-execution editor defaults keyed by magic name.
+
+Use:
+
+- syntax selection
+- indentation selection
+- follow-up support
+- completion support
+
+`family_presentation` feeds `session.plugin_specs`. If `family_presentation` is omitted, backend falls back to `presentation`.
+
+Example:
 
 ```python
 DisplayHandlerSpec(
@@ -135,200 +133,95 @@ DisplayHandlerSpec(
 )
 ```
 
-Important:
+Rules:
 
-- frontend should treat `session.plugin_specs` as pre-execution defaults keyed by magic name
-- frontend should treat `cell.presentation` as authoritative for that executed cell when present
-- frontend should not parse plugin-specific magic arguments or user config to infer dialect
-- simple one-handler magic families may omit `family_presentation`; backend then falls back to `presentation` for session defaults
+- keys are magic names
+- values are family-level defaults
+- provider-family plugins should keep these values provider-neutral
 
-### Palette Metadata
+### `cell.presentation`
 
-Core exposes the frontend creation palette through `session.palette` using the magic names claimed by each handler spec.
+`cell.presentation` is optional cell-level metadata published after a concrete handoff is resolved.
 
-Core reads aliases from `session.target.config[magic_name]` and publishes them under that same magic name:
+Use:
 
-```python
-DisplayHandlerSpec(
-    handler_id="sqlite",
-    magic_commands=(MagicCommand("sql"),),
-)
-```
+- provider- or handler-specific syntax selection after execution
 
-This produces session metadata such as:
+Rules:
+
+- starts from the matched handler spec `presentation`
+- may be overridden by handoff metadata
+- is authoritative for that executed cell when present
+
+### `session.palette`
+
+`session.palette` is the backend-owned frontend creation palette keyed by magic name.
+
+Use:
+
+- plugin cell discovery
+- plugin cell creation commands such as `:J`
+
+Rules:
+
+- section names match claimed magic names exactly
+- every installed plugin family should appear
+- plugins without config-backed aliases use `entries: []`
+- config-backed entries come from `session.target.config[magic_name]`
+- multiple providers claiming the same magic contribute to the same section
+- entry order follows the delivered session config order
+
+Example:
 
 ```json
 {
   "palette": {
-    "vd": {
-      "entries": []
-    },
-    "sql": {
-      "entries": ["analyticsdb", "mysqlitedb"]
-    }
+    "vd": {"entries": []},
+    "shell": {"entries": []},
+    "sql": {"entries": ["analyticsdb", "mysqlitedb"]}
   }
 }
 ```
 
-Important:
+## Handler Channel
 
-- `session.palette` is session-scoped metadata intended for frontend cell discovery / creation flows
-- section names match claimed magic names exactly
-- plugins without config-backed aliases still appear with `entries: []`
-- ordering of config-backed entries follows the order of keys in the delivered session config
-- multiple providers claiming the same magic contribute to the same palette section
+The structured plugin control channel is `handler_message`.
 
-### `FrontendChannel`
+Current directions:
 
-Core-owned structured channel between plugin backend and frontend.
+- frontend -> backend
+  - `followup`
+  - `complete`
+- backend -> frontend
+  - `action_request`
+  - handler-defined events
 
-This exists because some plugins need more than plain output rendering.
+This channel is for control semantics, not fullscreen terminal rendering.
 
-Examples:
+## Native Terminal
 
-- plugin-defined follow-up requests
-- plugin-defined completion requests
-- command dispatch from plugin runtime into frontend action bindings
-- frontend replies back into plugin runtime
-- terminal-side escape or signal bridges normalized into structured channel messages
+Interactive handlers should advertise terminal attachment through client transport metadata:
 
-The goal is to make “weird but useful” flows explicit architecture instead of accidental hacks.
+- `transport.kind = native_terminal`
+- `transport.attach_cmd`
+- `transport.attach_env`
+- `transport.session_id`
+- `transport.client_id`
+- optional `transport.handler_id`
 
-## Status And Consistency Rules
+The current attach bridge is:
 
-Core still owns:
+- `python -m jusi client-process terminal-attach`
 
-- session state
-- active client lifecycle
-- active execution ownership
-- disconnect/reconnect/stop semantics
-- child-process supervision
-- teardown on backend root-process loss
+## Kernel Handoff
 
-Plugins must fit inside that frame.
+Plugins should register real kernel extension modules and emit a Jusi handoff payload from the kernel side.
 
-So even if a plugin is highly custom, the backend should still guarantee:
+The validated handoff decides:
 
-- one coherent active execution owner
-- one coherent client lifecycle
-- consistent stop/disconnect behavior
-- visible failure/interrupt status
-- observable plugin state through core-managed snapshots/events
+- handler identity
+- resolved magic family
+- handler startup payload
+- cell-level presentation overrides when needed
 
-## Reusable Handler Bases
-
-The public plugin contract should stay small, but first-party reusable handler bases are still desirable.
-
-Examples:
-
-- `BaseHandler`
-- `BaseTerminalHandler`
-- `BaseVdHandler`
-
-These are convenience layers, not the contract itself.
-
-Why:
-
-- `%%sql` may want shared VisiData follow-up and completion primitives
-- `%%oc` may also want those same VisiData primitives for its early flow, then later transition into shell-like behavior
-- other plugins may not want VisiData semantics at all
-
-So VisiData support should likely be a reusable first-party handler base, not a global assumption in the backend core.
-
-Current code status:
-
-- backend registry now allows one magic to map to multiple handlers, with explicit handoff validation by `magic_name` and `handler_id`
-- managed runtime now recognizes a first Jusi handoff mime shape from kernel output and surfaces it as a structured handoff event
-- matched handler-owned executions now start in a dedicated `handler-worker` subprocess rather than running handler logic inside the backend root process
-- backend root process remains the router/supervisor for worker/frontend traffic
-- a reusable `BaseHandler` now exists in backend code and owns:
-  - the worker-facing lifecycle entrypoint
-  - default frontend-message recording
-  - fixed hook names for:
-    - `handle()`
-    - `complete()`
-    - `followup()`
-    - `interrupt()`
-    - `stop()`
-- a reusable terminal-hosted handler base now exists on top of that and owns:
-  - native-terminal transport preparation
-  - terminal command/environment advertisement
-  - handler-side terminal-oriented control hooks
-- a reusable `BaseVdHandler` now also exists on top of that terminal host and exposes shared hooks for:
-  - copy
-  - completion
-  - follow-up
-- the current `vd` plugin now lives outside the `jusi` core package in `jusi_vd`
-- that `vd` plugin now reuses those public base layers instead of defining its worker-facing hooks ad hoc
-- the current `vd` plugin now does its first real job:
-  - parse a kernel-side object expression from cell body
-  - carry serialized handoff data into the worker/native-terminal path
-  - run VisiData through its Python API rather than the old CLI bridge
-  - start through the generic core `plugin-runtime` entrypoint, not a VisiData-named starter
-- managed runtime no longer hardcodes `%%vd`; handler specs now contribute real kernel extension modules for magic handoff registration
-- the next handler-base work is about documenting these public bases for plugin authors and then moving a truly separate external plugin repo onto them
-
-Next architecture tightening:
-
-- one handler worker process now owns one active matched handler-owned cell/client
-- every plugin client should assume native terminal as its frontend plane
-- handler/frontend traffic should continue to route through the backend root process
-- live plugin/runtime traffic should use a worker stdin/stdout protocol, not env/argv after startup
-- validated kernel handoff now takes precedence for worker startup when present
-- backend no longer activates workers directly from header parsing in `ExecuteCell`
-- the in-memory runtime now emits synthetic handoffs for magic cells so the test/stub path still exercises the same worker-based activation model
-
-Native-terminal pivot note:
-
-- the earlier PTY-byte path proved the interactive/plugin model
-- fullscreen interactive clients now pivot through native editor terminal buffers instead
-- long-term terminal-hosted plugins should prefer:
-  - backend-owned session/handler lifecycle
-  - structured `handler_message` control semantics
-  - native editor terminal rendering attached to a backend-provided bridge/client-process substrate
-
-So the terminal-hosted handler base should evolve toward:
-
-- starting and supervising the live interactive resource
-- advertising a native-terminal attach substrate for the owning `client_id`
-- keeping follow-up/completion/plugin commands on the structured handler channel
-
-not toward indefinitely extending raw terminal rendering over the notebook control channel.
-
-## First-Class Communication Use Cases
-
-The architecture should explicitly support flows like these:
-
-- plugin asks frontend to run a registered plugin command
-- frontend routes that command through the structured channel back into plugin/backend code
-- plugin backend uses helper functions or subprocess invocations to complete the action
-- plugin runtime may also rely on in-band client signals, but those should be normalized through the core channel where possible
-
-This is important for plugins like `%%oc`, where user actions can span:
-
-- VisiData-like navigation
-- custom backend helpers such as `oc cp`
-- shell session entry through `oc rsh`
-
-## What Core Should Not Do
-
-Core should not:
-
-- hardcode VisiData behavior into all plugins
-- force one renderer taxonomy too early
-- require plugin authors to reimplement supervision and session framing
-- bake frontend-specific command names directly into backend core logic
-
-## First Implementation Direction
-
-The first implementation slice should focus on the contract, not on a large plugin set.
-
-Recommended order:
-
-1. define the kernel handoff mime contract
-2. define the handler worker startup payload and stdin/stdout protocol
-3. move live handler runtime into one worker process per active handler-owned cell/client
-4. rebase first-party reusable handler bases, especially the VisiData-oriented base, onto that worker model
-5. then rewrite concrete plugins like `%%vd`, `%%sql`, or `%%oc` against that worker model
-
-This keeps the architecture explicit before any one plugin starts defining the whole system accidentally.
+Frontend should not infer concrete plugin/provider identity from cell headers or local config.

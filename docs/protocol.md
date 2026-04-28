@@ -1,8 +1,8 @@
-# Jusi Protocol Draft
+# Jusi Protocol
 
-This document is the shared contract between `jusi` and `jusivim`.
+This document defines the wire contract between Jusi and its editor-side plugin.
 
-The wire may use Vim terminal/channel APIs, but the protocol stays transport-agnostic.
+The transport implementation may use Vim/Neovim facilities, but the protocol stays transport-agnostic.
 
 ## Scope
 
@@ -46,15 +46,15 @@ Fields:
 
 ## Identities
 
-- `notebook_id`: frontend notebook runtime id
+- `notebook_id`: editor plugin notebook runtime id
 - `session_id`: backend-generated durable session id
-- `cell_id`: frontend runtime cell id
+- `cell_id`: editor plugin runtime cell id
 - `client_id`: backend-generated cell-owned client id
 
 Notes:
 
 - `sign_id` is not part of the backend contract
-- history regions stay frontend-local
+- history regions stay editor-local
 - buffer numbers may be absent or unbound from backend perspective
 - current ids are backend-generated high-entropy values with `sess-` prefix
 
@@ -64,13 +64,12 @@ Backend clients may expose one of these transport kinds:
 
 - `inspection`
   - current default
-  - frontend renders through `client_updated` plus `inspect_client`
+  - the editor plugin renders through `client_updated` plus `inspect_client`
 - `native_terminal`
   - native-terminal-friendly client advertisement for fullscreen interactive clients
-  - frontend should attach a real editor terminal buffer to the backend-provided attach command/substrate
+  - the editor plugin should attach a real terminal buffer to the backend-provided attach command/substrate
 
-Current PTY traffic over `handler_message` is transitional rather than the long-term native-terminal transport.
-The first concrete native-terminal slice now advertises:
+Native-terminal transport advertises:
 
 - `attach_cmd`
 - `attach_env`
@@ -104,7 +103,7 @@ Notes:
 
 - backend sessions are treated as durable/reconnectable by default
 - backend no longer models separate `link` metadata
-- `endpoint`/backend residence remains a frontend transport concern, not core backend session state
+- backend residence remains an editor-plugin transport concern, not core backend session state
 
 ## Requests
 
@@ -126,11 +125,11 @@ Notes:
 
 Behavior:
 
-- backend is expected to be launched by `jusivim`
+- backend is expected to be launched by the editor plugin
 - starts a new durable session for the notebook
 - enters `starting`, then `connected`
 - backend generates a durable `session_id`
-- frontend may omit `target`; backend derives the current default target from `kernel_name`
+- the editor plugin may omit `target`; backend derives the current default target from `kernel_name`
 
 ### `attach_session`
 
@@ -177,13 +176,12 @@ Behavior:
 
 - requires `connected` session
 - allocates the real execution client directly for that cell
-- frontend may first see the cell become `busy` before a local buffer exists for that client
-- once backend emits the real `client_id` on `cell_updated`, frontend can bind or create the local buffer for that client
+- the editor plugin may first see the cell become `busy` before a local buffer exists for that client
+- once backend emits the real `client_id` on `cell_updated`, the editor plugin can bind or create the local buffer for that client
 - terminal `cell_updated` may arrive later as an async event
-- current long-term direction is:
-  - every cell still enters through the Jupyter kernel
-  - handler takeover should be driven by a kernel-emitted Jusi handoff mime payload, not by backend header parsing alone
-  - once that handoff is accepted, backend will start one handler worker process for that active handler-owned cell/client
+- every cell enters through the Jupyter kernel
+- handler takeover is driven by a kernel-emitted Jusi handoff mime payload
+- once that handoff is accepted, backend starts one handler worker process for that active handler-owned cell/client
 
 ### `interrupt_cell`
 
@@ -234,21 +232,17 @@ Behavior:
 
 Behavior:
 
-- symmetric plugin/frontend message path
-- request form is frontend -> backend
-- event form is backend -> frontend
+- symmetric plugin/editor-plugin message path
+- request form is editor plugin -> backend
+- event form is backend -> editor plugin
 - valid only while that client still has an active handler runtime registered
-Design direction:
-
-- frontend -> backend structured call
-- backend -> frontend structured callback
 
 Current live handler usage:
 
-- frontend -> backend call:
+- editor plugin -> backend call:
   - `followup`
   - `complete`
-- backend -> frontend callback:
+- backend -> editor plugin callback:
   - current structured action callback:
     - `action_request`
 
@@ -256,9 +250,9 @@ Boundary note:
 
 - if an operation can be completed entirely on the backend/plugin side, it should stay there
 - `copy` is not currently part of the generic frontend callback model
-- frontend should not be expected to implement plugin-specific operational logic for such paths
+- the editor plugin should not be expected to implement plugin-specific operational logic for such paths
 
-Current backend -> frontend built-in action shape:
+Current backend -> editor-plugin built-in action shape:
 
 ```json
 {
@@ -279,7 +273,7 @@ Current backend -> frontend built-in action shape:
 }
 ```
 
-Current built-in frontend action:
+Current built-in editor action:
 
 - `action_type = open_path`
   - `path` is required
@@ -294,7 +288,7 @@ Direction note:
   - follow-up
   - completion
   - plugin commands
-- backend root process remains the router for this traffic; frontend does not talk to handler workers directly
+- backend root process remains the router for this traffic; the editor plugin does not talk to handler workers directly
 
 Current generic completion result shape on the handler channel:
 
@@ -326,37 +320,37 @@ Current generic completion result shape on the handler channel:
 Completion replacement semantics:
 
 - `start_col` / `end_col` are optional
-- when present, frontend should replace exactly that 0-based half-open range in `line_text`
+- when present, the editor plugin should replace exactly that 0-based half-open range in `line_text`
 - `end_col` is exclusive
-- when absent, frontend may fall back to generic token replacement
+- when absent, the editor plugin may fall back to generic token replacement
 
 Attach note for native-terminal clients:
 
 - current native-terminal attach metadata is available as part of normal client state
-- frontend attach lifecycle is simply:
+- terminal attach lifecycle is:
   - execute handler cell
   - observe `client.transport.kind = native_terminal`
   - launch the terminal client from `attach_cmd` + `attach_env`
-- current `jusi_vd` plugin uses this by carrying serialized handoff payload into the generic core `plugin-runtime` entrypoint plus a plugin-owned callable
+- the bundled `jusi_vd` plugin uses this by carrying serialized handoff payload into the generic core `plugin-runtime` entrypoint plus a plugin-owned callable
 
-### Planned Kernel Handoff Direction
+### Kernel Handoff
 
-The next handler activation model is expected to add a kernel-emitted Jusi handoff mime payload carrying:
+Handler activation uses a kernel-emitted Jusi handoff mime payload carrying:
 
 - explicit `handler_id`
 - explicit `magic_name`
 - raw cell content/startup payload
 - handler-specific metadata
 
-That handoff should be enough for backend to start the correct handler worker process without further kernel messaging.
+That handoff is sufficient for backend to start the correct handler worker process without further kernel messaging.
 
-Current first slice:
+Current behavior:
 
 - managed runtime now recognizes `application/vnd.jusi.handoff+json` in kernel `display_data` / `execute_result`
 - backend records that as a structured handoff event in the active client transcript/view
 - backend registry now supports validating `magic_name -> handler_id` handoff combinations, including one magic mapping to multiple handlers
 - matched handler-owned executions now run in a dedicated `handler-worker` subprocess
-- backend root process remains the router/supervisor for frontend <-> handler traffic
+- backend root process remains the router/supervisor for editor-plugin <-> handler traffic
 - backend now prefers validated kernel handoff to start the worker when that handoff is present
 - backend no longer starts plugin workers from header parsing in `ExecuteCell`
 - the in-memory runtime now synthesizes handoff events for magic cells so tests and the non-managed stub path still exercise the same worker activation flow
@@ -375,7 +369,7 @@ Behavior:
 
 - valid only while the session is still `connected`
 - acknowledges the current backend-issued `healthcheck` event
-- clears the outstanding frontend-liveness check and refreshes backend liveness tracking
+- clears the outstanding editor-liveness check and refreshes backend liveness tracking
 
 ### `disconnect_session`
 
@@ -394,7 +388,7 @@ Behavior:
 - session identity remains durable for later reconnect
 - session payload exposes `expires_at` as the current disconnect deadline
 - if that deadline passes, backend performs final session teardown without waiting for a reconnect attempt
-- backend may also enter this path after missed frontend healthchecks
+- backend may also enter this path after missed editor healthchecks
 
 ### `reconnect_session`
 
@@ -538,13 +532,13 @@ Behavior:
 Notes:
 
 - `client_id` appears when backend has allocated the real execution client
-- `client_bufnr` may be omitted when frontend has not yet bound a local buffer
+- `client_bufnr` may be omitted when the editor plugin has not yet bound a local buffer
 - native-terminal transport metadata belongs to that real execution client, not to any session-level prepared slot
 - `owner` is independent from `status`
 - `presentation` is optional and only appears when backend has authoritative editor presentation metadata for this cell
 - session-level `plugin_specs` are broad pre-execution defaults keyed by magic name
 - provider-family plugins should keep `plugin_specs` provider-neutral and use cell-level `presentation` for concrete provider dialects
-- session-level `palette` is optional and exposes the frontend creation palette keyed by magic name
+- session-level `palette` is optional and exposes the editor-facing creation palette keyed by magic name
 - installed plugins without named config entries should still appear in `palette` with an empty `entries` list
 
 ### `client_updated`
@@ -562,7 +556,7 @@ Behavior:
 
 - emitted when backend observes that a client's visible view revision changed
 - intended as a redraw invalidation signal, not as a full view payload
-- frontend should respond by calling `inspect_client` for the same client if it needs the updated snapshot
+- the editor plugin should respond by calling `inspect_client` for the same client if it needs the updated snapshot
 - this is the first backend-driven redraw signal for client rendering; `inspect_client` remains the content source for now
 - planned native-terminal clients are expected to rely less on this hot path and more on direct terminal attachment via advertised transport metadata
 
@@ -585,7 +579,7 @@ Behavior:
 
 Behavior:
 
-- backend -> frontend side of the structured handler channel
+- backend -> editor-plugin side of the structured handler channel
 - used for plugin/display-handler control messages
 - current native-terminal direction keeps `handler_message` for control semantics, not as the live fullscreen terminal transport
 - `inspect_client` remains useful for debug/recovery metadata, but the real terminal surface is the advertised native-terminal attach command
@@ -603,7 +597,7 @@ Behavior:
 Behavior:
 
 - emitted by backend while a session is `connected`
-- frontend should reply with `healthcheck_reply`
+- the editor plugin should reply with `healthcheck_reply`
 - if replies stop long enough, backend marks the session `disconnected` and starts the existing disconnect-timeout flow
 - known issue: if Vim is suspended, for example with `Ctrl-Z`, backend may treat the missing reply as link loss
 
@@ -614,8 +608,8 @@ Behavior:
 - durable session metadata is currently in-memory per backend root process; cross-process persistence is still future work
 - transcript-style client redraw remains invalidation-plus-pull for now:
   - backend emits `client_updated`
-  - frontend still pulls the full snapshot through `inspect_client`
-- native-terminal pivot is now preferred for fullscreen interactive handlers:
+  - the editor plugin still pulls the full snapshot through `inspect_client`
+- native-terminal transport is preferred for fullscreen interactive handlers:
   - backend should advertise terminal-backed clients explicitly
-  - frontend should attach a real editor terminal buffer to the backend-provided client substrate
+  - the editor plugin should attach a real terminal buffer to the backend-provided client substrate
   - `handler_message` should remain for control semantics rather than carrying fullscreen terminal transport bytes
