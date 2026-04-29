@@ -278,6 +278,49 @@ class ClientProcessTest(unittest.TestCase):
                 status["lifecycle"],
             )
 
+    def test_terminal_attach_renders_transcript_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            status_path = os.path.join(tmpdir, "status.json")
+            with open(status_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    ClientRuntimeSnapshot(
+                        client_id="client-1",
+                        notebook_id="nb-1",
+                        session_id="sess-1",
+                        active_cell_id=12,
+                        execution_status="done",
+                        view_revision=3,
+                        transcript=[{"type": "stream", "name": "stdout", "text": "hello\n"}],
+                        view_lines=["stdout> hello", "finished: done"],
+                        shutdown_reason="done",
+                    ).to_dict(),
+                    handle,
+                )
+
+            writes: list[str] = []
+
+            class FakeStdout:
+                def write(self, value: str) -> int:
+                    writes.append(value)
+                    return len(value)
+
+                def flush(self) -> None:
+                    return None
+
+            with patch.dict(
+                os.environ,
+                {
+                    "JUSI_TERMINAL_MODE": "transcript",
+                    "JUSI_CLIENT_STATUS_FILE": status_path,
+                },
+                clear=False,
+            ):
+                with patch("sys.stdout", new=FakeStdout()):
+                    rc = main(["client-process", "terminal-attach"])
+
+        self.assertEqual(0, rc)
+        self.assertEqual(["\033[2J\033[H", "hello\n"], writes)
+
 
 if __name__ == "__main__":
     unittest.main()

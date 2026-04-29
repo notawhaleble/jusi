@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import patch
 import time
@@ -491,11 +492,21 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("active", active_client.state)
         self.assertEqual(12, active_client.cell_id)
         self.assertEqual(
-            ["activate:12", "status:busy", "event:execution_started", "status:done", "event:execution_finished"],
+            [
+                "activate:12",
+                "status:busy",
+                "transport:native_terminal",
+                "event:execution_started",
+                "status:done",
+                "event:execution_finished",
+            ],
             active_client.handle.lifecycle,
         )
         session = server._store.get_by_notebook("nb-1")
         self.assertIsNotNone(session)
+        client_view = runtime.read_client_view(session, active_client.client_id)
+        self.assertEqual("native_terminal", client_view["transport"]["kind"])
+        self.assertEqual([os.sys.executable, "-m", "jusi", "client-process", "terminal-attach"], client_view["transport"]["attach_cmd"])
         self.assertEqual(
             {
                 "title": "cell 12: done",
@@ -506,9 +517,10 @@ class StartSessionTest(unittest.TestCase):
                 ],
                 "execution_status": "done",
                 "active_cell_id": 12,
-                "revision": 5,
+                "revision": 6,
+                "transport": client_view["transport"],
             },
-            runtime.read_client_view(session, active_client.client_id),
+            client_view,
         )
 
     def test_background_execute_failure_marks_cell_error_and_records_client_error_event(self) -> None:
@@ -768,6 +780,8 @@ class StartSessionTest(unittest.TestCase):
         )
         inspect_envelopes = [parse_envelope(message) for message in inspect_messages]
         self.assertTrue(inspect_envelopes[0].ok)
+        inspect_client = inspect_envelopes[0].payload["client"]
+        self.assertEqual("native_terminal", inspect_client["transport"]["kind"])
         self.assertEqual(
             {
                 "title": "cell 12: done",
@@ -778,10 +792,11 @@ class StartSessionTest(unittest.TestCase):
                 ],
                 "execution_status": "done",
                 "active_cell_id": 12,
-                "revision": 5,
+                "revision": 6,
                 "runtime_mode": "transcript",
+                "transport": inspect_client["transport"],
             },
-            inspect_envelopes[0].payload["client"],
+            inspect_client,
         )
 
     def test_inspect_client_does_not_demote_transcript_client_on_plugin_liveness_probe(self) -> None:
@@ -1043,6 +1058,8 @@ class StartSessionTest(unittest.TestCase):
         )
         inspect_envelopes = [parse_envelope(message) for message in inspect_messages]
         self.assertTrue(inspect_envelopes[0].ok)
+        inspect_client = inspect_envelopes[0].payload["client"]
+        self.assertEqual("native_terminal", inspect_client["transport"]["kind"])
         self.assertEqual(
             {
                 "title": "cell 12: busy",
@@ -1053,10 +1070,11 @@ class StartSessionTest(unittest.TestCase):
                 ],
                 "execution_status": "busy",
                 "active_cell_id": 12,
-                "revision": 4,
+                "revision": 5,
                 "runtime_mode": "transcript",
+                "transport": inspect_client["transport"],
             },
-            inspect_envelopes[0].payload["client"],
+            inspect_client,
         )
 
     def test_inspect_client_fails_for_unknown_client(self) -> None:

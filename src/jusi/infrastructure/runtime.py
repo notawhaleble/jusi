@@ -322,6 +322,9 @@ class ClientRegistryRuntime:
     def set_client_transport(self, session: Session, client_id: str, transport: ClientTransport) -> None:
         runtime_client = self._require_client(session.session_id, client_id)
         transport_env = dict(transport.attach_env)
+        status_path = getattr(runtime_client.handle, "status_path", "")
+        if status_path:
+            transport_env["JUSI_CLIENT_STATUS_FILE"] = status_path
         pid_path = getattr(runtime_client.handle, "plugin_runtime_pid_path", "")
         if pid_path:
             transport_env["JUSI_PLUGIN_RUNTIME_PID_FILE"] = pid_path

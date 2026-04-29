@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import sys
 from typing import Any
 
+from jusi.infrastructure.client_view import build_client_terminal_lines
 from jusi.infrastructure.client_runtime_host import build_transcript_runtime_host_factory
+from jusi.infrastructure.client_runtime_protocol import ClientRuntimeSnapshot
 
 
 def run_client_process() -> int:
@@ -55,6 +58,9 @@ ClientProcessRunner = TranscriptRuntimeLegacyAdapter
 
 
 def run_terminal_attach() -> int:
+    mode = str(os.environ.get("JUSI_TERMINAL_MODE", "exec")).strip().lower() or "exec"
+    if mode == "transcript":
+        return _run_transcript_terminal_attach()
     raw_command = os.environ.get("JUSI_TERMINAL_CMD_JSON", "").strip()
     if not raw_command:
         sys.stderr.write("missing JUSI_TERMINAL_CMD_JSON\n")
@@ -84,3 +90,41 @@ def run_terminal_attach() -> int:
                 if isinstance(key, str) and isinstance(value, str):
                     child_env[key] = value
     os.execvpe(command[0], command, child_env)
+
+
+def _run_transcript_terminal_attach() -> int:
+    status_path = str(os.environ.get("JUSI_CLIENT_STATUS_FILE", "")).strip()
+    if not status_path:
+        sys.stderr.write("missing JUSI_CLIENT_STATUS_FILE\n")
+        sys.stderr.flush()
+        return 2
+    last_revision = -1
+    while True:
+        snapshot = _read_transcript_snapshot(status_path)
+        if snapshot is not None and snapshot.view_revision != last_revision:
+            last_revision = snapshot.view_revision
+            _render_transcript_snapshot(snapshot)
+        if snapshot is not None and snapshot.shutdown_reason:
+            return 0
+        time.sleep(0.05)
+
+
+def _read_transcript_snapshot(status_path: str) -> ClientRuntimeSnapshot | None:
+    try:
+        with open(status_path, "r", encoding="utf-8") as handle:
+            return ClientRuntimeSnapshot.from_dict(json.load(handle))
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
+def _render_transcript_snapshot(snapshot: ClientRuntimeSnapshot) -> None:
+    lines = build_client_terminal_lines(
+        execution_status=snapshot.execution_status,
+        transcript=snapshot.transcript,
+    )
+    sys.stdout.write("\033[2J\033[H")
+    for line in lines:
+        sys.stdout.write(line + "\n")
+    sys.stdout.flush()

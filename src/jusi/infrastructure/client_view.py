@@ -66,6 +66,50 @@ def build_client_view(
     }
 
 
+def build_client_terminal_lines(
+    *,
+    execution_status: str,
+    transcript: list[dict],
+) -> list[str]:
+    rendered_blocks: list[tuple[str | None, list[str]]] = []
+    display_block_positions: dict[str, int] = {}
+    clear_pending = False
+    for event in transcript[-200:]:
+        event_type = str(event.get("type", "")).strip() or "event"
+        if event_type == "clear_output":
+            wait = bool(event.get("wait", False))
+            if wait:
+                clear_pending = True
+            else:
+                rendered_blocks = []
+                display_block_positions = {}
+                clear_pending = False
+            continue
+        key, event_lines = _render_terminal_event_lines(event)
+        if not event_lines:
+            continue
+        if clear_pending:
+            rendered_blocks = []
+            display_block_positions = {}
+            clear_pending = False
+        if key is not None and key in display_block_positions:
+            rendered_blocks[display_block_positions[key]] = (key, event_lines)
+            continue
+        if key is not None:
+            display_block_positions[key] = len(rendered_blocks)
+        rendered_blocks.append((key, event_lines))
+    lines: list[str] = []
+    for _key, event_lines in rendered_blocks:
+        lines.extend(event_lines)
+    if not lines:
+        if execution_status == "busy":
+            return ["running..."]
+        if execution_status == "interrupted":
+            return ["interrupted"]
+        return []
+    return lines
+
+
 def _render_event_lines(event: dict) -> tuple[str | None, list[str]]:
     event_type = str(event.get("type", "")).strip() or "event"
     if event_type == "execution_started":
@@ -148,6 +192,40 @@ def _render_event_lines(event: dict) -> tuple[str | None, list[str]]:
     return None, [json.dumps(event, ensure_ascii=True, sort_keys=True)]
 
 
+def _render_terminal_event_lines(event: dict) -> tuple[str | None, list[str]]:
+    event_type = str(event.get("type", "")).strip() or "event"
+    if event_type in {"execution_started", "execution_finished", "execution_state", "execute_input"}:
+        return None, []
+    if event_type == "execution_interrupted":
+        return None, ["interrupted"]
+    if event_type == "input_request":
+        prompt = str(event.get("prompt", ""))
+        prefix = "password input required" if bool(event.get("password", False)) else "input required"
+        if prompt:
+            return None, [f"{prefix}: {prompt}"]
+        return None, [prefix]
+    if event_type == "stream":
+        return None, _render_stream_lines(str(event.get("text", "")))
+    if event_type == "error":
+        lines = []
+        for frame in list(event.get("traceback", [])):
+            text = str(frame).rstrip("\n")
+            if text:
+                lines.extend(text.splitlines())
+        if not lines:
+            header = ": ".join(part for part in [str(event.get("ename", "")).strip(), str(event.get("evalue", "")).strip()] if part)
+            if header:
+                lines.append(header)
+        return None, lines
+    if event_type == "display_data":
+        return _terminal_display_block(event)
+    if event_type == "update_display_data":
+        return _terminal_display_block(event)
+    if event_type == "execute_result":
+        return None, _render_terminal_data_lines(event.get("data", {}))
+    return None, []
+
+
 def _display_block(event: dict, prefix: str) -> tuple[str | None, list[str]]:
     display_id = str(event.get("display_id", "")).strip() or None
     return display_id, _render_data_lines(prefix, event.get("data", {}))
@@ -167,6 +245,29 @@ def _render_data_lines(prefix: str, data: object) -> list[str]:
         if lines:
             return lines
     return [f"{prefix}> {json.dumps(data, ensure_ascii=True, sort_keys=True)}"]
+
+
+def _render_terminal_data_lines(data: object) -> list[str]:
+    if not isinstance(data, dict):
+        return [json.dumps(data, ensure_ascii=True, sort_keys=True)]
+    text_plain = data.get("text/plain")
+    if text_plain is not None:
+        return _render_stream_lines(str(text_plain))
+    return [json.dumps(data, ensure_ascii=True, sort_keys=True)]
+
+
+def _terminal_display_block(event: dict) -> tuple[str | None, list[str]]:
+    display_id = str(event.get("display_id", "")).strip() or None
+    return display_id, _render_terminal_data_lines(event.get("data", {}))
+
+
+def _render_stream_lines(raw_text: str) -> list[str]:
+    lines: list[str] = []
+    for chunk in raw_text.splitlines() or [raw_text]:
+        text = chunk.rstrip("\n")
+        if text:
+            lines.append(text)
+    return lines
 
 
 def _render_comm_lines(event_type: str, event: dict) -> list[str]:

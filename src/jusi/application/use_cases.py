@@ -30,6 +30,10 @@ from jusi.domain.models import (
     normalize_closed_followup_execution,
     normalize_stopped_active_execution,
 )
+from jusi.infrastructure.native_terminal_transport import (
+    build_transcript_terminal_attach_env,
+    native_terminal_attach_command,
+)
 from jusi.infrastructure.client_runtime_controller import LiveClientControllerRegistry
 from jusi.infrastructure.client_runtime_host import (
     default_launch_runtime_mode,
@@ -282,6 +286,8 @@ class ExecuteCell:
             client_bufnr=-1,
             client_state="active",
         )
+        if command.cell.kind == "code":
+            self._set_kernel_client_transport(command.notebook_id, session, current_client)
         session.last_action = "execute"
         self._store.save(session)
         emit_timing(
@@ -314,6 +320,26 @@ class ExecuteCell:
             status=current_client.status,
         )
         return session, current_client
+
+    def _set_kernel_client_transport(
+        self,
+        notebook_id: str,
+        session: Session,
+        execution: CellExecution,
+    ) -> None:
+        transport = ClientTransport(
+            kind="native_terminal",
+            attach_cmd=native_terminal_attach_command(),
+            attach_env=build_transcript_terminal_attach_env(
+                session_id=session.session_id,
+                client_id=execution.client_id,
+            ),
+            session_id=session.session_id,
+            client_id=execution.client_id,
+        )
+        execution.transport = transport
+        self._runtime.set_client_transport(session, execution.client_id, transport)
+        self._store.save_execution(notebook_id, execution)
 
     def finish_execute(self, command: ExecuteCellCommand, session: Session, current_client: CellExecution) -> CellExecution:
         emit_timing(

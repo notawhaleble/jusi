@@ -10,6 +10,10 @@ from importlib import metadata
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
 from jusi.domain.models import ClientTransport, ExecutableCell, HandlerHandoff
+from jusi.infrastructure.native_terminal_transport import (
+    build_exec_terminal_attach_env,
+    native_terminal_attach_command,
+)
 
 
 DISPLAY_HANDLER_ENTRY_POINT_GROUP = "jusi.display_handlers"
@@ -527,7 +531,7 @@ def _normalize_completion_item(item: str | Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _native_terminal_attach_command() -> list[str]:
-    return [sys.executable, "-m", "jusi", "client-process", "terminal-attach"]
+    return native_terminal_attach_command()
 
 
 def _native_terminal_attach_env(
@@ -538,20 +542,10 @@ def _native_terminal_attach_env(
     client_id: str,
     handler_id: str,
 ) -> dict[str, str]:
-    attach_child_env = dict(env)
-    attach_child_env.pop("LINES", None)
-    attach_child_env.pop("COLUMNS", None)
-    attach_env = {
-        "JUSI_TERMINAL_CMD_JSON": json.dumps(command),
-        "JUSI_TERMINAL_ENV_JSON": json.dumps(attach_child_env),
-        "JUSI_SESSION_ID": session_id,
-        "JUSI_CLIENT_ID": client_id,
-        "JUSI_HANDLER_ID": handler_id,
-    }
-    pythonpath = str(os.environ.get("PYTHONPATH", "")).strip()
-    if pythonpath:
-        attach_env["PYTHONPATH"] = pythonpath
-    supervisor_pid = str(os.getpid()).strip()
-    if supervisor_pid:
-        attach_env["JUSI_SUPERVISOR_PID"] = supervisor_pid
-    return attach_env
+    return build_exec_terminal_attach_env(
+        command=command,
+        env=env,
+        session_id=session_id,
+        client_id=client_id,
+        handler_id=handler_id,
+    )
