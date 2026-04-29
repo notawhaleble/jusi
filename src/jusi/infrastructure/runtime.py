@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, HandlerHandoff, Session, SessionTarget, parse_handler_handoff_payload
 from jusi.infrastructure.client_view import build_client_view
-from jusi.infrastructure.client_runtime import ProcessClientHandle
+from jusi.infrastructure.client_runtime import InProcessTranscriptHandle
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.plugins import build_display_handler_registry, collect_kernel_extension_modules
 
@@ -242,7 +242,7 @@ class InMemoryClientHandle:
 
 
 @dataclass
-class ManagedClientHandle(ProcessClientHandle):
+class ManagedClientHandle(InProcessTranscriptHandle):
     runtime_kind: str = "managed"
 
 
@@ -268,6 +268,12 @@ class ClientRegistryRuntime:
     def __init__(self) -> None:
         self._client_counter = count(1)
         self._session_clients: dict[str, RuntimeSessionClients] = {}
+
+    def start_client(self, session: Session, notebook_id: str, cell_id: int, initial_status: str) -> str:
+        client_id = self.prepare_client(notebook_id, session.session_id)
+        self.activate_client(session, client_id, cell_id)
+        self.update_client_execution_status(session, client_id, initial_status)
+        return client_id
 
     def prepare_client(self, notebook_id: str, session_id: str) -> str:
         session_clients = self._ensure_session_clients(session_id)

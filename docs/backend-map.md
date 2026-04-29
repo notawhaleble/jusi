@@ -62,10 +62,9 @@ It is meant to answer:
     - `sqlite`
     - `shell`
 
-- `handler worker`
-  - current entrypoint: `python -m jusi handler-worker`
-  - one subprocess per active handler-owned cell/client
-  - owned and supervised by backend root
+- `handler controller`
+  - in-process runtime/controller for a handler-owned cell
+  - owned by backend root
 
 - `plugin runtime`
   - current entrypoint: `python -m jusi plugin-runtime`
@@ -145,15 +144,15 @@ flowchart LR
     F[Editor Plugin]
     B[Backend Root Process\\npython -m jusi]
     K[Kernel Handle\\nmanaged or attached]
-    C[Managed Client Process\\npython -m jusi client-process]
-    W[Handler Worker\\npython -m jusi handler-worker]
+    C[Managed Client State\\nin-process]
+    W[Handler Controller\\nin-process]
     T[Terminal Attach\\npython -m jusi client-process terminal-attach]
     P[Plugin Runtime\\npython -m jusi plugin-runtime]
 
     F <-->|Jusi protocol\\nrequest/response/event| B
     B <-->|Jupyter client API| K
-    B -->|spawn + control dir| C
-    B -->|spawn + stdio protocol| W
+    B -->|in-process transcript state| C
+    B -->|in-process handler control| W
     W -->|transport metadata| B
     F -->|launch attach_cmd in terminal| T
     T -->|exec| P
@@ -524,17 +523,17 @@ If you are trying to understand a bug quickly:
 
 1. determine whether it is:
    - kernel-owned
-   - handler-worker-owned
+   - handler-controller-owned
    - plugin-runtime-owned
 2. determine whether the problematic link is:
    - frontend <-> backend protocol
    - backend <-> kernel
-   - backend <-> handler worker
-   - handler worker <-> plugin runtime
+   - backend <-> in-process handler controller
+   - handler controller <-> plugin runtime
    - plugin runtime -> backend callback
 3. then inspect the matching module family:
    - `interfaces/` for protocol/server
    - `application/` for orchestration
    - `infrastructure/runtime.py` for runtime/client supervision
-   - `infrastructure/handler_worker.py` for worker bridge
+   - `infrastructure/inprocess_handler_controller.py` for live handler control
    - plugin repo/package for runtime-specific behavior

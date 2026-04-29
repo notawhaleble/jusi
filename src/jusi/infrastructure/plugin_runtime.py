@@ -3,49 +3,20 @@ from __future__ import annotations
 import importlib
 import json
 import os
-import signal
 import socket
 import sys
 import threading
 from typing import Callable
 
 from jusi.infrastructure.debug_timing import emit_timing
+from jusi.infrastructure.runtime_supervisor import (
+    monitor_supervisor_liveness,
+    parse_supervisor_pid,
+)
 
 
 PLUGIN_RUNTIME_SUPERVISOR_POLL_INTERVAL_SECONDS = 0.25
 _PLUGIN_CONTROL_HANDLER: Callable[[dict], dict] | None = None
-
-
-def _parse_supervisor_pid(raw: str) -> int:
-    try:
-        value = int(str(raw).strip())
-    except ValueError:
-        return 0
-    return value if value > 0 else 0
-
-
-def _supervisor_is_alive(supervisor_pid: int) -> bool:
-    if supervisor_pid <= 0:
-        return True
-    try:
-        os.kill(supervisor_pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def _request_process_shutdown() -> None:
-    os.kill(os.getpid(), signal.SIGTERM)
-
-
-def _monitor_supervisor_liveness(supervisor_pid: int, stop_event: threading.Event) -> None:
-    while not stop_event.is_set():
-        if not _supervisor_is_alive(supervisor_pid):
-            _request_process_shutdown()
-            return
-        stop_event.wait(PLUGIN_RUNTIME_SUPERVISOR_POLL_INTERVAL_SECONDS)
 
 
 def _write_runtime_pid_file() -> str:
@@ -153,14 +124,15 @@ def run_plugin_runtime() -> int:
         sys.stderr.write("invalid JUSI_PLUGIN_RUNTIME_CALLABLE\n")
         sys.stderr.flush()
         return 2
-    supervisor_pid = _parse_supervisor_pid(os.environ.get("JUSI_SUPERVISOR_PID", ""))
+    supervisor_pid = parse_supervisor_pid(os.environ.get("JUSI_SUPERVISOR_PID", ""))
     stop_event = threading.Event()
     monitor: threading.Thread | None = None
     control_server: threading.Thread | None = None
     if supervisor_pid > 0:
         monitor = threading.Thread(
-            target=_monitor_supervisor_liveness,
+            target=monitor_supervisor_liveness,
             args=(supervisor_pid, stop_event),
+            kwargs={"poll_interval_seconds": PLUGIN_RUNTIME_SUPERVISOR_POLL_INTERVAL_SECONDS},
             daemon=True,
         )
         monitor.start()

@@ -53,10 +53,35 @@ class CellExecution:
     status: CellState = "pending"
     owner_kind: ExecutionOwnerKind = "unknown"
     client_id: str = ""
+    runtime_mode: str = ""
     client_bufnr: int = -1
     client_state: ClientState = "active"
     transport: ClientTransport = field(default_factory=ClientTransport)
     presentation: dict[str, object] = field(default_factory=dict)
+
+
+def clear_execution_runtime_identity(execution: CellExecution) -> None:
+    execution.client_bufnr = -1
+    execution.client_id = ""
+    execution.runtime_mode = ""
+    execution.transport = ClientTransport()
+
+
+def normalize_closed_followup_execution(execution: CellExecution) -> None:
+    if execution.status != "follow-up":
+        return
+    execution.status = "done"
+    execution.owner_kind = "unknown"
+    clear_execution_runtime_identity(execution)
+
+
+def normalize_stopped_active_execution(execution: CellExecution) -> None:
+    if execution.status not in {"busy", "follow-up"}:
+        return
+    execution.status = "interrupted"
+    execution.owner_kind = "unknown"
+    execution.client_state = "shutdown"
+    clear_execution_runtime_identity(execution)
 
 
 @dataclass(frozen=True)

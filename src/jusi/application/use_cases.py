@@ -20,10 +20,31 @@ from jusi.application.ports import (
     StopSessionCommand,
     StartSessionCommand,
 )
-from jusi.domain.models import CellExecution, ClientTransport, ExecutableCell, Session, SessionTarget
+from jusi.domain.models import (
+    CellExecution,
+    ClientTransport,
+    ExecutableCell,
+    Session,
+    SessionTarget,
+    clear_execution_runtime_identity,
+    normalize_closed_followup_execution,
+    normalize_stopped_active_execution,
+)
+from jusi.infrastructure.client_runtime_controller import LiveClientControllerRegistry
+from jusi.infrastructure.client_runtime_host import (
+    default_launch_runtime_mode,
+    default_transition_target_runtime_mode,
+    require_registered_runtime_mode,
+)
+from jusi.infrastructure.client_runtime_launcher import (
+    ClientRuntimeLauncher,
+    HandlerClientCallbacks,
+    RuntimeClientLaunchOperation,
+    RuntimeClientTransitionOperation,
+)
+from jusi.infrastructure.client_runtime_updates import ClientRuntimeUpdate
 from jusi.infrastructure.debug_timing import emit_timing
-from jusi.infrastructure.handler_worker import HandlerWorkerProcess, HandlerWorkerStartup
-from jusi.plugins import ActiveDisplayHandler, DisplayHandlerRegistry, DisplayHandlerRuntime, HandlerContext, collect_plugin_palette, collect_plugin_presentation_specs, default_frontend_channel
+from jusi.plugins import DisplayHandlerRegistry, HandlerContext, collect_plugin_palette, collect_plugin_presentation_specs, default_frontend_channel
 
 
 def _target_payload(target: SessionTarget) -> dict:
@@ -68,6 +89,8 @@ def _cell_payload(execution: CellExecution) -> dict:
     }
     if execution.client_id:
         payload["client_id"] = execution.client_id
+    if execution.runtime_mode:
+        payload["runtime_mode"] = execution.runtime_mode
     if execution.client_bufnr >= 0:
         payload["client_bufnr"] = execution.client_bufnr
     if execution.transport.kind:
@@ -96,6 +119,25 @@ def _require_matching_session(store: SessionStore, notebook_id: str, session_id:
     if session is None or session.session_id != session_id:
         raise SessionNotFoundError("Unknown notebook session")
     return session
+
+
+def _require_execution_runtime_mode(execution: CellExecution):  # type: ignore[no-untyped-def]
+    if execution.owner_kind == "unknown":
+        raise ValueError("Cannot operate on execution without an active runtime owner")
+    mode = require_registered_runtime_mode(execution.runtime_mode)
+    if mode.owner_kind != execution.owner_kind:
+        raise ValueError("Execution owner does not match runtime mode")
+    return mode
+
+
+def _validate_execution_runtime_consistency(execution: CellExecution) -> None:
+    if not execution.runtime_mode:
+        return
+    mode = require_registered_runtime_mode(execution.runtime_mode)
+    if execution.owner_kind == "unknown":
+        return
+    if mode.owner_kind != execution.owner_kind:
+        raise ValueError("Execution owner does not match runtime mode")
 
 
 class StartSession:
@@ -187,7 +229,8 @@ class ExecuteCell:
         store: SessionStore,
         events: SessionEventSink,
         display_handlers: DisplayHandlerRegistry | None = None,
-        active_handlers: DisplayHandlerRuntime | None = None,
+        active_client_controllers: LiveClientControllerRegistry | None = None,
+        client_runtime_launcher: ClientRuntimeLauncher | None = None,
         handler_message_sink: Callable[[str, str, str, str, str, dict], None] | None = None,
         live_handler_message_sink: Callable[[str, str, str, str, str, dict], None] | None = None,
     ) -> None:
@@ -195,15 +238,13 @@ class ExecuteCell:
         self._store = store
         self._events = events
         self._display_handlers = display_handlers or DisplayHandlerRegistry()
-        self._active_handlers = active_handlers or DisplayHandlerRuntime()
+        self._active_client_controllers = active_client_controllers or LiveClientControllerRegistry()
+        self._client_runtime_launcher = client_runtime_launcher or ClientRuntimeLauncher(self._active_client_controllers)
         self._handler_message_sink = handler_message_sink or (lambda *_args: None)
         self._live_handler_message_sink = live_handler_message_sink or (lambda *_args: None)
 
-    def _resolve_owner_kind(self, command: ExecuteCellCommand) -> str:
-        _ = command
-        return "kernel"
-
     def begin_execute(self, command: ExecuteCellCommand) -> tuple[Session, CellExecution]:
+        launch_mode = default_launch_runtime_mode()
         emit_timing(
             "use_case.execute.begin",
             notebook_id=command.notebook_id,
@@ -215,13 +256,29 @@ class ExecuteCell:
         session = _require_matching_session(self._store, command.notebook_id, command.session_id)
         if session.state != "connected":
             raise ValueError("Cannot execute cell without a connected session")
-        client_id = self._runtime.prepare_client(command.notebook_id, session.session_id)
+        launch = self._client_runtime_launcher.launch_runtime_client(
+            RuntimeClientLaunchOperation(
+                runtime_mode=launch_mode.name,
+                notebook_id=command.notebook_id,
+                session_id=session.session_id,
+                cell_id=command.cell.cell_id,
+                initial_status="busy",
+                start_client=lambda notebook_id, cell_id, initial_status: self._runtime.start_client(
+                    session,
+                    notebook_id,
+                    cell_id,
+                    initial_status,
+                ),
+            )
+        )
+        client_id = launch.client_id
 
         current_client = CellExecution(
             cell_id=command.cell.cell_id,
             status="busy",
-            owner_kind=self._resolve_owner_kind(command),
+            owner_kind=launch_mode.owner_kind,
             client_id=client_id,
+            runtime_mode=launch_mode.name,
             client_bufnr=-1,
             client_state="active",
         )
@@ -247,15 +304,6 @@ class ExecuteCell:
             cell_id=current_client.cell_id,
             client_id=current_client.client_id,
         )
-        self._runtime.activate_client(session, current_client.client_id, current_client.cell_id)
-        emit_timing(
-            "use_case.execute.client_activate_done",
-            notebook_id=command.notebook_id,
-            session_id=session.session_id,
-            cell_id=current_client.cell_id,
-            client_id=current_client.client_id,
-        )
-        self._runtime.update_client_execution_status(session, current_client.client_id, current_client.status)
         emit_timing(
             "use_case.execute.client_activated",
             notebook_id=command.notebook_id,
@@ -295,6 +343,7 @@ class ExecuteCell:
                 current_client.client_id,
                 {"type": "error", "message": message},
             )
+            self._maybe_release_managed_controller(session.session_id, current_client)
             self._store.save_execution(command.notebook_id, current_client)
             self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
             raise
@@ -319,9 +368,9 @@ class ExecuteCell:
             )
             matched_handler = self._display_handlers.validate_handoff(handoff)
             if matched_handler is not None:
-                current_client.owner_kind = "handler"
+                handler_mode = default_transition_target_runtime_mode(current_client.runtime_mode)
                 current_client.presentation = self._presentation_for_handoff(handoff, matched_handler)
-                current_client.status = self._start_handler_worker(
+                current_client.status = self._take_over_with_handler_runtime(
                     command,
                     session,
                     current_client,
@@ -331,6 +380,9 @@ class ExecuteCell:
                     handoff.content,
                     handoff.meta,
                 )
+                current_client.owner_kind = handler_mode.owner_kind
+                current_client.runtime_mode = handler_mode.name
+        self._maybe_release_managed_controller(session.session_id, current_client)
         self._store.save_execution(command.notebook_id, current_client)
         self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
         return current_client
@@ -343,7 +395,7 @@ class ExecuteCell:
             presentation.update(dict(raw_override))
         return presentation
 
-    def _start_handler_worker(
+    def _take_over_with_handler_runtime(
         self,
         command: ExecuteCellCommand,
         session: Session,
@@ -355,7 +407,7 @@ class ExecuteCell:
         meta: dict[str, object],
     ) -> str:
         emit_timing(
-            "use_case.handler_worker.start",
+            "use_case.handler_takeover.start",
             notebook_id=command.notebook_id,
             session_id=session.session_id,
             cell_id=current_client.cell_id,
@@ -363,9 +415,9 @@ class ExecuteCell:
             handler_id=handler_id,
             magic_name=magic_name,
         )
-        append_event = lambda event: self._runtime.append_client_execution_event(session, current_client.client_id, event)
-        worker = HandlerWorkerProcess(
-            startup=HandlerWorkerStartup(
+        takeover = self._client_runtime_launcher.transition_runtime_client(
+            RuntimeClientTransitionOperation(
+                source_runtime_mode=current_client.runtime_mode,
                 notebook_id=command.notebook_id,
                 session_id=session.session_id,
                 client_id=current_client.client_id,
@@ -375,59 +427,143 @@ class ExecuteCell:
                 cell=worker_cell,
                 content=content,
                 meta=dict(meta),
-            ),
-            append_execution_event=append_event,
-            update_execution_status=lambda status: self._runtime.update_client_execution_status(
-                session, current_client.client_id, status
-            ),
-            set_client_transport=lambda transport: self._set_handler_client_transport(
-                command.notebook_id,
-                session,
-                current_client,
-                transport,
-            ),
-            emit_handler_message=lambda message_type, payload: self._live_handler_message_sink(
-                command.notebook_id,
-                session.session_id,
-                current_client.client_id,
-                handler_id,
-                message_type,
-                payload,
-            ),
-            invoke_backend_action=lambda action_name, payload: self._invoke_handler_backend_action(
-                action_name,
-                session,
-                current_client.client_id,
-                payload,
-            ),
-            on_exit=lambda exit_status: self._handle_worker_exit(
-                command.notebook_id,
-                session.session_id,
-                current_client.cell_id,
-                current_client.client_id,
-                exit_status,
-            ),
+                callbacks=self._build_handler_client_callbacks(
+                    command.notebook_id,
+                    session,
+                    current_client,
+                    handler_id,
+                ),
+            )
         )
-        self._active_handlers.register(
-            session.session_id,
-            current_client.client_id,
-            ActiveDisplayHandler(
-                handler_id=handler_id,
-                handler=worker,  # type: ignore[arg-type]
-                context=None,
-            ),
-        )
-        status = worker.wait_started()
         emit_timing(
-            "use_case.handler_worker.started",
+            "use_case.handler_takeover.done",
             notebook_id=command.notebook_id,
             session_id=session.session_id,
             cell_id=current_client.cell_id,
             client_id=current_client.client_id,
             handler_id=handler_id,
-            status=status,
+            status=takeover.status,
         )
-        return status
+        return takeover.status
+
+    def _build_handler_client_callbacks(
+        self,
+        notebook_id: str,
+        session: Session,
+        execution: CellExecution,
+        handler_id: str,
+    ) -> HandlerClientCallbacks:
+        return HandlerClientCallbacks(
+            handle_runtime_update=lambda update: self._handle_handler_runtime_update(
+                notebook_id,
+                session,
+                execution,
+                handler_id,
+                update,
+            ),
+            invoke_backend_action=lambda action_name, payload: self._invoke_handler_backend_action(
+                action_name,
+                session,
+                execution.client_id,
+                payload,
+            ),
+            on_exit=lambda exit_status: self._handle_worker_exit(
+                notebook_id,
+                session.session_id,
+                execution.cell_id,
+                execution.client_id,
+                exit_status,
+            ),
+        )
+
+    def _handle_handler_runtime_update(
+        self,
+        notebook_id: str,
+        session: Session,
+        execution: CellExecution,
+        handler_id: str,
+        update: ClientRuntimeUpdate,
+    ) -> None:
+        if update.kind == "execution_event":
+            event = update.payload.get("event", {})
+            if isinstance(event, dict):
+                self._runtime.append_client_execution_event(session, execution.client_id, dict(event))
+            return
+        if update.kind == "execution_status":
+            self._runtime.update_client_execution_status(
+                session,
+                execution.client_id,
+                str(update.payload.get("status", "")).strip(),
+            )
+            return
+        if update.kind == "transport":
+            transport = update.payload.get("transport")
+            if isinstance(transport, ClientTransport):
+                self._set_handler_client_transport(notebook_id, session, execution, transport)
+            return
+        if update.kind == "channel_event":
+            event_type = str(update.payload.get("event_type", "")).strip()
+            payload = dict(update.payload.get("payload", {}))
+            self._runtime.append_client_execution_event(
+                session,
+                execution.client_id,
+                {
+                    "type": "handler_channel_event",
+                    "event_type": event_type,
+                    "payload": payload,
+                },
+            )
+            self._live_handler_message_sink(
+                notebook_id,
+                session.session_id,
+                execution.client_id,
+                handler_id,
+                event_type,
+                payload,
+            )
+            return
+        if update.kind == "action_request":
+            action_type = str(update.payload.get("action_type", "")).strip()
+            payload = dict(update.payload.get("payload", {}))
+            self._runtime.append_client_execution_event(
+                session,
+                execution.client_id,
+                {
+                    "type": "frontend_action_request",
+                    "action_type": action_type,
+                    "payload": payload,
+                },
+            )
+            self._live_handler_message_sink(
+                notebook_id,
+                session.session_id,
+                execution.client_id,
+                handler_id,
+                "action_request",
+                {
+                    "action_type": action_type,
+                    "payload": payload,
+                },
+            )
+            return
+        if update.kind == "live_handler_message":
+            self._live_handler_message_sink(
+                notebook_id,
+                session.session_id,
+                execution.client_id,
+                handler_id,
+                str(update.payload.get("message_type", "")).strip(),
+                dict(update.payload.get("payload", {})),
+            )
+            return
+        raise ValueError(f"Unsupported handler runtime update kind: {update.kind}")
+
+    def _maybe_release_managed_controller(self, session_id: str, execution: CellExecution) -> None:
+        if execution.owner_kind != "kernel":
+            return
+        if execution.status not in {"done", "error", "interrupted"}:
+            return
+        self._active_client_controllers.remove_client(session_id, execution.client_id)
 
     @staticmethod
     def _cell_from_handoff(cell: ExecutableCell, magic_name: str, content: str) -> ExecutableCell:
@@ -505,13 +641,13 @@ class ExecuteCell:
     ) -> None:
         execution = self._store.get_execution(notebook_id, cell_id)
         if execution is None:
-            self._active_handlers.remove_client(session_id, client_id)
+            self._active_client_controllers.remove_client(session_id, client_id)
             return
         if execution.status not in {"done", "error", "interrupted"}:
             execution.status = exit_status if exit_status in {"done", "error"} else "error"
             self._store.save_execution(notebook_id, execution)
             self._events.cell_updated(notebook_id, _cell_payload(execution))
-        self._active_handlers.remove_client(session_id, client_id)
+        self._active_client_controllers.remove_client(session_id, client_id)
 
     def execute(self, command: ExecuteCellCommand) -> CellExecution:
         session, current_client = self.begin_execute(command)
@@ -524,12 +660,12 @@ class InterruptCell:
         runtime: KernelRuntime,
         store: SessionStore,
         events: SessionEventSink,
-        active_handlers: DisplayHandlerRuntime | None = None,
+        active_client_controllers: LiveClientControllerRegistry | None = None,
     ) -> None:
         self._runtime = runtime
         self._store = store
         self._events = events
-        self._active_handlers = active_handlers or DisplayHandlerRuntime()
+        self._active_client_controllers = active_client_controllers or LiveClientControllerRegistry()
 
     def execute(self, command: InterruptCellCommand) -> CellExecution:
         session = _require_matching_session(self._store, command.notebook_id, command.session_id)
@@ -543,13 +679,14 @@ class InterruptCell:
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
 
-        if execution.owner_kind == "kernel":
+        mode = _require_execution_runtime_mode(execution)
+        if mode.name == "transcript":
             execution.status = self._runtime.interrupt_kernel(session, execution)
-        elif execution.owner_kind == "handler":
-            self._active_handlers.interrupt_client(session.session_id, execution.client_id)
+        elif mode.name == "handler":
+            self._active_client_controllers.interrupt_client(session.session_id, execution.client_id)
             execution.status = self._runtime.interrupt_handler(session, execution)
         else:
-            raise ValueError("Cannot interrupt execution with unknown owner")
+            raise ValueError(f"Unsupported runtime mode for interrupt: {mode.name}")
 
         self._store.save_execution(command.notebook_id, execution)
         self._events.cell_updated(command.notebook_id, _cell_payload(execution))
@@ -675,7 +812,7 @@ class StopSession:
 
         for execution in self._store.list_executions(command.notebook_id):
             if execution.status in {"busy", "follow-up"}:
-                execution.status = "interrupted"
+                normalize_stopped_active_execution(execution)
                 self._store.save_execution(command.notebook_id, execution)
                 self._events.cell_updated(command.notebook_id, _cell_payload(execution))
 
@@ -705,6 +842,7 @@ class ShutdownClient:
         execution = self._store.get_execution(command.notebook_id, command.cell_id)
         if execution is None or execution.client_id != command.client_id:
             raise ValueError("No tracked client ownership for shutdown request")
+        _validate_execution_runtime_consistency(execution)
 
         self._normalize_closed_handler_followup(execution)
         execution.client_state = "shutting_down"
@@ -717,12 +855,7 @@ class ShutdownClient:
         self._events.cell_updated(command.notebook_id, _cell_payload(execution))
 
     def _normalize_closed_handler_followup(self, execution: CellExecution) -> None:
-        if execution.status != "follow-up":
-            return
-        execution.status = "done"
-        execution.owner_kind = "unknown"
-        execution.client_id = ""
-        execution.transport = ClientTransport()
+        normalize_closed_followup_execution(execution)
 
 
 class HealthcheckReply:
@@ -743,9 +876,9 @@ class HealthcheckReply:
 
 
 class HandlerMessage:
-    def __init__(self, store: SessionStore, active_handlers: DisplayHandlerRuntime) -> None:
+    def __init__(self, store: SessionStore, active_client_controllers: LiveClientControllerRegistry) -> None:
         self._store = store
-        self._active_handlers = active_handlers
+        self._active_client_controllers = active_client_controllers
 
     def execute(self, command: HandlerMessageCommand) -> Session:
         emit_timing(
@@ -757,12 +890,13 @@ class HandlerMessage:
             message_type=command.message_type,
         )
         session = _require_matching_session(self._store, command.notebook_id, command.session_id)
-        active_handler = self._active_handlers.get(command.session_id, command.client_id)
-        if active_handler is None:
-            raise ValueError("No active handler is registered for the client")
-        if active_handler.handler_id != command.handler_id:
-            raise ValueError("Handler message does not match the active handler")
-        active_handler.handler.on_frontend_message(active_handler.context, command.message_type, command.payload)
+        self._active_client_controllers.dispatch_frontend_message(
+            command.session_id,
+            command.client_id,
+            handler_id=command.handler_id,
+            message_type=command.message_type,
+            payload=command.payload,
+        )
         emit_timing(
             "use_case.handler_message.done",
             notebook_id=command.notebook_id,

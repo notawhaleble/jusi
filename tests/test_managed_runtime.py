@@ -1803,18 +1803,10 @@ class ManagedRuntimeTest(unittest.TestCase):
         stop_envelopes = [parse_envelope(message) for message in stop_messages]
         self.assertTrue(stop_envelopes[0].ok)
 
-    def test_managed_runtime_uses_configured_client_command(self) -> None:
+    def test_managed_runtime_ignores_configured_client_command_after_inprocess_pivot(self) -> None:
         manager = FakeManager()
         client = FakeClient()
-        script = (
-            "import json, os, sys; "
-            "status_path = os.path.join(os.environ['JUSI_CLIENT_CONTROL_DIR'], 'status.json'); "
-            "json.dump({'client_id': os.environ['JUSI_CLIENT_ID'], 'notebook_id': os.environ['JUSI_NOTEBOOK_ID'], "
-            "'session_id': os.environ['JUSI_SESSION_ID'], 'client_bufnr': -1, 'active_cell_id': None, "
-            "'lifecycle': ['ready'], 'shutdown_reason': ''}, open(status_path, 'w', encoding='utf-8')); "
-            "sys.stdout.write('ready\\n'); sys.stdout.flush()"
-        )
-        command = f"{shlex_quote(sys.executable)} -u -c {shlex_quote(script)}"
+        command = f"{shlex_quote(sys.executable)} -u -c {shlex_quote('raise SystemExit(13)')}"
         with patch.dict(os.environ, {"JUSI_CLIENT_CMD": command}, clear=False):
             with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
                 runtime = ManagedKernelRuntime()
@@ -1825,35 +1817,41 @@ class ManagedRuntimeTest(unittest.TestCase):
             runtime_client = runtime.get_client(session_id, prepared_client_id)
             self.assertIsNotNone(runtime_client)
             self.assertTrue(runtime_client.handle.lifecycle[0].startswith("spawn:"))
+            self.assertIsNone(getattr(runtime_client.handle, "pid", None))
             runtime.shutdown_client(session, prepared_client_id, "healthcheck")
 
-    def test_managed_runtime_passes_client_metadata_to_child_process(self) -> None:
+    def test_managed_runtime_stores_client_metadata_in_snapshot(self) -> None:
         manager = FakeManager()
         client = FakeClient()
-        script = (
-            "import json, os, sys; "
-            "status_path = os.path.join(os.environ['JUSI_CLIENT_CONTROL_DIR'], 'status.json'); "
-            "json.dump({'client_id': os.environ['JUSI_CLIENT_ID'], 'notebook_id': os.environ['JUSI_NOTEBOOK_ID'], "
-            "'session_id': os.environ['JUSI_SESSION_ID'], 'client_bufnr': -1, 'active_cell_id': None, "
-            "'lifecycle': ['ready'], 'shutdown_reason': ''}, open(status_path, 'w', encoding='utf-8')); "
-            "sys.stdout.write('ready\\n'); sys.stdout.flush(); "
-            "sys.stdout.write('|'.join([os.environ['JUSI_CLIENT_ID'], os.environ['JUSI_NOTEBOOK_ID'], os.environ['JUSI_SESSION_ID']])) ; "
-            "sys.stdout.flush()"
-        )
-        command = f"{shlex_quote(sys.executable)} -u -c {shlex_quote(script)}"
-        with patch.dict(os.environ, {"JUSI_CLIENT_CMD": command}, clear=False):
-            with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
-                runtime = ManagedKernelRuntime()
-                session_id, connection = runtime.start_managed("python3")
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            runtime = ManagedKernelRuntime()
+            session_id, connection = runtime.start_managed("python3")
 
-            session = Session(notebook_id="nb-1", session_id=session_id, connection=connection, kernel_name="python3")
-            prepared_client_id = runtime.prepare_client("nb-1", session_id)
-            runtime_client = runtime.get_client(session_id, prepared_client_id)
-            self.assertIsNotNone(runtime_client)
-            self.assertIsNotNone(runtime_client.handle.process.stdout)
-            metadata_line = runtime_client.handle.process.stdout.readline().strip()
-            self.assertEqual(f"{prepared_client_id}|nb-1|{session_id}", metadata_line)
-            runtime.shutdown_client(session, prepared_client_id, "healthcheck")
+        session = Session(notebook_id="nb-1", session_id=session_id, connection=connection, kernel_name="python3")
+        prepared_client_id = runtime.prepare_client("nb-1", session_id)
+        runtime_client = runtime.get_client(session_id, prepared_client_id)
+        self.assertIsNotNone(runtime_client)
+        self.assertEqual(
+            {
+                "client_id": prepared_client_id,
+                "notebook_id": "nb-1",
+                "session_id": session_id,
+                "client_bufnr": -1,
+                "active_cell_id": None,
+                "execution_status": "",
+                "view_revision": 0,
+                "lifecycle": ["ready"],
+                "transcript": [],
+                "view_title": f"client {prepared_client_id}: idle",
+                "view_lines": [
+                    f"meta> client={prepared_client_id} session={session_id} bufnr=unbound",
+                    "waiting for transcript",
+                ],
+                "shutdown_reason": "",
+            },
+            runtime_client.handle.read_status(),
+        )
+        runtime.shutdown_client(session, prepared_client_id, "healthcheck")
 
     def test_managed_runtime_reports_missing_dependency_cleanly(self) -> None:
         with patch("builtins.__import__", side_effect=ModuleNotFoundError("missing")):

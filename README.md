@@ -20,7 +20,7 @@ The backend may run locally or remotely depending on the selected session target
 ## Runtime Entrypoints
 
 - backend root process: `python -m jusi`
-- client process: `python -m jusi client-process`
+- client runtime: `python -m jusi client-runtime`
 - plugin runtime starter: `python -m jusi plugin-runtime`
 
 ## Protocol Features
@@ -46,6 +46,8 @@ Cell metadata may include:
 
 - `presentation`
   - authoritative post-handoff presentation metadata for an executed cell
+- `runtime_mode`
+  - backend-owned runtime mode such as `transcript` or `handler`
 
 ## Repository Layout
 
@@ -70,6 +72,7 @@ Cell metadata may include:
 - [Session Lifecycle](docs/session-lifecycle.md)
 - [Plugin Contract](docs/plugins.md)
 - [Architecture](docs/architecture.md)
+- [Single Client Runtime Pivot](docs/client-runtime-pivot.md)
 - [Backend Map](docs/backend-map.md)
 
 ## Contributing

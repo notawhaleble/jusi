@@ -31,9 +31,10 @@ Use these terms consistently:
 - `session runtime state`
   - in-memory supervision state held by the backend root process for the current session
   - tracks live per-session resources rather than acting as a multi-session registry
-- `client process`
+- `client runtime`
   - a backend-owned child process used for active client runtime behavior
-  - current entrypoint: `python -m jusi client-process`
+  - current entrypoint: `python -m jusi client-runtime`
+  - current registered modes include `transcript` and `handler`
 - `kernel handle`
   - the execution-side resource for the session
   - may be a managed child process, an attached external connection, or another runtime handle
@@ -57,7 +58,7 @@ Current interpretation:
 - backend residence is an editor-plugin transport concern
 - sessions are durable/reconnectable by default
 - one backend root process supervises one current durable session record
-- that same root process may also supervise multiple child client processes for that session
+- that same root process may also supervise multiple child client runtimes for that session
 - the editor plugin may keep the real persisted reconnectables list across editor lifetimes
 - durable ids are backend-generated with high-entropy `sess-...` values rather than local counters
 
@@ -139,8 +140,8 @@ Handler-owned execution now follows this model:
 - every cell still enters through the Jupyter kernel
 - handler takeover is driven by a kernel-emitted Jusi handoff mime payload
 - backend root process validates that handoff against the registered handler spec
-- backend root process starts one `handler-worker` process per active handler-owned cell/client
-- the worker owns the live plugin handler for that client lifetime
+- backend root process can replace the initial `transcript` client runtime with a `handler` client runtime for that cell/client
+- that handler runtime owns the live plugin handler for that client lifetime
 - normal worker exit maps to cell status `done`
 - unexpected worker death maps to cell status `error`
 - interrupt for handler-owned cells is a structured handler interrupt first
@@ -166,7 +167,7 @@ Current model:
 
 - backend root process still owns session and handler lifecycle
 - handler-owned clients use native terminal as the default editor plane
-- when a handler becomes terminal-backed, backend provisions a dedicated terminal client process for that `client_id`
+- when a handler becomes terminal-backed, backend provisions a dedicated terminal client substrate for that `client_id`
 - the editor plugin receives terminal-client metadata from backend and launches a real terminal buffer against that process command
 - terminal transport flows through that native terminal job attachment, not through `handler_message terminal_bytes`
 - `handler_message` stays available for:
@@ -181,7 +182,7 @@ Terminal-backed clients still remain within the normal Jusi client model:
 - `client_id`
 - optional `handler_id`
 
-The terminal bridge/client process maps back to those ids so stop/disconnect/cleanup stay centralized in backend supervision.
+The terminal bridge/client runtime maps back to those ids so stop/disconnect/cleanup stay centralized in backend supervision.
 
 Backend advertises terminal-backed clients explicitly through normal client transport metadata:
 
@@ -194,3 +195,13 @@ Backend advertises terminal-backed clients explicitly through normal client tran
   - optional `handler_id`
 
 `inspect_client` remains a debug/recovery seam rather than the hot rendering path for native-terminal clients.
+
+## Next Internal Refactor
+
+The single-client-runtime pivot is mostly complete. Backend root now owns:
+
+- in-process transcript state for plain kernel cells
+- in-process handler control for live handler cells
+
+The only remaining intentional child on the live plugin path is
+`plugin-runtime`.

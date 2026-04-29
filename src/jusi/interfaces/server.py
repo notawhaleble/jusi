@@ -12,7 +12,9 @@ from jusi.application.ports import DisconnectSessionCommand, ReconnectSessionCom
 from jusi.application.ports import ShutdownClientCommand
 from jusi.application.use_cases import AttachSession, DisconnectSession, ExecuteCell, HandlerMessage, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
 from jusi.domain.models import ExecutableCell
-from jusi.domain.models import ClientTransport
+from jusi.domain.models import clear_execution_runtime_identity, normalize_closed_followup_execution
+from jusi.infrastructure.client_runtime_host import require_registered_runtime_mode
+from jusi.infrastructure.client_runtime_controller import LiveClientControllerRegistry
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore, build_runtime
 from jusi.interfaces.protocol import (
@@ -35,7 +37,7 @@ from jusi.interfaces.protocol import (
     parse_stop_session,
     response_envelope,
 )
-from jusi.plugins import DisplayHandlerRegistry, DisplayHandlerRuntime, build_display_handler_registry
+from jusi.plugins import DisplayHandlerRegistry, build_display_handler_registry
 
 FRONTEND_HEALTHCHECK_INTERVAL_SECONDS = 5.0
 FRONTEND_HEALTHCHECK_REPLY_TTL_SECONDS = 10.0
@@ -134,7 +136,7 @@ class ProtocolServer:
         self._store = InMemorySessionStore()
         self._pending_events: SimpleQueue[Envelope] = SimpleQueue()
         self._display_handlers = display_handlers or build_display_handler_registry()
-        self._active_handlers = DisplayHandlerRuntime()
+        self._active_client_controllers = LiveClientControllerRegistry()
         self._client_revisions: dict[tuple[str, str], int] = {}
         self._closed = False
 
@@ -184,7 +186,7 @@ class ProtocolServer:
         if self._closed:
             return
         self._closed = True
-        self._active_handlers.stop_all()
+        self._active_client_controllers.stop_all()
         close_runtime = getattr(self._runtime, "close", None)
         if callable(close_runtime):
             close_runtime()
@@ -200,7 +202,7 @@ class ProtocolServer:
             if deadline is None or deadline > now:
                 continue
             self._runtime.expire_session(session)
-            self._active_handlers.remove_session(session.session_id)
+            self._active_client_controllers.remove_session(session.session_id)
             session.state = "stopped"
             session.last_action = "timeout"
             session.last_error = "session_expired"
@@ -227,7 +229,7 @@ class ProtocolServer:
                         reason="frontend_unreachable",
                     )
                 )
-                self._active_handlers.remove_session(session.session_id)
+                self._active_client_controllers.remove_session(session.session_id)
                 for event in events.events:
                     self._pending_events.put(event)
                 continue
@@ -298,6 +300,12 @@ class ProtocolServer:
     def _drain_client_frontend_actions(self, notebook_id: str, session, runtime_client) -> None:  # type: ignore[no-untyped-def]
         drain = getattr(runtime_client.handle, "drain_frontend_actions", None)
         if not callable(drain):
+            return
+        active = self._active_client_controllers.get(session.session_id, runtime_client.client_id)
+        if active is None or not active.runtime_mode:
+            return
+        mode = require_registered_runtime_mode(active.runtime_mode)
+        if not mode.accepts_frontend_messages:
             return
         handler_id = str(getattr(runtime_client.transport, "handler_id", "") or "").strip()
         if not handler_id:
@@ -418,7 +426,7 @@ class ProtocolServer:
             runtime=self._runtime,
             store=self._store,
             events=events,
-            active_handlers=self._active_handlers,
+            active_client_controllers=self._active_client_controllers,
         )
         try:
             use_case.execute(
@@ -452,7 +460,7 @@ class ProtocolServer:
             return dump_envelopes([error_response(request, exc.code, str(exc))])
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
-        self._active_handlers.remove_session(disconnect_request.session_id)
+        self._active_client_controllers.remove_session(disconnect_request.session_id)
         envelopes = [response_envelope(request, ok=True)]
         envelopes.extend(events.events)
         return dump_envelopes(envelopes)
@@ -492,7 +500,7 @@ class ProtocolServer:
             store=self._store,
             events=events,
             display_handlers=self._display_handlers,
-            active_handlers=self._active_handlers,
+            active_client_controllers=self._active_client_controllers,
             handler_message_sink=events.handler_message,
             live_handler_message_sink=self._queue_handler_message,
         )
@@ -554,7 +562,7 @@ class ProtocolServer:
                 store=self._store,
                 events=events,
                 display_handlers=self._display_handlers,
-                active_handlers=self._active_handlers,
+                active_client_controllers=self._active_client_controllers,
                 handler_message_sink=events.handler_message,
                 live_handler_message_sink=self._queue_handler_message,
             )
@@ -614,7 +622,7 @@ class ProtocolServer:
                 use_case.finish_stop(command, session)
             except Exception:
                 return
-            self._active_handlers.remove_session(command.session_id)
+            self._active_client_controllers.remove_session(command.session_id)
             for event in events.events:
                 self._pending_events.put(event)
 
@@ -638,7 +646,7 @@ class ProtocolServer:
             return dump_envelopes([error_response(request, exc.code, str(exc))])
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
-        self._active_handlers.remove_client(shutdown_request.session_id, shutdown_request.client_id)
+        self._active_client_controllers.remove_client(shutdown_request.session_id, shutdown_request.client_id)
         envelopes = [response_envelope(request, ok=True)]
         envelopes.extend(events.events)
         return dump_envelopes(envelopes)
@@ -658,6 +666,10 @@ class ProtocolServer:
             client_view = self._runtime.read_client_view(session, inspect_request.client_id)
         except ValueError as exc:
             return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+        for execution in self._store.list_executions(inspect_request.notebook_id):
+            if execution.client_id == inspect_request.client_id and execution.runtime_mode:
+                client_view["runtime_mode"] = execution.runtime_mode
+                break
         self._normalize_dead_handler_client(
             inspect_request.notebook_id,
             inspect_request.session_id,
@@ -674,6 +686,18 @@ class ProtocolServer:
         return dump_envelopes([response_envelope(request, ok=True, payload={"client": client_view})])
 
     def _normalize_dead_handler_client(self, notebook_id: str, session_id: str, client_id: str) -> bool:
+        tracked_execution = None
+        for execution in self._store.list_executions(notebook_id):
+            if execution.client_id == client_id:
+                tracked_execution = execution
+                break
+        if tracked_execution is None:
+            return False
+        if not tracked_execution.runtime_mode:
+            return False
+        mode = require_registered_runtime_mode(tracked_execution.runtime_mode)
+        if not mode.accepts_frontend_messages:
+            return False
         runtime_client = self._runtime.get_client(session_id, client_id)
         if runtime_client is None:
             return False
@@ -687,31 +711,25 @@ class ProtocolServer:
         if session is None or session.session_id != session_id:
             return False
         self._runtime.shutdown_client(session, client_id, "plugin_runtime_exit")
-        self._active_handlers.remove_client(session_id, client_id)
-        for execution in self._store.list_executions(notebook_id):
-            if execution.client_id != client_id:
-                continue
-            if execution.status == "follow-up":
-                execution.status = "done"
-                execution.owner_kind = "unknown"
-            execution.client_state = "shutdown"
-            execution.client_bufnr = -1
-            execution.client_id = ""
-            execution.transport = ClientTransport()
-            self._store.save_execution(notebook_id, execution)
-            self._pending_events.put(
-                Envelope(
-                    version=1,
-                    kind="event",
-                    type="cell_updated",
-                    payload={"notebook_id": notebook_id, "cell": {
-                        "id": execution.cell_id,
-                        "status": execution.status,
-                        "owner": {"kind": execution.owner_kind},
-                        "client_state": execution.client_state,
-                    }},
-                )
+        self._active_client_controllers.remove_client(session_id, client_id)
+        normalize_closed_followup_execution(tracked_execution)
+        tracked_execution.client_state = "shutdown"
+        clear_execution_runtime_identity(tracked_execution)
+        self._store.save_execution(notebook_id, tracked_execution)
+        self._pending_events.put(
+            Envelope(
+                version=1,
+                kind="event",
+                type="cell_updated",
+                payload={"notebook_id": notebook_id, "cell": {
+                    "id": tracked_execution.cell_id,
+                    "status": tracked_execution.status,
+                    "owner": {"kind": tracked_execution.owner_kind},
+                    "client_state": tracked_execution.client_state,
+                    "runtime_mode": tracked_execution.runtime_mode,
+                }},
             )
+        )
         return True
 
     def _handle_input_reply(self, request: Envelope) -> List[str]:
@@ -779,7 +797,7 @@ class ProtocolServer:
             handler_id=handler_request.handler_id,
             message_type=handler_request.message_type,
         )
-        use_case = HandlerMessage(store=self._store, active_handlers=self._active_handlers)
+        use_case = HandlerMessage(store=self._store, active_client_controllers=self._active_client_controllers)
         try:
             use_case.execute(
                 HandlerMessageCommand(

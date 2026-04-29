@@ -67,6 +67,8 @@ Rules:
 - `parked` remains reserved for deliberate keep-output semantics
 - `input_reply` resumes the same active execution after `input_request`
 - handler-owned cells may publish `presentation` after execution handoff, when the backend has resolved the concrete plugin/provider presentation better than the session-level defaults
+- session stop clears live runtime identity for active cells instead of leaving stale client ownership behind
+- client-close of a follow-up cell normalizes that execution to `done` before clearing live runtime identity
 
 ## Client Lifecycle
 
@@ -80,6 +82,7 @@ Rules:
 
 - client teardown is separate from interrupt
 - active-cell client teardown should surface through `client_state`
+- once backend clears live runtime identity, `client_id`, `runtime_mode`, and transport metadata disappear from cell payloads rather than remaining as empty placeholders
 - client view snapshots are derived state, not lifecycle state
 - transcript-style client views may still use invalidation plus `inspect_client`
 - native-terminal handler clients should render through the advertised terminal attach transport rather than `inspect_client`
@@ -95,7 +98,8 @@ Owner kinds:
 
 Rules:
 
-- interrupt routing depends on owner kind
+- interrupt routing depends on the tracked runtime mode and must stay consistent with owner kind
 - owner kind is independent from cell status
 - disconnect may degrade active execution ownership to `unknown`
 - reconnect should not invent a false owner if it cannot be restored safely
+- `unknown` owner means there is no longer an active runtime controller for that execution

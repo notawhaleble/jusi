@@ -77,6 +77,21 @@ Native-terminal transport advertises:
 - `client_id`
 - optional `handler_id`
 
+## Runtime Mode
+
+Cells and client snapshots may also surface `runtime_mode`:
+
+- `transcript`
+  - backend-owned transcript/inspection client runtime
+- `handler`
+  - live handler-controlled client runtime after accepted plugin takeover
+
+Notes:
+
+- `runtime_mode` is execution state, not transport
+- transport answers how the editor should attach/render a client
+- runtime mode answers which backend-side client runtime currently owns that cell
+
 ## Session Target
 
 Backend session metadata currently keeps only explicit `target`:
@@ -342,18 +357,18 @@ Handler activation uses a kernel-emitted Jusi handoff mime payload carrying:
 - raw cell content/startup payload
 - handler-specific metadata
 
-That handoff is sufficient for backend to start the correct handler worker process without further kernel messaging.
+That handoff is sufficient for backend to start the correct handler client runtime without further kernel messaging.
 
 Current behavior:
 
 - managed runtime now recognizes `application/vnd.jusi.handoff+json` in kernel `display_data` / `execute_result`
 - backend records that as a structured handoff event in the active client transcript/view
 - backend registry now supports validating `magic_name -> handler_id` handoff combinations, including one magic mapping to multiple handlers
-- matched handler-owned executions now run in a dedicated `handler-worker` subprocess
+- matched handler-owned executions now replace the initial transcript runtime with a dedicated `handler` client runtime
 - backend root process remains the router/supervisor for editor-plugin <-> handler traffic
-- backend now prefers validated kernel handoff to start the worker when that handoff is present
-- backend no longer starts plugin workers from header parsing in `ExecuteCell`
-- the in-memory runtime now synthesizes handoff events for magic cells so tests and the non-managed stub path still exercise the same worker activation flow
+- backend now prefers validated kernel handoff to start that runtime when the handoff is present
+- backend no longer starts handler runtimes from header parsing in `ExecuteCell`
+- the in-memory runtime now synthesizes handoff events for magic cells so tests and the non-managed stub path still exercise the same takeover flow
 
 ### `healthcheck_reply`
 
@@ -422,6 +437,11 @@ Behavior:
 - explicitly tears down the durable Jusi session
 - request acknowledges promptly with `stopping`
 - terminal `stopped` may arrive later as an async event
+- active cells are normalized as stopped execution state during teardown:
+  - `status -> interrupted`
+  - `owner.kind -> unknown`
+  - `client_state -> shutdown`
+  - cleared live runtime identity means `client_id`, `runtime_mode`, and transport metadata are omitted from later `cell_updated` payloads
 - for externally attached `connection_file` sessions, managed runtime now:
   - sends kernel shutdown through the attached Jupyter client
   - tears down local Jusi channels and clients
@@ -445,6 +465,10 @@ Behavior:
 - separate from interrupt
 - tears down an active cell client
 - cell status and client lifecycle remain separate concerns
+- for closed follow-up cells backend normalizes the execution before shutdown:
+  - `status -> done`
+  - `owner.kind -> unknown`
+  - cleared live runtime identity means later `cell_updated` payloads omit `client_id`, `runtime_mode`, and transport metadata
 
 ### `inspect_client`
 
@@ -460,6 +484,7 @@ Behavior:
 
 - returns a derived backend-owned client view snapshot
 - includes a monotonic `revision` for polling consumers
+- may include `runtime_mode` when backend has tracked execution ownership for that client
 - may later include terminal attach metadata for recovery/debug, but that is not intended to be the primary live transport for native-terminal clients
 
 ## Events
@@ -520,6 +545,7 @@ Behavior:
     "status": "busy",
     "owner": {"kind": "kernel"},
     "client_id": "client-1",
+    "runtime_mode": "transcript",
     "client_state": "active",
     "presentation": {
       "syntax": "pgsql",
@@ -532,6 +558,8 @@ Behavior:
 Notes:
 
 - `client_id` appears when backend has allocated the real execution client
+- `runtime_mode` is optional and identifies the backend-side runtime currently owning that cell
+- when backend clears live runtime identity, `client_id`, `runtime_mode`, and transport metadata are omitted rather than emitted as empty strings
 - `client_bufnr` may be omitted when the editor plugin has not yet bound a local buffer
 - native-terminal transport metadata belongs to that real execution client, not to any session-level prepared slot
 - `owner` is independent from `status`

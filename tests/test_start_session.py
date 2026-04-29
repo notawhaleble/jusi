@@ -2,9 +2,10 @@ import unittest
 from unittest.mock import patch
 import time
 
-from jusi.application.ports import AttachSessionCommand, StartSessionCommand
-from jusi.application.use_cases import AttachSession, StartSession
-from jusi.domain.models import ClientTransport, SessionTarget
+from jusi.application.ports import AttachSessionCommand, HandlerMessageCommand, StartSessionCommand
+from jusi.application.use_cases import AttachSession, HandlerMessage, StartSession
+from jusi.domain.models import ClientTransport, Session, SessionTarget
+from jusi.infrastructure.client_runtime_controller import ActiveClientController, LiveClientControllerRegistry
 from jusi.infrastructure.runtime import InMemoryClientHandle, InMemoryKernelRuntime, InMemorySessionStore
 from jusi.interfaces.events import CollectingEventSink
 from jusi.interfaces.protocol import parse_envelope
@@ -26,9 +27,23 @@ class DeadPluginRuntimeHandle(InMemoryClientHandle):
         return False
 
 
+class MisleadingPluginLivenessHandle(InMemoryClientHandle):
+    def plugin_runtime_is_alive(self):
+        return False
+
+
 class DeadPluginRuntimeRuntime(InMemoryKernelRuntime):
     def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str):  # type: ignore[no-untyped-def]
         return DeadPluginRuntimeHandle(
+            client_id=client_id,
+            notebook_id=notebook_id,
+            session_id=session_id,
+        )
+
+
+class MisleadingPluginLivenessRuntime(InMemoryKernelRuntime):
+    def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str):  # type: ignore[no-untyped-def]
+        return MisleadingPluginLivenessHandle(
             client_id=client_id,
             notebook_id=notebook_id,
             session_id=session_id,
@@ -53,6 +68,20 @@ class FrontendActionRuntime(InMemoryKernelRuntime):
             notebook_id=notebook_id,
             session_id=session_id,
         )
+
+
+class HandlerMessageProbe:
+    def __init__(self) -> None:
+        self.messages: list[tuple[str, dict]] = []
+
+    def on_frontend_message(self, _context: object, message_type: str, payload: dict[str, object]) -> None:
+        self.messages.append((message_type, dict(payload)))
+
+    def interrupt(self) -> None:
+        return None
+
+    def stop(self) -> None:
+        return None
 
 
 class StartSessionTest(unittest.TestCase):
@@ -121,7 +150,43 @@ class StartSessionTest(unittest.TestCase):
             {"source": "start", "alias": "python3", "kind": "kernel", "value": "", "config": {}},
             envelopes[2].payload["session"]["target"],
         )
-        self.assertEqual(3, len(envelopes))
+
+    def test_handler_message_rejects_non_handler_runtime_mode(self) -> None:
+        store = InMemorySessionStore()
+        store.save(
+            Session(
+                notebook_id="nb-1",
+                session_id="sess-1",
+                state="connected",
+                target=SessionTarget(source="start", alias="python3", kind="kernel"),
+            )
+        )
+        registry = LiveClientControllerRegistry()
+        controller = HandlerMessageProbe()
+        registry.register(
+            "sess-1",
+            "client-1",
+            ActiveClientController(
+                client_id="client-1",
+                controller=controller,
+                runtime_mode="transcript",
+                handler_id="vd",
+            ),
+        )
+        use_case = HandlerMessage(store=store, active_client_controllers=registry)
+
+        with self.assertRaisesRegex(ValueError, "does not accept handler messages"):
+            use_case.execute(
+                HandlerMessageCommand(
+                    notebook_id="nb-1",
+                    session_id="sess-1",
+                    client_id="client-1",
+                    handler_id="vd",
+                    message_type="followup",
+                    payload={"cell_text": "x"},
+                )
+            )
+        self.assertEqual([], controller.messages)
 
     def test_start_session_includes_plugin_presentation_specs(self) -> None:
         registry = DisplayHandlerRegistry(
@@ -418,6 +483,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("execute", execute_envelopes[1].payload["session"]["last_action"])
         self.assertEqual("cell_updated", execute_envelopes[2].type)
         self.assertEqual("busy", execute_envelopes[2].payload["cell"]["status"])
+        self.assertEqual("transcript", execute_envelopes[2].payload["cell"]["runtime_mode"])
         self.assertEqual("cell_updated", execute_envelopes[3].type)
         self.assertEqual("done", execute_envelopes[3].payload["cell"]["status"])
         active_client = runtime.get_client(session_id, execute_envelopes[2].payload["cell"]["client_id"])
@@ -499,6 +565,7 @@ class StartSessionTest(unittest.TestCase):
         followup_envelopes = [parse_envelope(message) for message in followup_messages]
         self.assertEqual("follow-up", followup_envelopes[3].payload["cell"]["status"])
         self.assertEqual("handler", followup_envelopes[3].payload["cell"]["owner"]["kind"])
+        self.assertEqual("handler", followup_envelopes[3].payload["cell"]["runtime_mode"])
 
         next_messages = server.handle_message(
             (
@@ -538,6 +605,7 @@ class StartSessionTest(unittest.TestCase):
         envelopes = [parse_envelope(message) for message in messages]
 
         self.assertEqual("follow-up", envelopes[3].payload["cell"]["status"])
+        self.assertEqual("handler", envelopes[3].payload["cell"]["runtime_mode"])
         self.assertEqual(
             {"syntax": "python", "indent": "python", "followup": True, "completion": False},
             envelopes[3].payload["cell"]["presentation"],
@@ -555,6 +623,36 @@ class StartSessionTest(unittest.TestCase):
                 + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["print(1)"]}}}'
             )
         )
+        interrupt_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "interrupt_cell", '
+                '"request_id": "req-3", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell_id": 12}}'
+            )
+        )
+        interrupt_envelopes = [parse_envelope(message) for message in interrupt_messages]
+        self.assertFalse(interrupt_envelopes[0].ok)
+        self.assertEqual("invalid_state", interrupt_envelopes[0].error["code"])
+
+    def test_interrupt_execution_with_mismatched_runtime_mode_fails_explicitly(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        session_id, _client_id = self.start_and_bind(server)
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "keep_running": true, "main_lines": ["while True: pass"]}}}'
+            )
+        )
+        _ = [parse_envelope(message) for message in execute_messages]
+        execution = server._store.get_execution("nb-1", 12)
+        self.assertIsNotNone(execution)
+        execution.runtime_mode = "handler"  # type: ignore[union-attr]
+        server._store.save_execution("nb-1", execution)  # type: ignore[arg-type]
+
         interrupt_messages = server.handle_message(
             (
                 '{"version": 1, "kind": "request", "type": "interrupt_cell", '
@@ -608,6 +706,40 @@ class StartSessionTest(unittest.TestCase):
         self.assertNotIn("client_bufnr", shutdown_envelopes[2].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, active_client_id))
 
+    def test_shutdown_client_with_mismatched_runtime_mode_fails_explicitly(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "keep_running": true, "main_lines": ["while True: pass"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        client_id = execute_envelopes[3].payload["cell"]["client_id"]
+        execution = server._store.get_execution("nb-1", 12)
+        self.assertIsNotNone(execution)
+        execution.runtime_mode = "handler"  # type: ignore[union-attr]
+        server._store.save_execution("nb-1", execution)  # type: ignore[arg-type]
+
+        shutdown_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "shutdown_client", '
+                '"request_id": "req-shutdown", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell_id": 12, "client_id": "'
+                + client_id
+                + '", "reason": "user_close"}}'
+            )
+        )
+        shutdown_envelopes = [parse_envelope(message) for message in shutdown_messages]
+        self.assertFalse(shutdown_envelopes[0].ok)
+        self.assertEqual("invalid_state", shutdown_envelopes[0].error["code"])
+
     def test_inspect_client_returns_runtime_view_snapshot(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
@@ -647,9 +779,73 @@ class StartSessionTest(unittest.TestCase):
                 "execution_status": "done",
                 "active_cell_id": 12,
                 "revision": 5,
+                "runtime_mode": "transcript",
             },
             inspect_envelopes[0].payload["client"],
         )
+
+    def test_inspect_client_does_not_demote_transcript_client_on_plugin_liveness_probe(self) -> None:
+        runtime = MisleadingPluginLivenessRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["print(1)"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        client_id = execute_envelopes[3].payload["cell"]["client_id"]
+
+        inspect_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "inspect_client", '
+                '"request_id": "req-inspect", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "client_id": "'
+                + client_id
+                + '"}}'
+            )
+        )
+        inspect_envelopes = [parse_envelope(message) for message in inspect_messages]
+        self.assertTrue(inspect_envelopes[0].ok)
+        self.assertEqual("transcript", inspect_envelopes[0].payload["client"]["runtime_mode"])
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        self.assertEqual([], [env for env in pending if env.type == "cell_updated"])
+        self.assertIsNotNone(runtime.get_client(session_id, client_id))
+
+    def test_inspect_client_returns_handler_runtime_mode_for_live_followup(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        followup_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
+            )
+        )
+        followup_envelopes = [parse_envelope(message) for message in followup_messages]
+        client_id = followup_envelopes[3].payload["cell"]["client_id"]
+
+        inspect_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "inspect_client", '
+                '"request_id": "req-inspect-handler", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "client_id": "'
+                + client_id
+                + '"}}'
+            )
+        )
+        inspect_envelopes = [parse_envelope(message) for message in inspect_messages]
+        self.assertTrue(inspect_envelopes[0].ok)
+        self.assertEqual("handler", inspect_envelopes[0].payload["client"]["runtime_mode"])
 
     def test_inspect_client_demotes_dead_handler_followup_session(self) -> None:
         runtime = DeadPluginRuntimeRuntime()
@@ -686,6 +882,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("done", cell_updates[-1].payload["cell"]["status"])
         self.assertEqual("unknown", cell_updates[-1].payload["cell"]["owner"]["kind"])
         self.assertEqual("shutdown", cell_updates[-1].payload["cell"]["client_state"])
+        self.assertEqual("", cell_updates[-1].payload["cell"]["runtime_mode"])
         self.assertNotIn("client_id", cell_updates[-1].payload["cell"])
         self.assertNotIn("transport", cell_updates[-1].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, client_id))
@@ -713,6 +910,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("done", cell_updates[-1].payload["cell"]["status"])
         self.assertEqual("unknown", cell_updates[-1].payload["cell"]["owner"]["kind"])
         self.assertEqual("shutdown", cell_updates[-1].payload["cell"]["client_state"])
+        self.assertEqual("", cell_updates[-1].payload["cell"]["runtime_mode"])
         self.assertNotIn("client_id", cell_updates[-1].payload["cell"])
         self.assertNotIn("transport", cell_updates[-1].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, client_id))
@@ -721,6 +919,16 @@ class StartSessionTest(unittest.TestCase):
         runtime = FrontendActionRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, client_id = self.start_and_bind(server)
+        server._active_client_controllers.register(
+            session_id,
+            client_id,
+            ActiveClientController(
+                client_id=client_id,
+                controller=HandlerMessageProbe(),
+                runtime_mode="handler",
+                handler_id="shell",
+            ),
+        )
         session = server._store.get_by_notebook("nb-1")
         self.assertIsNotNone(session)
         runtime.set_client_transport(
@@ -771,6 +979,43 @@ class StartSessionTest(unittest.TestCase):
             action_messages[0].payload["payload"],
         )
 
+    def test_poll_client_updates_ignores_frontend_actions_for_transcript_runtime(self) -> None:
+        runtime = FrontendActionRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, client_id = self.start_and_bind(server)
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        runtime.set_client_transport(
+            session,
+            client_id,
+            ClientTransport(
+                kind="native_terminal",
+                attach_cmd=["/bin/sh"],
+                attach_env={},
+                session_id=session_id,
+                client_id=client_id,
+                handler_id="shell",
+            ),
+        )
+        runtime_client = runtime.get_client(session_id, client_id)
+        self.assertIsNotNone(runtime_client)
+        handle = runtime_client.handle
+        self.assertIsInstance(handle, FrontendActionHandle)
+        handle.pending_actions.append(
+            {
+                "action_type": "open_path",
+                "payload": {
+                    "path": "/tmp/example.txt",
+                },
+            }
+        )
+
+        server.poll_client_updates()
+
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        action_messages = [env for env in pending if env.type == "handler_message"]
+        self.assertEqual([], action_messages)
+
     def test_inspect_client_renders_busy_execution_state(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         session_id, _client_id = self.start_and_bind(server)
@@ -809,6 +1054,7 @@ class StartSessionTest(unittest.TestCase):
                 "execution_status": "busy",
                 "active_cell_id": 12,
                 "revision": 4,
+                "runtime_mode": "transcript",
             },
             inspect_envelopes[0].payload["client"],
         )
@@ -951,6 +1197,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertGreater(disconnect_envelopes[1].payload["session"]["expires_at"], 0)
         self.assertEqual("unknown", disconnect_envelopes[2].payload["cell"]["owner"]["kind"])
         self.assertEqual("follow-up", disconnect_envelopes[2].payload["cell"]["status"])
+        self.assertEqual("transcript", disconnect_envelopes[2].payload["cell"]["runtime_mode"])
         self.assertEqual([], runtime.list_clients(session_id))
 
         reconnect_messages = server.handle_message(
@@ -983,6 +1230,58 @@ class StartSessionTest(unittest.TestCase):
         self.assertIsNone(reconnect_envelopes[2].payload["session"]["expires_at"])
         self.assertEqual(reconnect_envelopes[1].payload["session"]["plugin_specs"], reconnect_envelopes[2].payload["session"]["plugin_specs"])
         self.assertEqual(reconnect_envelopes[1].payload["session"]["palette"], reconnect_envelopes[2].payload["session"]["palette"])
+
+    def test_finished_plain_kernel_cell_releases_managed_controller(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        self.addCleanup(server.close)
+
+        start_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "start_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+        )
+        start_envelopes = [parse_envelope(message) for message in start_messages]
+        session_id = start_envelopes[2].payload["session"]["id"]
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["print(1)"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        client_id = execute_envelopes[3].payload["cell"]["client_id"]
+
+        self.assertIsNone(server._active_client_controllers.get(session_id, client_id))
+
+    def test_busy_plain_kernel_cell_does_not_register_live_controller(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        self.addCleanup(server.close)
+
+        start_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "start_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+        )
+        start_envelopes = [parse_envelope(message) for message in start_messages]
+        session_id = start_envelopes[2].payload["session"]["id"]
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "keep_running": true, "main_lines": ["print(1)"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        client_id = execute_envelopes[3].payload["cell"]["client_id"]
+
+        self.assertIsNone(server._active_client_controllers.get(session_id, client_id))
 
     def test_disconnect_marks_started_session_disconnected(self) -> None:
         runtime = InMemoryKernelRuntime()
@@ -1190,7 +1489,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertIsNotNone(session.expires_at)
         self.assertEqual([], runtime.list_clients(session_id))
 
-    def test_poll_frontend_health_disconnect_timeout_removes_active_handlers(self) -> None:
+    def test_poll_frontend_health_disconnect_timeout_removes_active_client_controllers(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)
         session_id, _client_id = self.start_and_bind(server)
@@ -1199,7 +1498,7 @@ class StartSessionTest(unittest.TestCase):
         session.frontend_healthcheck_id = "hc-stale"
         session.frontend_healthcheck_deadline = 0
 
-        with patch.object(server._active_handlers, "remove_session") as remove_session:
+        with patch.object(server._active_client_controllers, "remove_session") as remove_session:
             server.poll_frontend_health()
 
         remove_session.assert_called_once_with(session_id)
@@ -1255,10 +1554,43 @@ class StartSessionTest(unittest.TestCase):
         self.assertTrue(stop_envelopes[0].ok)
         self.assertEqual("stopping", stop_envelopes[1].payload["session"]["state"])
         self.assertEqual("interrupted", stop_envelopes[2].payload["cell"]["status"])
+        self.assertEqual("unknown", stop_envelopes[2].payload["cell"]["owner"]["kind"])
+        self.assertEqual("shutdown", stop_envelopes[2].payload["cell"]["client_state"])
+        self.assertNotIn("runtime_mode", stop_envelopes[2].payload["cell"])
+        self.assertNotIn("client_id", stop_envelopes[2].payload["cell"])
         pending_messages = server.drain_pending_messages()
         pending_envelopes = [parse_envelope(message) for message in pending_messages]
         self.assertEqual("stopped", pending_envelopes[0].payload["session"]["state"])
         self.assertEqual([], runtime.list_clients(session_id))
+
+    def test_stop_session_clears_handler_runtime_identity_for_followup_cell(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
+            )
+        )
+        stop_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "stop_session", '
+                '"request_id": "req-3", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        stop_envelopes = [parse_envelope(message) for message in stop_messages]
+        self.assertTrue(stop_envelopes[0].ok)
+        self.assertEqual("interrupted", stop_envelopes[2].payload["cell"]["status"])
+        self.assertEqual("unknown", stop_envelopes[2].payload["cell"]["owner"]["kind"])
+        self.assertEqual("shutdown", stop_envelopes[2].payload["cell"]["client_state"])
+        self.assertNotIn("runtime_mode", stop_envelopes[2].payload["cell"])
+        self.assertNotIn("client_id", stop_envelopes[2].payload["cell"])
 
     def test_stop_session_returns_error_response_for_unexpected_backend_failure(self) -> None:
         runtime = InMemoryKernelRuntime()

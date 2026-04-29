@@ -105,6 +105,9 @@ class KernelRuntime(Protocol):
     def start_managed(self, kernel_name: str) -> tuple[str, str]:
         """Return session_id and connection reference."""
 
+    def start_client(self, session: Session, notebook_id: str, cell_id: int, initial_status: str) -> str:
+        """Allocate, activate, and initialize a backend-owned execution client."""
+
     def prepare_client(self, notebook_id: str, session_id: str) -> str:
         """Return a backend-owned execution client id."""
 

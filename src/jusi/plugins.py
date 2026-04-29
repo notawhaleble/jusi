@@ -449,51 +449,6 @@ def default_frontend_channel(
         emit_handler_message=emit_handler_message,
     )
 
-
-@dataclass
-class ActiveDisplayHandler:
-    handler_id: str
-    handler: DisplayHandler
-    context: HandlerContext | None
-
-
-class DisplayHandlerRuntime:
-    def __init__(self) -> None:
-        self._active: dict[tuple[str, str], ActiveDisplayHandler] = {}
-
-    def register(self, session_id: str, client_id: str, active: ActiveDisplayHandler) -> None:
-        self._active[(session_id, client_id)] = active
-
-    def get(self, session_id: str, client_id: str) -> ActiveDisplayHandler | None:
-        return self._active.get((session_id, client_id))
-
-    def remove_client(self, session_id: str, client_id: str) -> None:
-        active = self._active.pop((session_id, client_id), None)
-        if active is not None:
-            active.handler.stop()
-
-    def interrupt_client(self, session_id: str, client_id: str) -> None:
-        active = self._active.get((session_id, client_id))
-        if active is None:
-            return
-        interrupt = getattr(active.handler, "interrupt", None)
-        if callable(interrupt):
-            interrupt()
-
-    def remove_session(self, session_id: str) -> None:
-        stale = [key for key in self._active if key[0] == session_id]
-        for key in stale:
-            active = self._active.pop(key, None)
-            if active is not None:
-                active.handler.stop()
-
-    def stop_all(self) -> None:
-        stale = list(self._active.values())
-        self._active.clear()
-        for active in stale:
-            active.handler.stop()
-
-
 def builtin_display_handler_specs() -> tuple[DisplayHandlerSpec, ...]:
     return ()
 

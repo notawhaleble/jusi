@@ -26,9 +26,9 @@ from jusi.plugins import (
 )
 from jusi.infrastructure.client_process import run_terminal_attach
 from jusi.infrastructure.plugin_runtime import (
-    _monitor_supervisor_liveness,
     run_plugin_runtime,
 )
+from jusi.infrastructure.runtime_supervisor import monitor_supervisor_liveness
 from jusi.infrastructure.runtime import InMemoryKernelRuntime
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
@@ -306,8 +306,8 @@ class PluginRegistryTest(unittest.TestCase):
         events: list[str] = []
 
         class FakeThread:
-            def __init__(self, *, target=None, args=(), daemon=False):  # type: ignore[no-untyped-def]
-                _ = target, args, daemon
+            def __init__(self, *, target=None, args=(), kwargs=None, daemon=False):  # type: ignore[no-untyped-def]
+                _ = target, args, kwargs, daemon
                 self._alive = False
 
             def start(self) -> None:
@@ -339,10 +339,10 @@ class PluginRegistryTest(unittest.TestCase):
 
     def test_plugin_runtime_monitor_requests_shutdown_when_supervisor_is_lost(self) -> None:
         stop_event = SimpleNamespace(is_set=lambda: False, wait=lambda _seconds: None)
-        with patch("jusi.infrastructure.plugin_runtime._supervisor_is_alive", return_value=False), patch(
-            "jusi.infrastructure.plugin_runtime._request_process_shutdown"
+        with patch("jusi.infrastructure.runtime_supervisor.supervisor_is_alive", return_value=False), patch(
+            "jusi.infrastructure.runtime_supervisor.request_process_shutdown"
         ) as request_shutdown:
-            _monitor_supervisor_liveness(123, stop_event)  # type: ignore[arg-type]
+            monitor_supervisor_liveness(123, stop_event, poll_interval_seconds=0.01)  # type: ignore[arg-type]
         request_shutdown.assert_called_once_with()
 
     def test_run_plugin_runtime_writes_pid_file(self) -> None:

@@ -7,14 +7,22 @@ from unittest.mock import patch
 
 from jusi.__main__ import main
 from jusi.infrastructure.client_process import ClientProcessRunner
+from jusi.infrastructure.client_runtime_handshake import ClientRuntimeReadyMessage
+from jusi.infrastructure.client_runtime_protocol import ClientRuntimeCommand, ClientRuntimeSnapshot
 
 
 class ClientProcessTest(unittest.TestCase):
+    def test_main_routes_client_runtime_mode(self) -> None:
+        with patch("jusi.__main__.run_client_runtime", return_value=0) as run_client_runtime:
+            rc = main(["client-runtime"])
+        self.assertEqual(0, rc)
+        run_client_runtime.assert_called_once_with()
+
     def test_main_routes_client_process_mode(self) -> None:
-        with patch("jusi.__main__.run_client_process", return_value=0) as run_client_process:
+        with patch("jusi.__main__.run_client_runtime", return_value=0) as run_client_runtime:
             rc = main(["client-process"])
         self.assertEqual(0, rc)
-        run_client_process.assert_called_once_with()
+        run_client_runtime.assert_called_once_with("transcript")
 
     def test_client_process_runner_writes_ready_then_stops(self) -> None:
         writes: list[str] = []
@@ -43,7 +51,7 @@ class ClientProcessTest(unittest.TestCase):
                     rc = runner.run()
 
         self.assertEqual(0, rc)
-        self.assertEqual(["ready\n"], writes)
+        self.assertEqual([ClientRuntimeReadyMessage(mode="transcript").to_wire() + "\n"], writes)
 
     def test_client_process_runner_applies_control_commands(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -78,70 +86,60 @@ class ClientProcessTest(unittest.TestCase):
                 ticks["count"] += 1
                 if ticks["count"] == 1:
                     with open(commands_path, "a", encoding="utf-8") as handle:
-                        handle.write(json.dumps({"kind": "bind", "client_bufnr": 91}) + "\n")
-                        handle.write(json.dumps({"kind": "activate", "cell_id": 12}) + "\n")
+                        handle.write(json.dumps(ClientRuntimeCommand.bind(91).to_dict()) + "\n")
+                        handle.write(json.dumps(ClientRuntimeCommand.activate(12).to_dict()) + "\n")
                         handle.write(
                             json.dumps(
-                                {
-                                    "kind": "execution_event",
-                                    "event": {"type": "execution_started", "cell_id": 12, "kind": "code", "syntax": "python"},
-                                }
+                                ClientRuntimeCommand.execution_event(
+                                    {"type": "execution_started", "cell_id": 12, "kind": "code", "syntax": "python"}
+                                ).to_dict()
                             )
                             + "\n"
                         )
                         handle.write(
-                            json.dumps(
-                                {
-                                    "kind": "execution_event",
-                                    "event": {"type": "execution_state", "status": "busy"},
-                                }
-                            )
+                            json.dumps(ClientRuntimeCommand.execution_event({"type": "execution_state", "status": "busy"}).to_dict())
                             + "\n"
                         )
                         handle.write(
                             json.dumps(
-                                {
-                                    "kind": "execution_event",
-                                    "event": {"type": "stream", "name": "stdout", "text": "hello\nworld\n"},
-                                }
+                                ClientRuntimeCommand.execution_event(
+                                    {"type": "stream", "name": "stdout", "text": "hello\nworld\n"}
+                                ).to_dict()
                             )
                             + "\n"
                         )
-                        handle.write(json.dumps({"kind": "execution_status", "status": "busy"}) + "\n")
+                        handle.write(json.dumps(ClientRuntimeCommand.execution_status("busy").to_dict()) + "\n")
                         handle.write(
                             json.dumps(
-                                {
-                                    "kind": "execution_event",
-                                    "event": {
+                                ClientRuntimeCommand.execution_event(
+                                    {
                                         "type": "error",
                                         "ename": "ValueError",
                                         "evalue": "boom",
                                         "traceback": ["frame one", "frame two"],
-                                    },
-                                }
+                                    }
+                                ).to_dict()
                             )
                             + "\n"
                         )
                         handle.write(
                             json.dumps(
-                                {
-                                    "kind": "execution_event",
-                                    "event": {"type": "display_data", "data": {"text/plain": "alpha\nbeta"}},
-                                }
+                                ClientRuntimeCommand.execution_event(
+                                    {"type": "display_data", "data": {"text/plain": "alpha\nbeta"}}
+                                ).to_dict()
                             )
                             + "\n"
                         )
                         handle.write(
                             json.dumps(
-                                {
-                                    "kind": "execution_event",
-                                    "event": {"type": "execute_result", "data": {"text/plain": "42"}},
-                                }
+                                ClientRuntimeCommand.execution_event(
+                                    {"type": "execute_result", "data": {"text/plain": "42"}}
+                                ).to_dict()
                             )
                             + "\n"
                         )
-                        handle.write(json.dumps({"kind": "execution_status", "status": "interrupted"}) + "\n")
-                        handle.write(json.dumps({"kind": "shutdown", "reason": "healthcheck"}) + "\n")
+                        handle.write(json.dumps(ClientRuntimeCommand.execution_status("interrupted").to_dict()) + "\n")
+                        handle.write(json.dumps(ClientRuntimeCommand.shutdown("healthcheck").to_dict()) + "\n")
 
             with patch.dict(
                 os.environ,
@@ -159,7 +157,7 @@ class ClientProcessTest(unittest.TestCase):
                             rc = runner.run()
 
             self.assertEqual(0, rc)
-            self.assertEqual(["ready\n"], writes)
+            self.assertEqual([ClientRuntimeReadyMessage(mode="transcript").to_wire() + "\n"], writes)
             with open(status_path, "r", encoding="utf-8") as handle:
                 status = json.load(handle)
             self.assertEqual(-1, status["client_bufnr"])
@@ -213,6 +211,27 @@ class ClientProcessTest(unittest.TestCase):
                 status["lifecycle"],
             )
 
+    def test_client_runtime_protocol_roundtrips(self) -> None:
+        command = ClientRuntimeCommand.execution_event({"type": "stream", "name": "stdout", "text": "x\n"})
+        self.assertEqual(command, ClientRuntimeCommand.from_dict(command.to_dict()))
+
+        snapshot = ClientRuntimeSnapshot(
+            client_id="client-1",
+            notebook_id="nb-1",
+            session_id="sess-1",
+            client_bufnr=7,
+            active_cell_id=12,
+            execution_status="busy",
+            view_revision=3,
+            lifecycle=["ready", "activate:12"],
+            transcript=[{"type": "stream", "name": "stdout", "text": "x\n"}],
+            view_title="cell 12: busy",
+            view_lines=["stdout> x"],
+            shutdown_reason="",
+            transport={"kind": "native_terminal"},
+        )
+        self.assertEqual(snapshot, ClientRuntimeSnapshot.from_dict(snapshot.to_dict()))
+
     def test_client_process_runner_exits_when_supervisor_is_lost(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             status_path = os.path.join(tmpdir, "status.json")
@@ -247,7 +266,7 @@ class ClientProcessTest(unittest.TestCase):
                         rc = runner.run()
 
             self.assertEqual(0, rc)
-            self.assertEqual(["ready\n"], writes)
+            self.assertEqual([ClientRuntimeReadyMessage(mode="transcript").to_wire() + "\n"], writes)
             with open(status_path, "r", encoding="utf-8") as handle:
                 status = json.load(handle)
             self.assertEqual("supervisor_lost", status["shutdown_reason"])
