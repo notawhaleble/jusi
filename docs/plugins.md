@@ -103,7 +103,11 @@ Current purpose:
 
 - `BaseHandler` defines the worker-facing hook shape
 - `BaseTerminalHandler` advertises native-terminal transport and terminal startup
-- `BaseVdHandler` adds reusable VisiData-oriented follow-up/completion/copy seams
+- `BaseVdHandler` adds reusable VisiData-oriented follow-up and completion seams
+
+Common VisiData yank/open/edit behavior does not live on the handler base anymore.
+It is installed centrally by core `plugin-runtime` bootstrap so VisiData-based
+plugins get it automatically.
 
 ## Session Metadata
 

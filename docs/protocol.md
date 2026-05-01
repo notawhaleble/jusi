@@ -296,6 +296,23 @@ Current built-in editor action:
   - `line` is optional and 1-based
   - `column` is optional and 1-based
 
+- `action_type = yank_text`
+  - `text` is required
+  - frontend should write it into the main editor register path
+
+- `action_type = edit_path`
+  - `request_id` is required
+  - `path` is required
+  - `line` is optional and 1-based
+
+When frontend finishes an `edit_path` request, it must reply through
+`handler_message` with:
+
+- `message_type = action_result`
+  - `payload.request_id` is required
+  - `payload.ok = true` means accept/apply edited file contents
+  - `payload.ok = false` means cancel edit and keep original value/content
+
 Direction note:
 
 - current native-terminal direction does not keep raw terminal transport on the notebook control channel

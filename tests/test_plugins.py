@@ -650,7 +650,7 @@ class PluginRegistryTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "VisiData is not available"):
                 _build_vd_command()
 
-    def test_vd_base_copy_complete_and_followup_hooks_emit_results(self) -> None:
+    def test_vd_base_complete_and_followup_hooks_emit_results(self) -> None:
         handler = FakeVDHandler()
         pushed: list[tuple[str, dict]] = []
         context = type(
@@ -662,11 +662,9 @@ class PluginRegistryTest(unittest.TestCase):
             },
         )()
 
-        handler.handle_copy(context, {"text": "abc"})  # type: ignore[arg-type]
         handler.on_frontend_message(context, "complete", {"prefix": "pod"})  # type: ignore[arg-type]
         handler.on_frontend_message(context, "followup", {"cell_text": "show pods"})  # type: ignore[arg-type]
 
-        self.assertEqual(("vd_copy_result", {"handler_id": "fake_vd", "message_type": "vd_copy", "text": "abc"}), pushed[0])
         self.assertEqual(
             (
                 "complete_result",
@@ -679,11 +677,11 @@ class PluginRegistryTest(unittest.TestCase):
                     ],
                 },
             ),
-            pushed[1],
+            pushed[0],
         )
         self.assertEqual(
             ("followup_result", {"handler_id": "fake_vd", "payload": {"cell_text": "SHOW PODS"}}),
-            pushed[2],
+            pushed[1],
         )
 
     def test_base_handler_generic_complete_and_followup_hooks_emit_results(self) -> None:

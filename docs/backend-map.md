@@ -290,6 +290,18 @@ Current semantics:
 - `line` is optional and 1-based
 - `column` is optional and 1-based
 
+Other current built-in editor actions:
+
+- `action_type = yank_text`
+  - `payload.text` is required
+  - frontend writes it into the main editor register path
+
+- `action_type = edit_path`
+  - `payload.request_id` is required
+  - `payload.path` is required
+  - `payload.line` is optional and 1-based
+  - frontend must later reply through `handler_message(message_type=action_result, ...)`
+
 ## Component Diagram
 
 ```mermaid

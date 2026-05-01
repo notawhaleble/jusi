@@ -392,21 +392,7 @@ class BaseVdHandler(BaseTerminalHandler):
         return "follow-up"
 
     def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
-        if message_type == "vd_copy":
-            self.handle_copy(context, payload)
-            return
         super().on_frontend_message(context, message_type, payload)
-
-    def handle_copy(self, context: HandlerContext, payload: dict[str, Any]) -> None:
-        content = str(payload.get("text", ""))
-        context.send_frontend_message(
-            "vd_copy_result",
-            {
-                "handler_id": self.handler_id(),
-                "message_type": "vd_copy",
-                "text": content,
-            },
-        )
 
     def complete(self, context: HandlerContext, payload: dict[str, Any]) -> Sequence[dict[str, Any]]:
         _ = (context, payload)
