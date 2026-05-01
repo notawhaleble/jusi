@@ -1,6 +1,7 @@
 import json
 import os
 import tempfile
+import threading
 import unittest
 import time
 from typing import Any
@@ -30,6 +31,16 @@ from jusi.infrastructure.plugin_runtime import (
 )
 from jusi.infrastructure.runtime_supervisor import monitor_supervisor_liveness
 from jusi.infrastructure.runtime import InMemoryKernelRuntime
+from jusi.visidata_support import (
+    JUSI_PLUGIN_FRONTEND_ACTIONS_ENV,
+    JUSI_VISIDATARC_ENV,
+    append_plugin_frontend_action,
+    handle_plugin_runtime_control_request,
+    install_visidata_runtime_hooks,
+    load_visidatarc_from_env,
+    normalize_visidatarc_content,
+    request_blocking_edit,
+)
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
 from jusi_vd.plugin import VDDisplayHandler, _build_vd_command, _build_vd_env
@@ -299,8 +310,14 @@ class PluginRegistryTest(unittest.TestCase):
             "os.environ",
             {"JUSI_PLUGIN_RUNTIME_CALLABLE": "jusi_vd.runner:run_vd_runner", "JUSI_VD_PAYLOAD_JSON": json.dumps({"content": "", "meta": {}})},
             clear=True,
-        ), patch("jusi_vd.runner.run_vd_runner", return_value=7):
+        ), patch("jusi_vd.runner.run_vd_runner", return_value=7), patch(
+            "jusi.infrastructure.plugin_runtime.load_visidatarc_from_env"
+        ) as load_visidatarc_from_env, patch(
+            "jusi.infrastructure.plugin_runtime.set_plugin_control_handler"
+        ) as set_plugin_control_handler:
             self.assertEqual(7, run_plugin_runtime())
+        load_visidatarc_from_env.assert_called_once_with()
+        set_plugin_control_handler.assert_called_once()
 
     def test_run_plugin_runtime_starts_supervisor_monitor_when_configured(self) -> None:
         events: list[str] = []
@@ -336,6 +353,257 @@ class PluginRegistryTest(unittest.TestCase):
             self.assertEqual(7, run_plugin_runtime())
 
         self.assertEqual(["start", "join"], events)
+
+    def test_normalize_visidatarc_content_adds_trailing_newline(self) -> None:
+        self.assertEqual("a=1\n", normalize_visidatarc_content("a=1"))
+        self.assertEqual("a=1\n", normalize_visidatarc_content("a=1\n"))
+        self.assertEqual("", normalize_visidatarc_content(""))
+
+    def test_load_visidatarc_from_env_uses_env_delivered_content(self) -> None:
+        loaded_paths: list[str] = []
+
+        class FakeVD:
+            @staticmethod
+            def loadConfigFile(path: str) -> None:
+                loaded_paths.append(path)
+                with open(path, "r", encoding="utf-8") as handle:
+                    self.assertEqual("vd.set_theme('asciimono')\n", handle.read())
+
+        fake_visidata = SimpleNamespace(vd=FakeVD())
+        with patch.dict("os.environ", {JUSI_VISIDATARC_ENV: "vd.set_theme('asciimono')"}, clear=True), patch.dict(
+            "sys.modules", {"visidata": fake_visidata}
+        ):
+            self.assertTrue(load_visidatarc_from_env())
+
+        self.assertEqual(1, len(loaded_paths))
+
+    def test_append_plugin_frontend_action_writes_jsonl_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "actions.jsonl")
+            with patch.dict("os.environ", {JUSI_PLUGIN_FRONTEND_ACTIONS_ENV: path}, clear=True):
+                self.assertTrue(append_plugin_frontend_action("yank_text", {"text": "abc"}))
+            with open(path, "r", encoding="utf-8") as handle:
+                self.assertEqual(
+                    {"action_type": "yank_text", "payload": {"text": "abc"}},
+                    json.loads(handle.read().strip()),
+                )
+
+    def test_request_blocking_edit_waits_for_action_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "actions.jsonl")
+
+            def reply() -> None:
+                deadline = time.time() + 1.0
+                request_id = ""
+                while time.time() < deadline and not request_id:
+                    if os.path.exists(path):
+                        with open(path, "r", encoding="utf-8") as handle:
+                            for line in handle:
+                                if not line.strip():
+                                    continue
+                                request_id = json.loads(line)["payload"]["request_id"]
+                                break
+                    time.sleep(0.01)
+                self.assertTrue(request_id)
+                handle_plugin_runtime_control_request(
+                    {"message_type": "action_result", "payload": {"request_id": request_id, "ok": True}}
+                )
+
+            thread = threading.Thread(target=reply, daemon=True)
+            thread.start()
+            with patch.dict("os.environ", {JUSI_PLUGIN_FRONTEND_ACTIONS_ENV: path}, clear=True):
+                result = request_blocking_edit("/tmp/example.txt", line=4)
+            thread.join(timeout=1.0)
+
+            self.assertEqual({"request_id": result["request_id"], "ok": True}, result)
+            with open(path, "r", encoding="utf-8") as handle:
+                record = json.loads(handle.read().strip())
+            self.assertEqual("edit_path", record["action_type"])
+            self.assertEqual("/tmp/example.txt", record["payload"]["path"])
+            self.assertEqual(4, record["payload"]["line"])
+
+    def test_install_visidata_runtime_hooks_redirects_syscopy_to_frontend_actions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "actions.jsonl")
+
+            class FakeVD:
+                def __init__(self) -> None:
+                    self.statuses: list[str] = []
+
+                def status(self, message: str) -> None:
+                    self.statuses.append(message)
+
+            class FakeSheet:
+                pass
+
+            fake_vd = FakeVD()
+            fake_visidata = SimpleNamespace(vd=fake_vd, Sheet=FakeSheet)
+
+            class FakeCol:
+                def getDisplayValue(self, row):  # type: ignore[no-untyped-def]
+                    return row
+
+            with patch.dict(
+                "os.environ",
+                {JUSI_PLUGIN_FRONTEND_ACTIONS_ENV: path},
+                clear=True,
+            ), patch.dict("sys.modules", {"visidata": fake_visidata}):
+                self.assertTrue(install_visidata_runtime_hooks())
+                FakeSheet.syscopyValue(object(), "cell text")
+                FakeSheet.syscopyCells_async(object(), [FakeCol()], ["row1", "row2"])
+
+            with open(path, "r", encoding="utf-8") as handle:
+                records = [json.loads(line) for line in handle if line.strip()]
+
+            self.assertEqual(
+                [
+                    {"action_type": "yank_text", "payload": {"text": "cell text"}},
+                    {"action_type": "yank_text", "payload": {"text": "row1\nrow2"}},
+                ],
+                records,
+            )
+            self.assertEqual(["yanked value to editor", "yanked selection to editor"], fake_vd.statuses)
+
+    def test_install_visidata_runtime_hooks_redirects_launch_editor_to_open_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "actions.jsonl")
+
+            class FakeVD:
+                def __init__(self) -> None:
+                    self.statuses: list[str] = []
+                    self.globals_added: dict[str, object] = {}
+
+                def status(self, message: str) -> None:
+                    self.statuses.append(message)
+
+                def addGlobals(self, **kwargs):  # type: ignore[no-untyped-def]
+                    self.globals_added.update(kwargs)
+
+                def launchEditor(self, *args):  # type: ignore[no-untyped-def]
+                    raise AssertionError("original launchEditor should not be called for open-path flow")
+
+            class FakeSheet:
+                pass
+
+            fake_vd = FakeVD()
+            fake_visidata = SimpleNamespace(vd=fake_vd, Sheet=FakeSheet)
+
+            with patch.dict(
+                "os.environ",
+                {JUSI_PLUGIN_FRONTEND_ACTIONS_ENV: path},
+                clear=True,
+            ), patch.dict("sys.modules", {"visidata": fake_visidata}):
+                self.assertTrue(install_visidata_runtime_hooks())
+                fake_vd.launchEditor("/tmp/example.txt", "+12")
+
+            with open(path, "r", encoding="utf-8") as handle:
+                records = [json.loads(line) for line in handle if line.strip()]
+
+            self.assertEqual(
+                [{"action_type": "open_path", "payload": {"path": "/tmp/example.txt", "line": 12}}],
+                records,
+            )
+            self.assertEqual(["opened path in editor"], fake_vd.statuses)
+            self.assertIn("launchEditor", fake_vd.globals_added)
+            self.assertIn("launchExternalEditorPath", fake_vd.globals_added)
+
+    def test_install_visidata_runtime_hooks_preserves_blocking_external_editor_path(self) -> None:
+        original_calls: list[tuple[object, ...]] = []
+
+        class FakeVD:
+            def __init__(self) -> None:
+                self.statuses: list[str] = []
+                self.exceptions: list[str] = []
+
+            def status(self, message: str) -> None:
+                self.statuses.append(message)
+
+            def exceptionCaught(self, exc: Exception) -> None:
+                self.exceptions.append(str(exc))
+
+            def launchEditor(self, *args):  # type: ignore[no-untyped-def]
+                original_calls.append(tuple(args))
+                return 0
+
+        class FakeSheet:
+            pass
+
+        fake_vd = FakeVD()
+        fake_visidata = SimpleNamespace(vd=fake_vd, Sheet=FakeSheet)
+
+        with tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=True) as handle, patch.dict(
+            "sys.modules", {"visidata": fake_visidata}
+        ):
+            handle.write("edited value\n")
+            handle.flush()
+            self.assertTrue(install_visidata_runtime_hooks())
+            result = fake_vd.launchExternalEditorPath(handle.name, 7)
+
+        self.assertEqual([(handle.name, "+7")], original_calls)
+        self.assertEqual("edited value", result)
+        self.assertEqual([], fake_vd.exceptions)
+
+    def test_install_visidata_runtime_hooks_blocks_on_edit_path_without_editor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "actions.jsonl")
+
+            class FakeVD:
+                def __init__(self) -> None:
+                    self.statuses: list[str] = []
+                    self.globals_added: dict[str, object] = {}
+
+                def status(self, message: str) -> None:
+                    self.statuses.append(message)
+
+                def addGlobals(self, **kwargs):  # type: ignore[no-untyped-def]
+                    self.globals_added.update(kwargs)
+
+                def exceptionCaught(self, exc: Exception) -> None:
+                    raise AssertionError(str(exc))
+
+            class FakeSheet:
+                pass
+
+            fake_vd = FakeVD()
+            fake_visidata = SimpleNamespace(vd=fake_vd, Sheet=FakeSheet)
+
+            def reply() -> None:
+                deadline = time.time() + 1.0
+                request_id = ""
+                while time.time() < deadline and not request_id:
+                    if os.path.exists(path):
+                        with open(path, "r", encoding="utf-8") as handle:
+                            for line in handle:
+                                if not line.strip():
+                                    continue
+                                request_id = json.loads(line)["payload"]["request_id"]
+                                break
+                    time.sleep(0.01)
+                self.assertTrue(request_id)
+                handle_plugin_runtime_control_request(
+                    {"message_type": "action_result", "payload": {"request_id": request_id, "ok": True}}
+                )
+
+            thread = threading.Thread(target=reply, daemon=True)
+            thread.start()
+
+            with patch.dict(
+                "os.environ",
+                {JUSI_PLUGIN_FRONTEND_ACTIONS_ENV: path},
+                clear=True,
+            ), patch.dict("sys.modules", {"visidata": fake_visidata}):
+                self.assertTrue(install_visidata_runtime_hooks())
+                returned = fake_vd.launchExternalEditor("buffer text", 5)
+            thread.join(timeout=1.0)
+
+            with open(path, "r", encoding="utf-8") as handle:
+                records = [json.loads(line) for line in handle if line.strip()]
+
+            self.assertEqual("buffer text", returned)
+            self.assertEqual(1, len(records))
+            self.assertEqual("edit_path", records[0]["action_type"])
+            self.assertEqual(5, records[0]["payload"]["line"])
+            self.assertEqual([], fake_vd.statuses)
 
     def test_plugin_runtime_monitor_requests_shutdown_when_supervisor_is_lost(self) -> None:
         stop_event = SimpleNamespace(is_set=lambda: False, wait=lambda _seconds: None)

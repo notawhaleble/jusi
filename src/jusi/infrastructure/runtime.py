@@ -18,6 +18,7 @@ from jusi.infrastructure.client_view import build_client_view
 from jusi.infrastructure.client_runtime import InProcessTranscriptHandle
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.plugins import build_display_handler_registry, collect_kernel_extension_modules
+from jusi.visidata_support import JUSI_VISIDATARC_ENV
 
 
 class RuntimeDependencyError(RuntimeError):
@@ -322,6 +323,8 @@ class ClientRegistryRuntime:
     def set_client_transport(self, session: Session, client_id: str, transport: ClientTransport) -> None:
         runtime_client = self._require_client(session.session_id, client_id)
         transport_env = dict(transport.attach_env)
+        if session.visidatarc_content:
+            transport_env[JUSI_VISIDATARC_ENV] = session.visidatarc_content
         status_path = getattr(runtime_client.handle, "status_path", "")
         if status_path:
             transport_env["JUSI_CLIENT_STATUS_FILE"] = status_path

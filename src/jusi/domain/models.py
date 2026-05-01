@@ -43,6 +43,7 @@ class Session:
     frontend_healthcheck_deadline: float | None = None
     last_error: str = ""
     last_action: str = ""
+    visidatarc_content: str = ""
     plugin_specs: dict[str, dict[str, object]] = field(default_factory=dict)
     palette: dict[str, dict[str, object]] = field(default_factory=dict)
 

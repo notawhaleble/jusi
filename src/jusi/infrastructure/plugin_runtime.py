@@ -13,6 +13,11 @@ from jusi.infrastructure.runtime_supervisor import (
     monitor_supervisor_liveness,
     parse_supervisor_pid,
 )
+from jusi.visidata_support import (
+    handle_plugin_runtime_control_request,
+    install_visidata_runtime_hooks,
+    load_visidatarc_from_env,
+)
 
 
 PLUGIN_RUNTIME_SUPERVISOR_POLL_INTERVAL_SECONDS = 0.25
@@ -44,6 +49,15 @@ def set_plugin_control_handler(handler: Callable[[dict], dict]) -> None:
 
 def _plugin_control_socket_path() -> str:
     return str(os.environ.get("JUSI_PLUGIN_RUNTIME_CONTROL_SOCKET", "")).strip()
+
+
+def _prepare_common_plugin_runtime() -> None:
+    try:
+        load_visidatarc_from_env()
+        install_visidata_runtime_hooks()
+        set_plugin_control_handler(handle_plugin_runtime_control_request)
+    except ModuleNotFoundError:
+        return
 
 
 def _run_plugin_control_server(socket_path: str, stop_event: threading.Event) -> None:
@@ -146,6 +160,7 @@ def run_plugin_runtime() -> int:
         control_server.start()
     pid_file = _write_runtime_pid_file()
     try:
+        _prepare_common_plugin_runtime()
         return int(target())
     finally:
         stop_event.set()

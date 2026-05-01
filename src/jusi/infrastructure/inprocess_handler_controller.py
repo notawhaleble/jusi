@@ -43,6 +43,12 @@ class InProcessHandlerController:
             message_type=message_type,
             payload_keys=sorted(list(payload.keys())),
         )
+        if message_type == "action_result":
+            self._invoke_backend_action(
+                "plugin_runtime_request",
+                {"message_type": message_type, "payload": dict(payload)},
+            )
+            return
         self._handler.on_frontend_message(self._context, message_type, payload)
 
     def interrupt(self) -> None:

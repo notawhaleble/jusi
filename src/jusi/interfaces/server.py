@@ -389,6 +389,7 @@ class ProtocolServer:
                 notebook_id=start_request.notebook_id,
                 kernel_name=start_request.kernel_name,
                 target=start_request.target,
+                visidatarc=start_request.visidatarc,
             )
         )
         envelopes = [response_envelope(request, ok=True)]
@@ -409,6 +410,7 @@ class ProtocolServer:
                 AttachSessionCommand(
                     notebook_id=attach_request.notebook_id,
                     target=attach_request.target,
+                    visidatarc=attach_request.visidatarc,
                 )
             )
         except SessionError as exc:

@@ -8,6 +8,7 @@ from jusi.application.use_cases import AttachSession, HandlerMessage, StartSessi
 from jusi.domain.models import ClientTransport, Session, SessionTarget
 from jusi.infrastructure.client_runtime_controller import ActiveClientController, LiveClientControllerRegistry
 from jusi.infrastructure.runtime import InMemoryClientHandle, InMemoryKernelRuntime, InMemorySessionStore
+from jusi.visidata_support import JUSI_VISIDATARC_ENV
 from jusi.interfaces.events import CollectingEventSink
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
@@ -129,6 +130,28 @@ class StartSessionTest(unittest.TestCase):
             events.events[1]["payload"]["target"],
         )
 
+    def test_start_session_keeps_visidatarc_in_session_memory(self) -> None:
+        events = CollectingEventSink()
+        store = InMemorySessionStore()
+        use_case = StartSession(runtime=InMemoryKernelRuntime(), store=store, events=events)
+
+        session = use_case.execute(
+            StartSessionCommand(
+                notebook_id="nb-1",
+                kernel_name="python3",
+                target=SessionTarget(source="start", alias="python3", kind="kernel"),
+                visidatarc="from visidata import vd\nvd.set_theme('asciimono')",
+            )
+        )
+
+        self.assertEqual(
+            "from visidata import vd\nvd.set_theme('asciimono')\n",
+            session.visidatarc_content,
+        )
+        stored = store.get_by_notebook("nb-1")
+        self.assertIsNotNone(stored)
+        self.assertEqual(session.visidatarc_content, stored.visidatarc_content)
+
     def test_protocol_server_start_connects_without_prepared_client_updates(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         messages = server.handle_message(
@@ -150,6 +173,25 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual(
             {"source": "start", "alias": "python3", "kind": "kernel", "value": "", "config": {}},
             envelopes[2].payload["session"]["target"],
+        )
+
+    def test_protocol_server_start_accepts_top_level_visidatarc(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "start_session", '
+                '"request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3", '
+                '"visidatarc": "from visidata import vd\\nvd.set_theme(\\"asciimono\\")"}}'
+            )
+        )
+        envelopes = [parse_envelope(message) for message in messages]
+
+        self.assertTrue(envelopes[0].ok)
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        self.assertEqual(
+            'from visidata import vd\nvd.set_theme("asciimono")\n',
+            session.visidatarc_content,
         )
 
     def test_handler_message_rejects_non_handler_runtime_mode(self) -> None:
@@ -311,6 +353,49 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual(["session_updated", "session_updated"], [event["type"] for event in events.events])
         self.assertEqual("starting", events.events[0]["payload"]["state"])
         self.assertEqual("connected", events.events[1]["payload"]["state"])
+
+    def test_attach_session_keeps_visidatarc_in_session_memory(self) -> None:
+        events = CollectingEventSink()
+        store = InMemorySessionStore()
+        use_case = AttachSession(runtime=InMemoryKernelRuntime(), store=store, events=events)
+
+        session = use_case.execute(
+            AttachSessionCommand(
+                notebook_id="nb-1",
+                target=SessionTarget(source="attach", kind="connection_file", value="/tmp/kernel.json"),
+                visidatarc="vd.options.set('disp_menu', False)",
+            )
+        )
+
+        self.assertEqual("vd.options.set('disp_menu', False)\n", session.visidatarc_content)
+        stored = store.get_by_notebook("nb-1")
+        self.assertIsNotNone(stored)
+        self.assertEqual(session.visidatarc_content, stored.visidatarc_content)
+
+    def test_plugin_transport_receives_session_visidatarc_content(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        session = Session(
+            notebook_id="nb-1",
+            session_id="sess-1",
+            state="connected",
+            visidatarc_content="vd.set_theme('asciimono')\n",
+        )
+        client_id = runtime.prepare_client("nb-1", "sess-1")
+        runtime.set_client_transport(
+            session,
+            client_id,
+            ClientTransport(
+                kind="native_terminal",
+                attach_cmd=["python", "-m", "jusi", "plugin-runtime"],
+                attach_env={"FOO": "bar"},
+                session_id="sess-1",
+                client_id=client_id,
+                handler_id="vd",
+            ),
+        )
+
+        inspect = runtime.read_client_view(session, client_id)
+        self.assertEqual("vd.set_theme('asciimono')\n", inspect["transport"]["attach_env"][JUSI_VISIDATARC_ENV])
 
     def test_attach_session_rejects_non_connection_file_target_kind(self) -> None:
         events = CollectingEventSink()
@@ -716,6 +801,46 @@ class StartSessionTest(unittest.TestCase):
         self.assertNotIn("client_id", shutdown_envelopes[2].payload["cell"])
         self.assertNotIn("transport", shutdown_envelopes[2].payload["cell"])
         self.assertNotIn("client_bufnr", shutdown_envelopes[2].payload["cell"])
+        self.assertIsNone(runtime.get_client(session_id, active_client_id))
+
+    def test_shutdown_busy_kernel_client_interrupts_and_clears_runtime_identity(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "keep_running": true, "main_lines": ["while True: pass"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        active_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+
+        shutdown_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "shutdown_client", '
+                '"request_id": "req-shutdown", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell_id": 12, "client_id": "'
+                + active_client_id
+                + '", "reason": "user_close"}}'
+            )
+        )
+        shutdown_envelopes = [parse_envelope(message) for message in shutdown_messages]
+        self.assertTrue(shutdown_envelopes[0].ok)
+        self.assertEqual("shutting_down", shutdown_envelopes[1].payload["cell"]["client_state"])
+        self.assertEqual("interrupted", shutdown_envelopes[1].payload["cell"]["status"])
+        self.assertEqual("unknown", shutdown_envelopes[1].payload["cell"]["owner"]["kind"])
+        self.assertNotIn("client_id", shutdown_envelopes[1].payload["cell"])
+        self.assertNotIn("transport", shutdown_envelopes[1].payload["cell"])
+        self.assertEqual("shutdown", shutdown_envelopes[2].payload["cell"]["client_state"])
+        self.assertEqual("interrupted", shutdown_envelopes[2].payload["cell"]["status"])
+        self.assertEqual("unknown", shutdown_envelopes[2].payload["cell"]["owner"]["kind"])
+        self.assertNotIn("client_id", shutdown_envelopes[2].payload["cell"])
+        self.assertNotIn("transport", shutdown_envelopes[2].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, active_client_id))
 
     def test_shutdown_client_with_mismatched_runtime_mode_fails_explicitly(self) -> None:

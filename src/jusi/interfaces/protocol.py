@@ -44,12 +44,14 @@ class StartSessionRequest:
     notebook_id: str
     kernel_name: str
     target: SessionTarget
+    visidatarc: str = ""
 
 
 @dataclass(frozen=True)
 class AttachSessionRequest:
     notebook_id: str
     target: SessionTarget
+    visidatarc: str = ""
 
 
 @dataclass(frozen=True)
@@ -181,6 +183,7 @@ def parse_start_session(payload: Mapping[str, Any]) -> StartSessionRequest:
         notebook_id=notebook_id,
         kernel_name=kernel_name,
         target=target,
+        visidatarc=str(payload.get("visidatarc", "")),
     )
 
 
@@ -242,7 +245,7 @@ def parse_attach_session(payload: Mapping[str, Any]) -> AttachSessionRequest:
     target = _parse_target(payload.get("target"), fallback_source="attach")
     if not target.value:
         raise ProtocolError("attach_session requires target.value")
-    return AttachSessionRequest(notebook_id=notebook_id, target=target)
+    return AttachSessionRequest(notebook_id=notebook_id, target=target, visidatarc=str(payload.get("visidatarc", "")))
 
 
 def parse_interrupt_cell(payload: Mapping[str, Any]) -> InterruptCellRequest:

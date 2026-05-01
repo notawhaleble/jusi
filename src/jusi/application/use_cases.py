@@ -34,6 +34,7 @@ from jusi.infrastructure.native_terminal_transport import (
     build_transcript_terminal_attach_env,
     native_terminal_attach_command,
 )
+from jusi.visidata_support import normalize_visidatarc_content
 from jusi.infrastructure.client_runtime_controller import LiveClientControllerRegistry
 from jusi.infrastructure.client_runtime_host import (
     default_launch_runtime_mode,
@@ -165,6 +166,7 @@ class StartSession:
             kernel_name=kernel_name,
             target=command.target,
             last_action="start",
+            visidatarc_content=normalize_visidatarc_content(command.visidatarc),
             plugin_specs=collect_plugin_presentation_specs(self._display_handlers),
             palette=collect_plugin_palette(self._display_handlers, command.target.config),
         )
@@ -206,6 +208,7 @@ class AttachSession:
             state="starting",
             target=command.target,
             last_action="attach",
+            visidatarc_content=normalize_visidatarc_content(command.visidatarc),
             plugin_specs=collect_plugin_presentation_specs(self._display_handlers),
             palette=collect_plugin_palette(self._display_handlers, command.target.config),
         )
@@ -870,6 +873,7 @@ class ShutdownClient:
             raise ValueError("No tracked client ownership for shutdown request")
         _validate_execution_runtime_consistency(execution)
 
+        self._interrupt_busy_execution_before_shutdown(session, execution)
         self._normalize_closed_handler_followup(execution)
         execution.client_state = "shutting_down"
         self._store.save_execution(command.notebook_id, execution)
@@ -882,6 +886,19 @@ class ShutdownClient:
 
     def _normalize_closed_handler_followup(self, execution: CellExecution) -> None:
         normalize_closed_followup_execution(execution)
+
+    def _interrupt_busy_execution_before_shutdown(self, session: Session, execution: CellExecution) -> None:
+        if execution.status != "busy":
+            return
+        mode = _require_execution_runtime_mode(execution)
+        if mode.name == "transcript":
+            execution.status = self._runtime.interrupt_kernel(session, execution)
+        elif mode.name == "handler":
+            execution.status = self._runtime.interrupt_handler(session, execution)
+        else:
+            raise ValueError(f"Unsupported runtime mode for shutdown interrupt: {mode.name}")
+        execution.owner_kind = "unknown"
+        clear_execution_runtime_identity(execution)
 
 
 class HealthcheckReply:

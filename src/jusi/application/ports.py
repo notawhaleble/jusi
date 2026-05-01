@@ -11,12 +11,14 @@ class StartSessionCommand:
     notebook_id: str
     kernel_name: str
     target: SessionTarget
+    visidatarc: str = ""
 
 
 @dataclass(frozen=True)
 class AttachSessionCommand:
     notebook_id: str
     target: SessionTarget
+    visidatarc: str = ""
 
 
 @dataclass(frozen=True)
