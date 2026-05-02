@@ -333,6 +333,26 @@ class StartSessionTest(unittest.TestCase):
 
         self.assertEqual("python3", session.kernel_name)
 
+    def test_start_session_uses_target_config_kernel_name_for_docker_target(self) -> None:
+        events = CollectingEventSink()
+        use_case = StartSession(runtime=InMemoryKernelRuntime(), store=InMemorySessionStore(), events=events)
+
+        session = use_case.execute(
+            StartSessionCommand(
+                notebook_id="nb-1",
+                kernel_name="dockerjusi",
+                target=SessionTarget(
+                    source="start",
+                    alias="dockerjusi",
+                    kind="docker",
+                    value="docker:///jolly_blackwell",
+                    config={"kernel_name": "python3"},
+                ),
+            )
+        )
+
+        self.assertEqual("python3", session.kernel_name)
+
     def test_attach_session_emits_external_connection_file_connected_updates(self) -> None:
         events = CollectingEventSink()
         use_case = AttachSession(runtime=InMemoryKernelRuntime(), store=InMemorySessionStore(), events=events)

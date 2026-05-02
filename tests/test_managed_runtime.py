@@ -633,6 +633,28 @@ class ManagedRuntimeTest(unittest.TestCase):
         self.assertIn(JUSI_SESSION_CONFIG_ENV, kwargs["env"])
         self.assertIn(JUSI_KERNEL_EXTENSIONS_ENV, kwargs["env"])
 
+    def test_managed_start_target_uses_target_config_kernel_name_for_docker_target(self) -> None:
+        manager = FakeManager()
+        client = FakeClient()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)) as start_kernel:
+            runtime = ManagedKernelRuntime()
+            runtime.start_target(
+                SessionTarget(
+                    source="start",
+                    alias="dockerjusi",
+                    kind="docker",
+                    value="docker:///jolly_blackwell",
+                    config={"kernel_name": "python3"},
+                ),
+                "dockerjusi",
+            )
+        start_kernel.assert_called_once()
+        kwargs = start_kernel.call_args.kwargs
+        self.assertEqual("python3", kwargs["kernel_name"])
+        self.assertEqual(["--ext", "jusi.kernel"], kwargs["extra_arguments"])
+        self.assertIn(JUSI_SESSION_CONFIG_ENV, kwargs["env"])
+        self.assertIn(JUSI_KERNEL_EXTENSIONS_ENV, kwargs["env"])
+
     def test_managed_runtime_start_execute_interrupt_and_stop(self) -> None:
         manager = FakeManager()
         client = FakeClient()

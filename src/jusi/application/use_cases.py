@@ -79,9 +79,11 @@ def _session_payload(session: Session) -> dict:
 
 def _effective_kernel_name(target: SessionTarget, kernel_name: str) -> str:
     requested = kernel_name.strip() or "python3"
+    configured = str(target.config.get("kernel_name", "")).strip()
+    if configured:
+        return configured
     if target.kind == "venv":
-        configured = str(target.config.get("kernel_name", "")).strip()
-        return configured or "python3"
+        return "python3"
     return requested
 
 

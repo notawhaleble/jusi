@@ -363,6 +363,12 @@ Attach note for native-terminal clients:
   - execute handler cell
   - observe `client.transport.kind = native_terminal`
   - launch the terminal client from `attach_cmd` + `attach_env`
+- `attach_cmd` is target-local attach intent, not always a host-local executable path
+- frontend may need to materialize attach through the current session target, for example:
+  - local backend: execute `attach_cmd` directly
+  - `venv` target: execute through the target virtualenv Python
+  - `docker` target: execute through `docker exec -i <container> ...`
+  - `docker+ssh` target: execute through `ssh ... docker exec -i <container> ...`
 - the bundled `jusi_vd` plugin uses this by carrying serialized handoff payload into the generic core `plugin-runtime` entrypoint plus a plugin-owned callable
 
 ### Kernel Handoff
