@@ -1755,6 +1755,60 @@ class StartSessionTest(unittest.TestCase):
         self.assertNotIn("runtime_mode", stop_envelopes[2].payload["cell"])
         self.assertNotIn("client_id", stop_envelopes[2].payload["cell"])
 
+    def test_reused_notebook_target_switch_does_not_leak_plugin_attach_env_into_plain_code_client(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime)
+        first_session_id, _client_id = self.start_and_bind(server, notebook_id="nb-1")
+
+        server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-plugin", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + first_session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
+            )
+        )
+        server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "stop_session", '
+                '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + first_session_id
+                + '"}}'
+            )
+        )
+        server.drain_pending_messages()
+
+        second_session_id, _client_id = self.start_and_bind(server, notebook_id="nb-1")
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-code", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + second_session_id
+                + '", "cell": {"id": 13, "kind": "code", "syntax": "python", "keep_running": true, "main_lines": ["while True: pass"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        plain_client_id = execute_envelopes[3].payload["cell"]["client_id"]
+
+        inspect_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "inspect_client", '
+                '"request_id": "req-inspect-plain", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + second_session_id
+                + '", "client_id": "'
+                + plain_client_id
+                + '"}}'
+            )
+        )
+        inspect_envelopes = [parse_envelope(message) for message in inspect_messages]
+        self.assertTrue(inspect_envelopes[0].ok)
+        transport_env = inspect_envelopes[0].payload["client"]["transport"]["attach_env"]
+
+        self.assertEqual("transcript", transport_env["JUSI_TERMINAL_MODE"])
+        self.assertNotIn("JUSI_PLUGIN_RUNTIME_CONTROL_SOCKET", transport_env)
+        self.assertNotIn("JUSI_PLUGIN_RUNTIME_PID_FILE", transport_env)
+        self.assertNotIn("JUSI_PLUGIN_FRONTEND_ACTIONS_FILE", transport_env)
+
     def test_stop_session_returns_error_response_for_unexpected_backend_failure(self) -> None:
         runtime = InMemoryKernelRuntime()
         server = ProtocolServer(runtime=runtime)

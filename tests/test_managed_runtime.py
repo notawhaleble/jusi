@@ -1091,6 +1091,38 @@ class ManagedRuntimeTest(unittest.TestCase):
             self.assertTrue(shutdown_envelopes[0].ok)
             self.assertTrue(manager.interrupted)
 
+    def test_managed_plain_code_native_terminal_transport_uses_transcript_status_file_only(self) -> None:
+        manager = FakeManager()
+        client = FakeClient()
+        with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
+            server = ProtocolServer(runtime=ManagedKernelRuntime())
+            self.addCleanup(server.close)
+            start_messages = server.handle_message(
+                '{"version": 1, "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {"notebook_id": "nb-1", "kernel_name": "python3"}}'
+            )
+            start_envelopes = [parse_envelope(message) for message in start_messages]
+            session_id = start_envelopes[2].payload["session"]["id"]
+
+            execute_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "execute_cell", '
+                    '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "keep_running": true, "main_lines": ["while True: pass"]}}}'
+                )
+            )
+            execute_envelopes = [parse_envelope(message) for message in execute_messages]
+            cell_events = [env for env in execute_envelopes if env.type == "cell_updated"]
+            active_client_id = cell_events[-1].payload["cell"]["client_id"]
+
+            inspect = self._inspect_client_view(server, session_id, active_client_id, "req-inspect-plain-transport")
+            transport_env = inspect["transport"]["attach_env"]
+            self.assertEqual("transcript", transport_env["JUSI_TERMINAL_MODE"])
+            self.assertIn("JUSI_CLIENT_STATUS_FILE", transport_env)
+            self.assertNotIn("JUSI_PLUGIN_RUNTIME_CONTROL_SOCKET", transport_env)
+            self.assertNotIn("JUSI_PLUGIN_RUNTIME_PID_FILE", transport_env)
+            self.assertNotIn("JUSI_PLUGIN_FRONTEND_ACTIONS_FILE", transport_env)
+
     def test_managed_runtime_surfaces_input_request_and_leaves_execution_busy(self) -> None:
         manager = FakeManager()
         client = FakeClient()
