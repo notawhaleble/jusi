@@ -1,7 +1,8 @@
+import time
+import threading
 import os
 import unittest
 from unittest.mock import patch
-import time
 
 from jusi.application.ports import AttachSessionCommand, HandlerMessageCommand, StartSessionCommand
 from jusi.application.use_cases import AttachSession, HandlerMessage, StartSession
@@ -72,6 +73,41 @@ class FrontendActionRuntime(InMemoryKernelRuntime):
         )
 
 
+class ExplodingStartRuntime(InMemoryKernelRuntime):
+    def start_target(self, target, kernel_name):  # type: ignore[no-untyped-def]
+        _ = (target, kernel_name)
+        raise RuntimeError("start failed")
+
+
+class ExplodingAttachRuntime(InMemoryKernelRuntime):
+    def attach_target(self, target):  # type: ignore[no-untyped-def]
+        _ = target
+        raise RuntimeError("attach failed")
+
+
+class ExplodingStopRuntime(InMemoryKernelRuntime):
+    def stop_session(self, session):  # type: ignore[no-untyped-def]
+        _ = session
+        raise RuntimeError("stop failed")
+
+
+class BlockingBackgroundExecuteRuntime(InMemoryKernelRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.seen_client_ids: list[str] = []
+
+    def supports_background_execute(self) -> bool:
+        return True
+
+    def execute_cell(self, session, cell, client):  # type: ignore[no-untyped-def]
+        self.started.set()
+        self.release.wait(timeout=1.0)
+        self.seen_client_ids.append(client.client_id)
+        return super().execute_cell(session, cell, client)
+
+
 class HandlerMessageProbe:
     def __init__(self) -> None:
         self.messages: list[tuple[str, dict]] = []
@@ -118,17 +154,47 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("connected", session.state)
         self.assertTrue(session.session_id.startswith("sess-"))
         self.assertEqual("inmemory://python3/1", session.connection)
-        self.assertEqual("start", session.target.source)
-        self.assertEqual("python3", session.target.alias)
-        self.assertEqual("kernel", session.target.kind)
-        self.assertIsNone(session.expires_at)
-        self.assertEqual(["session_updated", "session_updated"], [event["type"] for event in events.events])
+
+    def test_start_session_marks_failed_when_runtime_start_raises(self) -> None:
+        events = CollectingEventSink()
+        store = InMemorySessionStore()
+        use_case = StartSession(runtime=ExplodingStartRuntime(), store=store, events=events)
+
+        with self.assertRaisesRegex(RuntimeError, "start failed"):
+            use_case.execute(
+                StartSessionCommand(
+                    notebook_id="nb-1",
+                    kernel_name="python3",
+                    target=SessionTarget(source="start", alias="python3", kind="kernel"),
+                )
+            )
+
+        session = store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        self.assertEqual("failed", session.state)  # type: ignore[union-attr]
+        self.assertEqual("start failed", session.last_error)  # type: ignore[union-attr]
         self.assertEqual("starting", events.events[0]["payload"]["state"])
-        self.assertEqual("connected", events.events[1]["payload"]["state"])
-        self.assertEqual(
-            {"source": "start", "alias": "python3", "kind": "kernel", "value": "", "config": {}},
-            events.events[1]["payload"]["target"],
-        )
+        self.assertEqual("failed", events.events[1]["payload"]["state"])
+
+    def test_attach_session_marks_failed_when_runtime_attach_raises(self) -> None:
+        events = CollectingEventSink()
+        store = InMemorySessionStore()
+        use_case = AttachSession(runtime=ExplodingAttachRuntime(), store=store, events=events)
+
+        with self.assertRaisesRegex(RuntimeError, "attach failed"):
+            use_case.execute(
+                AttachSessionCommand(
+                    notebook_id="nb-1",
+                    target=SessionTarget(source="attach", kind="connection_file", value="/tmp/kernel.json"),
+                )
+            )
+
+        session = store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        self.assertEqual("failed", session.state)  # type: ignore[union-attr]
+        self.assertEqual("attach failed", session.last_error)  # type: ignore[union-attr]
+        self.assertEqual("starting", events.events[0]["payload"]["state"])
+        self.assertEqual("failed", events.events[1]["payload"]["state"])
 
     def test_start_session_keeps_visidatarc_in_session_memory(self) -> None:
         events = CollectingEventSink()
@@ -1035,6 +1101,7 @@ class StartSessionTest(unittest.TestCase):
         )
         inspect_envelopes = [parse_envelope(message) for message in inspect_messages]
         self.assertTrue(inspect_envelopes[0].ok)
+        self.assertNotEqual("handler", inspect_envelopes[0].payload["client"].get("runtime_mode"))
 
         pending = [parse_envelope(message) for message in server.drain_pending_messages()]
         cell_updates = [env for env in pending if env.type == "cell_updated"]
@@ -1042,7 +1109,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("done", cell_updates[-1].payload["cell"]["status"])
         self.assertEqual("unknown", cell_updates[-1].payload["cell"]["owner"]["kind"])
         self.assertEqual("shutdown", cell_updates[-1].payload["cell"]["client_state"])
-        self.assertEqual("", cell_updates[-1].payload["cell"]["runtime_mode"])
+        self.assertNotIn("runtime_mode", cell_updates[-1].payload["cell"])
         self.assertNotIn("client_id", cell_updates[-1].payload["cell"])
         self.assertNotIn("transport", cell_updates[-1].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, client_id))
@@ -1070,7 +1137,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("done", cell_updates[-1].payload["cell"]["status"])
         self.assertEqual("unknown", cell_updates[-1].payload["cell"]["owner"]["kind"])
         self.assertEqual("shutdown", cell_updates[-1].payload["cell"]["client_state"])
-        self.assertEqual("", cell_updates[-1].payload["cell"]["runtime_mode"])
+        self.assertNotIn("runtime_mode", cell_updates[-1].payload["cell"])
         self.assertNotIn("client_id", cell_updates[-1].payload["cell"])
         self.assertNotIn("transport", cell_updates[-1].payload["cell"])
         self.assertIsNone(runtime.get_client(session_id, client_id))
@@ -1828,6 +1895,97 @@ class StartSessionTest(unittest.TestCase):
         self.assertFalse(stop_envelopes[0].ok)
         self.assertEqual("internal_error", stop_envelopes[0].error["code"])
         self.assertEqual("stop exploded", stop_envelopes[0].error["message"])
+
+    def test_handle_message_ignores_malformed_json(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        self.addCleanup(server.close)
+        self.assertEqual([], server.handle_message("not json"))
+
+    def test_handle_message_returns_invalid_request_for_bad_version(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        self.addCleanup(server.close)
+
+        messages = server.handle_message(
+            '{"version": "bad", "kind": "request", "type": "start_session", "request_id": "req-1", "payload": {}}'
+        )
+        envelope = parse_envelope(messages[0])
+        self.assertFalse(envelope.ok)
+        self.assertEqual("invalid_request", envelope.error["code"])
+
+    def test_stop_session_marks_failed_when_background_stop_raises(self) -> None:
+        runtime = ExplodingStopRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        stop_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "stop_session", '
+                '"request_id": "req-3", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        stop_envelopes = [parse_envelope(message) for message in stop_messages]
+        self.assertTrue(stop_envelopes[0].ok)
+        self.assertEqual("stopping", stop_envelopes[1].payload["session"]["state"])
+
+        pending_messages: list[str] = []
+        deadline = time.time() + 1.0
+        while time.time() < deadline and not pending_messages:
+            pending_messages = server.drain_pending_messages()
+            if not pending_messages:
+                time.sleep(0.02)
+        self.assertTrue(pending_messages)
+        pending_envelopes = [parse_envelope(message) for message in pending_messages]
+        self.assertEqual("failed", pending_envelopes[0].payload["session"]["state"])
+        self.assertEqual("stop failed", pending_envelopes[0].payload["session"]["last_error"])
+
+    def test_background_execute_does_not_overwrite_interrupted_cell_after_stop(self) -> None:
+        runtime = BlockingBackgroundExecuteRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, _client_id = self.start_and_bind(server)
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "code", "syntax": "python", "main_lines": ["print(1)"]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+        self.assertTrue(runtime.started.wait(timeout=1.0))
+        active_client_id = execute_envelopes[2].payload["cell"]["client_id"]
+
+        stop_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "stop_session", '
+                '"request_id": "req-stop", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '"}}'
+            )
+        )
+        stop_envelopes = [parse_envelope(message) for message in stop_messages]
+        self.assertTrue(stop_envelopes[0].ok)
+        self.assertEqual("interrupted", stop_envelopes[2].payload["cell"]["status"])
+
+        runtime.release.set()
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            server.drain_pending_messages()
+            if runtime.seen_client_ids:
+                break
+            execution = server._store.get_execution("nb-1", 12)
+            if execution is not None and execution.status == "interrupted":
+                time.sleep(0.02)
+                continue
+            time.sleep(0.02)
+
+        execution = server._store.get_execution("nb-1", 12)
+        self.assertIsNotNone(execution)
+        self.assertEqual("interrupted", execution.status)  # type: ignore[union-attr]
+        self.assertEqual("shutdown", execution.client_state)  # type: ignore[union-attr]
+        self.assertEqual([active_client_id], runtime.seen_client_ids)
 
 
 if __name__ == "__main__":

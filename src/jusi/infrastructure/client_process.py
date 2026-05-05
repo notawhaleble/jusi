@@ -53,7 +53,6 @@ class TranscriptRuntimeLegacyAdapter:
         return rc
 
 
-ClientProcessRunner = TranscriptRuntimeRunner
 ClientProcessRunner = TranscriptRuntimeLegacyAdapter
 
 

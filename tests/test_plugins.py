@@ -635,7 +635,7 @@ class PluginRegistryTest(unittest.TestCase):
                 self.assertEqual(7, run_plugin_runtime())
 
             self.assertEqual(os.getpid(), observed["pid"])
-            self.assertTrue(os.path.exists(pid_path))
+            self.assertFalse(os.path.exists(pid_path))
 
     def test_build_vd_command_finds_binary_next_to_sys_executable(self) -> None:
         with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")), patch(
@@ -1109,6 +1109,35 @@ class PluginRegistryTest(unittest.TestCase):
 
             self.assertTrue(transport["attach_env"]["PYTHONPATH"].endswith("/tmp/jusi-src"))
             server.close()
+
+    def test_native_terminal_attach_env_redacts_unrelated_process_env(self) -> None:
+        with patch.dict("os.environ", {"SECRET_TOKEN": "abc"}, clear=False), patch(
+            "jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")
+        ):
+            server, session_id, active_client_id = start_bound_vd_server()
+
+            inspect_messages = server.handle_message(
+                (
+                    '{"version": 1, "kind": "request", "type": "inspect_client", '
+                    '"request_id": "req-inspect-redacted", "payload": {"notebook_id": "nb-1", "session_id": "'
+                    + session_id
+                    + '", "client_id": "'
+                    + active_client_id
+                    + '"}}'
+                )
+            )
+            inspect_envelope = [parse_envelope(message) for message in inspect_messages][0]
+            transport = inspect_envelope.payload["client"]["transport"]
+            child_env = json.loads(transport["attach_env"]["JUSI_TERMINAL_ENV_JSON"])
+
+            self.assertNotIn("SECRET_TOKEN", child_env)
+            server.close()
+
+    def test_build_vd_env_redacts_unrelated_process_env(self) -> None:
+        with patch.dict("os.environ", {"SECRET_TOKEN": "abc", "PATH": "/tmp/bin"}, clear=True):
+            env = _build_vd_env()
+        self.assertNotIn("SECRET_TOKEN", env)
+        self.assertEqual("/tmp/bin", env["PATH"])
 
     def test_native_terminal_attach_env_does_not_force_lines_or_columns(self) -> None:
         with patch("jusi_vd.plugin.util.find_spec", return_value=SimpleNamespace(name="visidata")):

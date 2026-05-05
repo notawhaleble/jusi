@@ -86,7 +86,12 @@ def _build_vd_command() -> tuple[list[str], str]:
 
 
 def _build_vd_env() -> dict[str, str]:
-    env = os.environ.copy()
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key in {"HOME", "LANG", "LC_ALL", "LC_CTYPE", "PATH", "SHELL", "TERM", "TMPDIR", "USER", "VIRTUAL_ENV"}
+        or key.startswith("JUSI_")
+    }
     env["TERM"] = os.environ.get("JUSI_VD_TERM", "").strip() or "xterm-256color"
     env["JUSI_PLUGIN_RUNTIME_CALLABLE"] = "jusi_vd.runner:run_vd_runner"
     return env

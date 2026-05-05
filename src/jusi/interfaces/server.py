@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from queue import SimpleQueue
 from threading import Thread
 import time
@@ -10,11 +11,12 @@ from jusi.application.errors import SessionError, SessionNotFoundError
 from jusi.application.ports import AttachSessionCommand, ExecuteCellCommand, HandlerMessageCommand, HealthcheckReplyCommand, InputReplyCommand, InterruptCellCommand, StartSessionCommand
 from jusi.application.ports import DisconnectSessionCommand, ReconnectSessionCommand, StopSessionCommand
 from jusi.application.ports import ShutdownClientCommand
-from jusi.application.use_cases import AttachSession, DisconnectSession, ExecuteCell, HandlerMessage, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession
+from jusi.application.use_cases import AttachSession, DisconnectSession, ExecuteCell, HandlerMessage, HealthcheckReply, InputReply, InterruptCell, ReconnectSession, ShutdownClient, StopSession, StartSession, _cell_payload
 from jusi.domain.models import ExecutableCell
 from jusi.domain.models import clear_execution_runtime_identity, normalize_closed_followup_execution
 from jusi.infrastructure.client_runtime_host import require_registered_runtime_mode
 from jusi.infrastructure.client_runtime_controller import LiveClientControllerRegistry
+from jusi.infrastructure.client_view import build_client_view
 from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.runtime import InMemoryKernelRuntime, InMemorySessionStore, build_runtime
 from jusi.interfaces.protocol import (
@@ -339,10 +341,10 @@ class ProtocolServer:
             )
 
     def handle_message(self, raw: str) -> List[str]:
-        request = parse_envelope(raw)
-        if request.kind != "request":
-            raise ProtocolError("Server expects request envelopes")
         try:
+            request = parse_envelope(raw)
+            if request.kind != "request":
+                raise ProtocolError("Server expects request envelopes")
             if request.type == "start_session":
                 return self._handle_start_session(request)
             if request.type == "execute_cell":
@@ -369,11 +371,29 @@ class ProtocolServer:
                 return self._handle_handler_message(request)
             return dump_envelopes([error_response(request, "unknown_request", "Unknown request type")])
         except ProtocolError as exc:
+            request = self._protocol_error_request(raw)
+            if request is None:
+                return []
             return dump_envelopes([error_response(request, "invalid_request", str(exc))])
         except SessionError as exc:
             return dump_envelopes([error_response(request, exc.code, str(exc))])
         except Exception as exc:
             return dump_envelopes([error_response(request, "internal_error", str(exc))])
+
+    def _protocol_error_request(self, raw: str) -> Envelope | None:
+        import json
+
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        request_id = str(data.get("request_id", "")).strip()
+        msg_type = str(data.get("type", "")).strip() or "invalid_request"
+        if not request_id:
+            return None
+        return Envelope(version=1, kind="request", type=msg_type, payload={}, request_id=request_id)
 
     def _handle_start_session(self, request: Envelope) -> List[str]:
         start_request = parse_start_session(request.payload)
@@ -550,13 +570,16 @@ class ProtocolServer:
             return False
 
     def _spawn_execute_completion(self, command: ExecuteCellCommand, session, current_client) -> None:  # type: ignore[no-untyped-def]
+        session_snapshot = copy.deepcopy(session)
+        current_client_snapshot = copy.deepcopy(current_client)
+
         def _run() -> None:
             emit_timing(
                 "server.execute_cell.finish_start",
                 notebook_id=command.notebook_id,
-                session_id=session.session_id,
-                cell_id=current_client.cell_id,
-                client_id=current_client.client_id,
+                session_id=session_snapshot.session_id,
+                cell_id=current_client_snapshot.cell_id,
+                client_id=current_client_snapshot.client_id,
             )
             events = ProtocolEventSink()
             use_case = ExecuteCell(
@@ -569,14 +592,14 @@ class ProtocolServer:
                 live_handler_message_sink=self._queue_handler_message,
             )
             try:
-                use_case.finish_execute(command, session, current_client)
+                use_case.finish_execute(command, session_snapshot, current_client_snapshot)
             except Exception as exc:
                 emit_timing(
                     "server.execute_cell.finish_error",
                     notebook_id=command.notebook_id,
-                    session_id=session.session_id,
-                    cell_id=current_client.cell_id,
-                    client_id=current_client.client_id,
+                    session_id=session_snapshot.session_id,
+                    cell_id=current_client_snapshot.cell_id,
+                    client_id=current_client_snapshot.client_id,
                     error_type=type(exc).__name__,
                     error_message=str(exc),
                 )
@@ -586,11 +609,11 @@ class ProtocolServer:
             emit_timing(
                 "server.execute_cell.finish_done",
                 notebook_id=command.notebook_id,
-                session_id=session.session_id,
-                cell_id=current_client.cell_id,
-                client_id=current_client.client_id,
-                final_status=current_client.status,
-                owner_kind=current_client.owner_kind,
+                session_id=session_snapshot.session_id,
+                cell_id=current_client_snapshot.cell_id,
+                client_id=current_client_snapshot.client_id,
+                final_status=current_client_snapshot.status,
+                owner_kind=current_client_snapshot.owner_kind,
             )
             for event in events.events:
                 self._pending_events.put(event)
@@ -617,12 +640,24 @@ class ProtocolServer:
         return dump_envelopes(envelopes)
 
     def _spawn_stop_completion(self, command: StopSessionCommand, session) -> None:  # type: ignore[no-untyped-def]
+        session_snapshot = copy.deepcopy(session)
+
         def _run() -> None:
             events = ProtocolEventSink()
             use_case = StopSession(runtime=self._runtime, store=self._store, events=events)
             try:
-                use_case.finish_stop(command, session)
-            except Exception:
+                use_case.finish_stop(command, session_snapshot)
+            except Exception as exc:
+                use_case.fail_stop(command, session_snapshot, exc)
+                emit_timing(
+                    "server.stop_session.finish_error",
+                    notebook_id=command.notebook_id,
+                    session_id=session_snapshot.session_id,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                for event in events.events:
+                    self._pending_events.put(event)
                 return
             self._active_client_controllers.remove_session(command.session_id)
             for event in events.events:
@@ -664,19 +699,28 @@ class ProtocolServer:
         session = self._store.get_by_notebook(inspect_request.notebook_id)
         if session is None or session.session_id != inspect_request.session_id:
             return dump_envelopes([error_response(request, SessionNotFoundError.code, "Unknown notebook session")])
-        try:
-            client_view = self._runtime.read_client_view(session, inspect_request.client_id)
-        except ValueError as exc:
-            return dump_envelopes([error_response(request, "invalid_state", str(exc))])
-        for execution in self._store.list_executions(inspect_request.notebook_id):
-            if execution.client_id == inspect_request.client_id and execution.runtime_mode:
-                client_view["runtime_mode"] = execution.runtime_mode
-                break
-        self._normalize_dead_handler_client(
+        normalized_execution = self._normalize_dead_handler_client(
             inspect_request.notebook_id,
             inspect_request.session_id,
             inspect_request.client_id,
         )
+        try:
+            client_view = self._runtime.read_client_view(session, inspect_request.client_id)
+        except ValueError as exc:
+            if normalized_execution is None:
+                return dump_envelopes([error_response(request, "invalid_state", str(exc))])
+            client_view = build_client_view(
+                client_id=inspect_request.client_id,
+                session_id=inspect_request.session_id,
+                client_bufnr=normalized_execution.client_bufnr,
+                active_cell_id=normalized_execution.cell_id,
+                execution_status=normalized_execution.status,
+                transcript=[],
+            )
+        for execution in self._store.list_executions(inspect_request.notebook_id):
+            if execution.client_id == inspect_request.client_id and execution.runtime_mode:
+                client_view["runtime_mode"] = execution.runtime_mode
+                break
         emit_timing(
             "server.inspect_client.response",
             notebook_id=inspect_request.notebook_id,
@@ -687,31 +731,31 @@ class ProtocolServer:
         )
         return dump_envelopes([response_envelope(request, ok=True, payload={"client": client_view})])
 
-    def _normalize_dead_handler_client(self, notebook_id: str, session_id: str, client_id: str) -> bool:
+    def _normalize_dead_handler_client(self, notebook_id: str, session_id: str, client_id: str):  # type: ignore[no-untyped-def]
         tracked_execution = None
         for execution in self._store.list_executions(notebook_id):
             if execution.client_id == client_id:
                 tracked_execution = execution
                 break
         if tracked_execution is None:
-            return False
+            return None
         if not tracked_execution.runtime_mode:
-            return False
+            return None
         mode = require_registered_runtime_mode(tracked_execution.runtime_mode)
         if not mode.accepts_frontend_messages:
-            return False
+            return None
         runtime_client = self._runtime.get_client(session_id, client_id)
         if runtime_client is None:
-            return False
+            return None
         handle = getattr(runtime_client, "handle", None)
         is_alive = getattr(handle, "plugin_runtime_is_alive", None)
         if not callable(is_alive):
-            return False
+            return None
         if is_alive() is not False:
-            return False
+            return None
         session = self._store.get_by_notebook(notebook_id)
         if session is None or session.session_id != session_id:
-            return False
+            return None
         self._runtime.shutdown_client(session, client_id, "plugin_runtime_exit")
         self._active_client_controllers.remove_client(session_id, client_id)
         normalize_closed_followup_execution(tracked_execution)
@@ -723,16 +767,10 @@ class ProtocolServer:
                 version=1,
                 kind="event",
                 type="cell_updated",
-                payload={"notebook_id": notebook_id, "cell": {
-                    "id": tracked_execution.cell_id,
-                    "status": tracked_execution.status,
-                    "owner": {"kind": tracked_execution.owner_kind},
-                    "client_state": tracked_execution.client_state,
-                    "runtime_mode": tracked_execution.runtime_mode,
-                }},
+                payload={"notebook_id": notebook_id, "cell": _cell_payload(tracked_execution)},
             )
         )
-        return True
+        return tracked_execution
 
     def _handle_input_reply(self, request: Envelope) -> List[str]:
         input_request = parse_input_reply(request.payload)

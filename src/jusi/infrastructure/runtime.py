@@ -633,22 +633,6 @@ class InMemoryKernelRuntime(ClientRegistryRuntime):
     def expire_session(self, session: Session) -> None:
         self.stop_session(session)
 
-    def sync_disconnect_deadline(self, session: Session, expires_at: float | None) -> float | None:
-        connection_file = str(getattr(session, "connection", "") or "")
-        if session.target.kind != "connection_file" or not connection_file:
-            return expires_at
-        if expires_at is not None:
-            _set_attached_expiry(connection_file, expires_at)
-            return expires_at
-        shared = _get_attached_expiry(connection_file)
-        if shared is not None:
-            return shared
-        _set_attached_expiry(connection_file, None)
-        return None
-
-    def expire_session(self, session: Session) -> None:
-        self.stop_session(session)
-
     def stop_session(self, session: Session) -> None:
         self.release_session_clients(session.session_id, reason="session_stop")
 

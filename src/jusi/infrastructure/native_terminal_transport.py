@@ -4,6 +4,19 @@ import json
 import os
 import sys
 
+_SAFE_ATTACH_ENV_KEYS = {
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "PATH",
+    "SHELL",
+    "TERM",
+    "TMPDIR",
+    "USER",
+    "VIRTUAL_ENV",
+}
+
 
 def native_terminal_attach_command() -> list[str]:
     return [sys.executable, "-m", "jusi", "client-process", "terminal-attach"]
@@ -17,7 +30,11 @@ def build_exec_terminal_attach_env(
     client_id: str,
     handler_id: str,
 ) -> dict[str, str]:
-    attach_child_env = dict(env)
+    attach_child_env = {
+        key: value
+        for key, value in dict(env).items()
+        if key in _SAFE_ATTACH_ENV_KEYS or key.startswith("JUSI_")
+    }
     attach_child_env.pop("LINES", None)
     attach_child_env.pop("COLUMNS", None)
     attach_env = {

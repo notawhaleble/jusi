@@ -142,7 +142,10 @@ def parse_envelope(raw: str) -> Envelope:
 
 
 def parse_envelope_dict(data: Mapping[str, Any]) -> Envelope:
-    version = int(data.get("version", 0))
+    try:
+        version = int(data.get("version", 0))
+    except (TypeError, ValueError) as exc:
+        raise ProtocolError("Unsupported protocol version") from exc
     if version != PROTOCOL_VERSION:
         raise ProtocolError("Unsupported protocol version")
     kind = str(data.get("kind", ""))

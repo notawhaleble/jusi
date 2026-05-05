@@ -174,8 +174,14 @@ class StartSession:
         )
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
-
-        session_id, connection = self._runtime.start_target(command.target, kernel_name)
+        try:
+            session_id, connection = self._runtime.start_target(command.target, kernel_name)
+        except Exception as exc:
+            session.state = "failed"
+            session.last_error = str(exc)
+            self._store.save(session)
+            self._events.session_updated(command.notebook_id, _session_payload(session))
+            raise
         session.session_id = session_id
         session.connection = connection
         session.state = "connected"
@@ -216,8 +222,14 @@ class AttachSession:
         )
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
-
-        session_id, connection = self._runtime.attach_target(command.target)
+        try:
+            session_id, connection = self._runtime.attach_target(command.target)
+        except Exception as exc:
+            session.state = "failed"
+            session.last_error = str(exc)
+            self._store.save(session)
+            self._events.session_updated(command.notebook_id, _session_payload(session))
+            raise
         session.session_id = session_id
         session.connection = connection
         session.state = "connected"
@@ -357,6 +369,9 @@ class ExecuteCell:
         try:
             current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
         except Exception as exc:
+            if not self._execution_still_active(command.notebook_id, current_client):
+                tracked = self._store.get_execution(command.notebook_id, current_client.cell_id)
+                return tracked or current_client
             message = f"{type(exc).__name__}: {exc}"
             emit_timing(
                 "use_case.execute.runtime_error",
@@ -386,6 +401,9 @@ class ExecuteCell:
             client_id=current_client.client_id,
             runtime_status=current_client.status,
         )
+        if not self._execution_still_active(command.notebook_id, current_client):
+            tracked = self._store.get_execution(command.notebook_id, current_client.cell_id)
+            return tracked or current_client
         handoff = self._runtime.consume_handler_handoff(session, current_client.client_id)
         if handoff is not None:
             emit_timing(
@@ -417,6 +435,18 @@ class ExecuteCell:
         self._store.save_execution(command.notebook_id, current_client)
         self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
         return current_client
+
+    def _execution_still_active(self, notebook_id: str, current_client: CellExecution) -> bool:
+        tracked = self._store.get_execution(notebook_id, current_client.cell_id)
+        if tracked is None:
+            return False
+        if tracked is current_client:
+            return True
+        return (
+            tracked.client_id == current_client.client_id
+            and tracked.runtime_mode == current_client.runtime_mode
+            and tracked.status in {"busy", "follow-up"}
+        )
 
     @staticmethod
     def _presentation_for_handoff(handoff, matched_handler) -> dict[str, object]:  # type: ignore[no-untyped-def]
@@ -852,6 +882,13 @@ class StopSession:
     def finish_stop(self, command: StopSessionCommand, session: Session) -> Session:
         self._runtime.stop_session(session)
         session.state = "stopped"
+        self._store.save(session)
+        self._events.session_updated(command.notebook_id, _session_payload(session))
+        return session
+
+    def fail_stop(self, command: StopSessionCommand, session: Session, exc: Exception) -> Session:
+        session.state = "failed"
+        session.last_error = str(exc)
         self._store.save(session)
         self._events.session_updated(command.notebook_id, _session_payload(session))
         return session
