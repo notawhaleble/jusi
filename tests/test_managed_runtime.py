@@ -178,6 +178,31 @@ class InputReplyFlowClient(FakeClient):
         ]
 
 
+class CompletionClient(FakeClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.shell_messages = [
+            {
+                "parent_header": {"msg_id": "complete-1"},
+                "msg_type": "complete_reply",
+                "content": {
+                    "matches": ["print", "property"],
+                    "cursor_start": 0,
+                    "cursor_end": 4,
+                },
+            }
+        ]
+        self.completion_requests: list[tuple[str, int]] = []
+
+    def complete(self, code: str, cursor_pos: int) -> str:
+        self.completion_requests.append((code, cursor_pos))
+        return "complete-1"
+
+    def get_shell_msg(self, timeout: float = 0) -> dict:
+        _ = timeout
+        return self.shell_messages.pop(0)
+
+
 class MagicHandoffClient(FakeClient):
     def __init__(
         self,
@@ -616,6 +641,40 @@ class ManagedRuntimeTest(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             runtime = build_runtime()
         self.assertIsInstance(runtime, ManagedKernelRuntime)
+
+    def test_protocol_server_managed_plain_python_completion_uses_kernel_complete_request(self) -> None:
+        server, session_id, _ = self._start_bound_managed_server(CompletionClient())
+        runtime = server._runtime
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        client_id = runtime.prepare_client("nb-1", session_id)
+        runtime.bind_prepared_client(session, client_id, 91)  # type: ignore[arg-type]
+
+        response = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "handler_message", '
+                '"request_id": "req-complete", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "client_id": "'
+                + client_id
+                + '", "handler_id": "python", "message_type": "complete", '
+                '"payload": {"cell_text": "prin", "line_text": "prin", "cursor_row": 0, "cursor_col": 4}}}'
+            )
+        )
+        self.assertTrue(parse_envelope(response[0]).ok)
+
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        self.assertEqual("handler_message", pending[0].type)
+        self.assertEqual("complete_result", pending[0].payload["message_type"])
+        self.assertEqual(
+            [
+                {"value": "print", "label": "print", "kind": None, "detail": None, "documentation": None, "start_col": 0, "end_col": 4},
+                {"value": "property", "label": "property", "kind": None, "detail": None, "documentation": None, "start_col": 0, "end_col": 4},
+            ],
+            pending[0].payload["payload"]["items"],
+        )
+        managed_client = runtime._sessions[session_id].client
+        self.assertEqual([("prin", 4)], managed_client.completion_requests)
 
     def test_managed_start_target_uses_python3_for_venv_target_by_default(self) -> None:
         manager = FakeManager()

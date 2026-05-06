@@ -161,6 +161,9 @@ class KernelRuntime(Protocol):
     def consume_handler_handoff(self, session: Session, client_id: str) -> HandlerHandoff | None:
         """Consume the latest kernel-emitted handler handoff for the active client, if any."""
 
+    def request_completion(self, session: Session, client_id: str, payload: dict) -> list[dict]:
+        """Return completion items for the given client-scoped editor payload."""
+
 
 class SessionStore(Protocol):
     def save(self, session: Session) -> None:

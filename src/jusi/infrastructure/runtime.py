@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import base64
 import json
+import keyword
 import os
 import pickle
+import re
+import rlcompleter
 import signal
 import threading
 from queue import Empty
@@ -28,6 +31,66 @@ class RuntimeDependencyError(RuntimeError):
 MANAGED_IOPUB_POLL_TIMEOUT_SECONDS = 0.01
 JUSI_SESSION_CONFIG_ENV = "JUSI_SESSION_CONFIG_JSON"
 JUSI_KERNEL_EXTENSIONS_ENV = "JUSI_KERNEL_EXTENSION_MODULES_JSON"
+
+
+def _completion_text(payload: dict[str, object]) -> str:
+    cell_text = payload.get("cell_text")
+    if isinstance(cell_text, str):
+        return cell_text
+    line_text = payload.get("line_text")
+    if isinstance(line_text, str):
+        return line_text
+    return ""
+
+
+def _completion_cursor_position(payload: dict[str, object], text: str) -> int:
+    raw_cursor_pos = payload.get("cursor_pos")
+    if isinstance(raw_cursor_pos, int):
+        return max(0, min(raw_cursor_pos, len(text)))
+    lines = text.split("\n")
+    raw_row = payload.get("cursor_row")
+    raw_col = payload.get("cursor_col")
+    row = raw_row if isinstance(raw_row, int) else 0
+    row = max(0, min(row, max(len(lines) - 1, 0)))
+    line = lines[row] if lines else ""
+    col = raw_col if isinstance(raw_col, int) else len(line)
+    prefix = sum(len(item) + 1 for item in lines[:row])
+    return max(0, min(prefix + max(0, min(col, len(line))), len(text)))
+
+
+def _completion_line_context(payload: dict[str, object], text: str) -> tuple[str, int]:
+    line_text = payload.get("line_text")
+    if isinstance(line_text, str):
+        raw_col = payload.get("cursor_col")
+        cursor_col = raw_col if isinstance(raw_col, int) else len(line_text)
+        return line_text, max(0, min(cursor_col, len(line_text)))
+    cursor_pos = _completion_cursor_position(payload, text)
+    line_start = text.rfind("\n", 0, cursor_pos)
+    line_start = 0 if line_start < 0 else line_start + 1
+    line_end = text.find("\n", cursor_pos)
+    if line_end < 0:
+        line_end = len(text)
+    return text[line_start:line_end], cursor_pos - line_start
+
+
+def _normalize_completion_items(
+    matches: list[str],
+    *,
+    start_col: int | None = None,
+    end_col: int | None = None,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "value": match,
+            "label": match,
+            "kind": None,
+            "detail": None,
+            "documentation": None,
+            "start_col": start_col,
+            "end_col": end_col,
+        }
+        for match in matches
+    ]
 
 
 def _connection_registry_path(connection_file: str) -> str:
@@ -319,6 +382,32 @@ class ClientRegistryRuntime:
                 "handler_id": runtime_client.transport.handler_id,
             }
         return view
+
+    def request_completion(self, session: Session, client_id: str, payload: dict[str, object]) -> list[dict[str, object]]:
+        _ = (session, client_id)
+        text = _completion_text(payload)
+        line_text, cursor_col = _completion_line_context(payload, text)
+        prefix_match = re.search(r"[A-Za-z_][A-Za-z0-9_\.]*$", line_text[:cursor_col])
+        if prefix_match is None:
+            return []
+        prefix = prefix_match.group(0)
+        completer = rlcompleter.Completer()
+        matches: list[str] = []
+        index = 0
+        while True:
+            candidate = completer.complete(prefix, index)
+            if candidate is None:
+                break
+            cleaned = candidate.rstrip("(")
+            if cleaned and cleaned not in matches:
+                matches.append(cleaned)
+            index += 1
+        if "." not in prefix:
+            for candidate in keyword.kwlist:
+                if candidate.startswith(prefix) and candidate not in matches:
+                    matches.append(candidate)
+        matches.sort()
+        return _normalize_completion_items(matches, start_col=prefix_match.start(), end_col=cursor_col)
 
     def set_client_transport(self, session: Session, client_id: str, transport: ClientTransport) -> None:
         runtime_client = self._require_client(session.session_id, client_id)
@@ -817,6 +906,37 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
             reply_input(value)
             runtime_session.pending_inputs.pop(execution.client_id, None)
             return self._drive_execution(runtime_session, session, execution, pending_input.msg_id)
+
+    def request_completion(self, session: Session, client_id: str, payload: dict[str, object]) -> list[dict[str, object]]:
+        runtime_session = self._require_session(session.session_id)
+        self._require_client(session.session_id, client_id)
+        complete = getattr(runtime_session.client, "complete", None)
+        get_shell_msg = getattr(runtime_session.client, "get_shell_msg", None)
+        if not callable(complete) or not callable(get_shell_msg):
+            raise RuntimeError("Managed runtime client does not support completion requests")
+        text = _completion_text(payload)
+        cursor_pos = _completion_cursor_position(payload, text)
+        line_text, cursor_col = _completion_line_context(payload, text)
+        line_start = cursor_pos - cursor_col
+        with self._session_execute_lock(runtime_session):
+            msg_id = complete(text, cursor_pos=cursor_pos)
+            while True:
+                message = get_shell_msg(timeout=1.0)
+                if message.get("parent_header", {}).get("msg_id") != msg_id:
+                    continue
+                if message.get("msg_type", "") != "complete_reply":
+                    continue
+                content = message.get("content", {})
+                matches = [str(item) for item in list(content.get("matches", [])) if str(item)]
+                cursor_start = content.get("cursor_start")
+                cursor_end = content.get("cursor_end")
+                start_col = int(cursor_start) - line_start if isinstance(cursor_start, int) else None
+                end_col = int(cursor_end) - line_start if isinstance(cursor_end, int) else None
+                if isinstance(start_col, int):
+                    start_col = max(0, min(start_col, len(line_text)))
+                if isinstance(end_col, int):
+                    end_col = max(0, min(end_col, len(line_text)))
+                return _normalize_completion_items(matches, start_col=start_col, end_col=end_col)
 
     def _drive_execution(self, runtime_session: Any, session: Session, client: CellExecution, msg_id: str) -> str:
         status = client.status if client.status in {"error", "follow-up", "interrupted"} else "done"

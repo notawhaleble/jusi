@@ -1912,6 +1912,29 @@ class StartSessionTest(unittest.TestCase):
         self.assertFalse(envelope.ok)
         self.assertEqual("invalid_request", envelope.error["code"])
 
+    def test_handler_message_complete_routes_plain_transcript_completion(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        session_id, client_id = self.start_and_bind(server)
+
+        response = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "handler_message", '
+                '"request_id": "req-complete", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "client_id": "'
+                + client_id
+                + '", "handler_id": "python", "message_type": "complete", '
+                '"payload": {"cell_text": "prin", "line_text": "prin", "cursor_row": 0, "cursor_col": 4}}}'
+            )
+        )
+        self.assertTrue(parse_envelope(response[0]).ok)
+
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        self.assertEqual("handler_message", pending[0].type)
+        self.assertEqual("complete_result", pending[0].payload["message_type"])
+        items = pending[0].payload["payload"]["items"]
+        self.assertTrue(any(item["value"] == "print" for item in items))
+
     def test_stop_session_marks_failed_when_background_stop_raises(self) -> None:
         runtime = ExplodingStopRuntime()
         server = ProtocolServer(runtime=runtime)

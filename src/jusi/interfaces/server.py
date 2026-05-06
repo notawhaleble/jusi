@@ -837,6 +837,16 @@ class ProtocolServer:
             handler_id=handler_request.handler_id,
             message_type=handler_request.message_type,
         )
+        if self._handle_transcript_completion(handler_request):
+            emit_timing(
+                "server.handler_message.done",
+                notebook_id=handler_request.notebook_id,
+                session_id=handler_request.session_id,
+                client_id=handler_request.client_id,
+                handler_id=handler_request.handler_id,
+                message_type=handler_request.message_type,
+            )
+            return dump_envelopes([response_envelope(request, ok=True)])
         use_case = HandlerMessage(store=self._store, active_client_controllers=self._active_client_controllers)
         try:
             use_case.execute(
@@ -882,3 +892,38 @@ class ProtocolServer:
             message_type=handler_request.message_type,
         )
         return dump_envelopes([response_envelope(request, ok=True)])
+
+    def _handle_transcript_completion(self, handler_request) -> bool:  # type: ignore[no-untyped-def]
+        if handler_request.message_type != "complete":
+            return False
+        session = self._store.get_by_notebook(handler_request.notebook_id)
+        if session is None or session.session_id != handler_request.session_id:
+            return False
+        get_client = getattr(self._runtime, "get_client", None)
+        request_completion = getattr(self._runtime, "request_completion", None)
+        if not callable(get_client) or not callable(request_completion):
+            return False
+        runtime_client = get_client(handler_request.session_id, handler_request.client_id)
+        if runtime_client is None:
+            return False
+        tracked_execution = None
+        for execution in self._store.list_executions(handler_request.notebook_id):
+            if execution.client_id == handler_request.client_id:
+                tracked_execution = execution
+                break
+        if tracked_execution is not None and tracked_execution.runtime_mode and tracked_execution.runtime_mode != "transcript":
+            return False
+        items = request_completion(session, handler_request.client_id, dict(handler_request.payload))
+        self._queue_handler_message(
+            handler_request.notebook_id,
+            handler_request.session_id,
+            handler_request.client_id,
+            handler_request.handler_id,
+            "complete_result",
+            {
+                "handler_id": handler_request.handler_id,
+                "message_type": "complete",
+                "items": list(items),
+            },
+        )
+        return True

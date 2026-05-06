@@ -370,8 +370,7 @@ class ExecuteCell:
             current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
         except Exception as exc:
             if not self._execution_still_active(command.notebook_id, current_client):
-                tracked = self._store.get_execution(command.notebook_id, current_client.cell_id)
-                return tracked or current_client
+                return self._tracked_terminal_execution(command.notebook_id, current_client)
             message = f"{type(exc).__name__}: {exc}"
             emit_timing(
                 "use_case.execute.runtime_error",
@@ -402,8 +401,7 @@ class ExecuteCell:
             runtime_status=current_client.status,
         )
         if not self._execution_still_active(command.notebook_id, current_client):
-            tracked = self._store.get_execution(command.notebook_id, current_client.cell_id)
-            return tracked or current_client
+            return self._tracked_terminal_execution(command.notebook_id, current_client)
         handoff = self._runtime.consume_handler_handoff(session, current_client.client_id)
         if handoff is not None:
             emit_timing(
@@ -447,6 +445,13 @@ class ExecuteCell:
             and tracked.runtime_mode == current_client.runtime_mode
             and tracked.status in {"busy", "follow-up"}
         )
+
+    def _tracked_terminal_execution(self, notebook_id: str, current_client: CellExecution) -> CellExecution:
+        tracked = self._store.get_execution(notebook_id, current_client.cell_id)
+        if tracked is None:
+            return current_client
+        self._events.cell_updated(notebook_id, _cell_payload(tracked))
+        return tracked
 
     @staticmethod
     def _presentation_for_handoff(handoff, matched_handler) -> dict[str, object]:  # type: ignore[no-untyped-def]
