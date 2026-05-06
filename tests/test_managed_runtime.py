@@ -676,6 +676,32 @@ class ManagedRuntimeTest(unittest.TestCase):
         managed_client = runtime._sessions[session_id].client
         self.assertEqual([("prin", 4)], managed_client.completion_requests)
 
+    def test_protocol_server_managed_complete_cell_uses_kernel_complete_request_without_client(self) -> None:
+        server, session_id, _ = self._start_bound_managed_server(CompletionClient())
+        runtime = server._runtime
+
+        response = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "complete_cell", '
+                '"request_id": "req-complete-cell", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 33, "kind": "code", "syntax": "python", "main_lines": ["prin"]}, '
+                '"cursor_row": 0, "cursor_col": 4, "line_text": "prin", "current_word": "prin"}}'
+            )
+        )
+        envelope = parse_envelope(response[0])
+        self.assertTrue(envelope.ok)
+        self.assertEqual(
+            [
+                {"value": "print", "label": "print", "kind": None, "detail": None, "documentation": None, "start_col": 0, "end_col": 4},
+                {"value": "property", "label": "property", "kind": None, "detail": None, "documentation": None, "start_col": 0, "end_col": 4},
+            ],
+            envelope.payload["completion"]["items"],
+        )
+        managed_client = runtime._sessions[session_id].client
+        self.assertEqual([("prin", 4)], managed_client.completion_requests)
+        self.assertEqual([], runtime.list_clients(session_id))
+
     def test_managed_start_target_uses_python3_for_venv_target_by_default(self) -> None:
         manager = FakeManager()
         client = FakeClient()

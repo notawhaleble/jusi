@@ -1935,6 +1935,27 @@ class StartSessionTest(unittest.TestCase):
         items = pending[0].payload["payload"]["items"]
         self.assertTrue(any(item["value"] == "print" for item in items))
 
+    def test_complete_cell_returns_plain_code_completion_without_client_bootstrap(self) -> None:
+        server = ProtocolServer(runtime=InMemoryKernelRuntime())
+        session_id, _client_id = self.start_and_bind(server)
+
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "complete_cell", '
+                '"request_id": "req-complete-cell", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 77, "kind": "code", "syntax": "python", "main_lines": ["prin"]}, '
+                '"cursor_row": 0, "cursor_col": 4, "line_text": "prin", "current_word": "prin"}}'
+            )
+        )
+        envelope = parse_envelope(messages[0])
+        self.assertTrue(envelope.ok)
+        self.assertEqual("complete_cell", envelope.type)
+        self.assertIn("completion", envelope.payload)
+        items = envelope.payload["completion"]["items"]
+        self.assertTrue(any(item["value"] == "print" for item in items))
+        self.assertIsNone(server._store.get_execution("nb-1", 77))
+
     def test_stop_session_marks_failed_when_background_stop_raises(self) -> None:
         runtime = ExplodingStopRuntime()
         server = ProtocolServer(runtime=runtime)

@@ -409,6 +409,15 @@ class ClientRegistryRuntime:
         matches.sort()
         return _normalize_completion_items(matches, start_col=prefix_match.start(), end_col=cursor_col)
 
+    def request_cell_completion(
+        self,
+        session: Session,
+        cell: ExecutableCell,
+        payload: dict[str, object],
+    ) -> list[dict[str, object]]:
+        _ = (session, cell)
+        return self.request_completion(session, "", payload)
+
     def set_client_transport(self, session: Session, client_id: str, transport: ClientTransport) -> None:
         runtime_client = self._require_client(session.session_id, client_id)
         transport_env = dict(transport.attach_env)
@@ -910,6 +919,42 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
     def request_completion(self, session: Session, client_id: str, payload: dict[str, object]) -> list[dict[str, object]]:
         runtime_session = self._require_session(session.session_id)
         self._require_client(session.session_id, client_id)
+        complete = getattr(runtime_session.client, "complete", None)
+        get_shell_msg = getattr(runtime_session.client, "get_shell_msg", None)
+        if not callable(complete) or not callable(get_shell_msg):
+            raise RuntimeError("Managed runtime client does not support completion requests")
+        text = _completion_text(payload)
+        cursor_pos = _completion_cursor_position(payload, text)
+        line_text, cursor_col = _completion_line_context(payload, text)
+        line_start = cursor_pos - cursor_col
+        with self._session_execute_lock(runtime_session):
+            msg_id = complete(text, cursor_pos=cursor_pos)
+            while True:
+                message = get_shell_msg(timeout=1.0)
+                if message.get("parent_header", {}).get("msg_id") != msg_id:
+                    continue
+                if message.get("msg_type", "") != "complete_reply":
+                    continue
+                content = message.get("content", {})
+                matches = [str(item) for item in list(content.get("matches", [])) if str(item)]
+                cursor_start = content.get("cursor_start")
+                cursor_end = content.get("cursor_end")
+                start_col = int(cursor_start) - line_start if isinstance(cursor_start, int) else None
+                end_col = int(cursor_end) - line_start if isinstance(cursor_end, int) else None
+                if isinstance(start_col, int):
+                    start_col = max(0, min(start_col, len(line_text)))
+                if isinstance(end_col, int):
+                    end_col = max(0, min(end_col, len(line_text)))
+                return _normalize_completion_items(matches, start_col=start_col, end_col=end_col)
+
+    def request_cell_completion(
+        self,
+        session: Session,
+        cell: ExecutableCell,
+        payload: dict[str, object],
+    ) -> list[dict[str, object]]:
+        _ = cell
+        runtime_session = self._require_session(session.session_id)
         complete = getattr(runtime_session.client, "complete", None)
         get_shell_msg = getattr(runtime_session.client, "get_shell_msg", None)
         if not callable(complete) or not callable(get_shell_msg):

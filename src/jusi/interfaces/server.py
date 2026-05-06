@@ -25,6 +25,7 @@ from jusi.interfaces.protocol import (
     dump_envelopes,
     error_response,
     parse_attach_session,
+    parse_complete_cell,
     parse_disconnect_session,
     parse_envelope,
     parse_execute_cell,
@@ -349,6 +350,8 @@ class ProtocolServer:
                 return self._handle_start_session(request)
             if request.type == "execute_cell":
                 return self._handle_execute_cell(request)
+            if request.type == "complete_cell":
+                return self._handle_complete_cell(request)
             if request.type == "attach_session":
                 return self._handle_attach_session(request)
             if request.type == "interrupt_cell":
@@ -559,6 +562,45 @@ class ProtocolServer:
         envelopes = [response_envelope(request, ok=True)]
         envelopes.extend(events.events)
         return dump_envelopes(envelopes)
+
+    def _handle_complete_cell(self, request: Envelope) -> List[str]:
+        complete_request = parse_complete_cell(request.payload)
+        session = self._store.get_by_notebook(complete_request.notebook_id)
+        if session is None or session.session_id != complete_request.session_id:
+            return dump_envelopes([error_response(request, SessionNotFoundError.code, "Unknown notebook session")])
+        if session.state != "connected":
+            return dump_envelopes([error_response(request, "invalid_state", "Cannot complete cell without a connected session")])
+        if complete_request.kind != "code":
+            return dump_envelopes([error_response(request, "invalid_state", "complete_cell currently supports only plain code cells")])
+        request_completion = getattr(self._runtime, "request_cell_completion", None)
+        if not callable(request_completion):
+            return dump_envelopes([error_response(request, "invalid_state", "Runtime does not support cell completion")])
+        cell = ExecutableCell(
+            cell_id=complete_request.cell_id,
+            kind=complete_request.kind,
+            syntax=complete_request.syntax,
+            main_lines=complete_request.main_lines,
+        )
+        items = request_completion(
+            session,
+            cell,
+            {
+                "cell_text": "\n".join(complete_request.main_lines),
+                "cursor_row": complete_request.cursor_row,
+                "cursor_col": complete_request.cursor_col,
+                "line_text": complete_request.line_text,
+                "current_word": complete_request.current_word,
+            },
+        )
+        return dump_envelopes(
+            [
+                response_envelope(
+                    request,
+                    ok=True,
+                    payload={"completion": {"items": list(items)}},
+                )
+            ]
+        )
 
     def _supports_background_execute(self) -> bool:
         method = getattr(self._runtime, "supports_background_execute", None)

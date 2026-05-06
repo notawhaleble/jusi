@@ -66,6 +66,20 @@ class ExecuteCellRequest:
 
 
 @dataclass(frozen=True)
+class CompleteCellRequest:
+    notebook_id: str
+    session_id: str
+    cell_id: int
+    kind: str
+    syntax: str
+    main_lines: List[str]
+    cursor_row: int
+    cursor_col: int
+    line_text: str
+    current_word: str
+
+
+@dataclass(frozen=True)
 class InterruptCellRequest:
     notebook_id: str
     session_id: str
@@ -238,6 +252,44 @@ def parse_execute_cell(payload: Mapping[str, Any]) -> ExecuteCellRequest:
         syntax=syntax,
         main_lines=list(main_lines),
         keep_running=bool(cell.get("keep_running", False)),
+    )
+
+
+def parse_complete_cell(payload: Mapping[str, Any]) -> CompleteCellRequest:
+    notebook_id = str(payload.get("notebook_id", "")).strip()
+    session_id = str(payload.get("session_id", "")).strip()
+    cell = payload.get("cell")
+    if not notebook_id:
+        raise ProtocolError("complete_cell requires notebook_id")
+    if not session_id:
+        raise ProtocolError("complete_cell requires session_id")
+    if not isinstance(cell, dict):
+        raise ProtocolError("complete_cell requires cell payload")
+    cell_id = int(cell.get("id", 0))
+    if cell_id <= 0:
+        raise ProtocolError("complete_cell requires positive cell id")
+    kind = str(cell.get("kind", "")).strip() or "code"
+    syntax = str(cell.get("syntax", "")).strip() or "python"
+    main_lines = cell.get("main_lines", [])
+    if not isinstance(main_lines, list) or any(not isinstance(line, str) for line in main_lines):
+        raise ProtocolError("complete_cell main_lines must be a list of strings")
+    cursor_row = int(payload.get("cursor_row", 0))
+    cursor_col = int(payload.get("cursor_col", 0))
+    if cursor_row < 0:
+        raise ProtocolError("complete_cell requires non-negative cursor_row")
+    if cursor_col < 0:
+        raise ProtocolError("complete_cell requires non-negative cursor_col")
+    return CompleteCellRequest(
+        notebook_id=notebook_id,
+        session_id=session_id,
+        cell_id=cell_id,
+        kind=kind,
+        syntax=syntax,
+        main_lines=list(main_lines),
+        cursor_row=cursor_row,
+        cursor_col=cursor_col,
+        line_text=str(payload.get("line_text", "")),
+        current_word=str(payload.get("current_word", "")),
     )
 
 

@@ -164,6 +164,9 @@ class KernelRuntime(Protocol):
     def request_completion(self, session: Session, client_id: str, payload: dict) -> list[dict]:
         """Return completion items for the given client-scoped editor payload."""
 
+    def request_cell_completion(self, session: Session, cell: ExecutableCell, payload: dict) -> list[dict]:
+        """Return completion items for a cell that has not necessarily been executed."""
+
 
 class SessionStore(Protocol):
     def save(self, session: Session) -> None:
