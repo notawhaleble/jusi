@@ -1,19 +1,19 @@
 # Plugin Contract
 
-This document defines the current backend contract for Jusi display-handler plugins.
+This document defines the backend contract for Jusi display-handler plugins.
 
 ## Overview
 
 A plugin has two backend-facing pieces:
 
 - a kernel-side magic implementation that emits a Jusi handoff payload
-- a display-handler implementation that runs in a dedicated handler worker
+- a display-handler implementation controlled by backend runtime and, when needed, a plugin runtime
 
 Core backend responsibilities:
 
 - session lifecycle
 - client lifecycle
-- handler worker supervision
+- handler supervision
 - structured frontend/backend routing through `handler_message`
 - native-terminal transport advertisement for interactive handlers
 
@@ -53,11 +53,11 @@ The registry uses these specs to:
 - load plugin handlers from `jusi.display_handlers`
 - advertise session-level metadata
 - validate handoff payloads
-- start the correct handler worker after execution
+- start the correct handler control path after execution
 
 ## `DisplayHandler`
 
-A display handler runs inside a dedicated handler worker and owns one active handler-controlled cell/client pair for its lifetime.
+A display handler owns one active handler-controlled cell/client pair for its lifetime.
 
 Handler responsibilities:
 
@@ -67,10 +67,10 @@ Handler responsibilities:
 - expose handler snapshot state
 - handle interrupt and stop
 
-Worker lifecycle rules:
+Handler lifecycle rules:
 
-- normal worker exit maps to cell status `done`
-- unexpected worker death maps to cell status `error`
+- normal handler exit maps to cell status `done`
+- unexpected handler death maps to cell status `error`
 - interrupt routing depends on execution owner kind
 
 ## `HandlerContext`
@@ -91,7 +91,7 @@ The context stays transport-agnostic and Vim-agnostic.
 
 ## Base Classes
 
-The current supported base classes are:
+The supported base classes are:
 
 - `BaseHandler`
 - `BaseTerminalHandler`
@@ -99,9 +99,9 @@ The current supported base classes are:
 
 Use them as convenience layers, not as protocol replacements.
 
-Current purpose:
+Purpose:
 
-- `BaseHandler` defines the worker-facing hook shape
+- `BaseHandler` defines the handler-facing hook shape
 - `BaseTerminalHandler` advertises native-terminal transport and terminal startup
 - `BaseVdHandler` adds reusable VisiData-oriented follow-up and completion seams
 
@@ -191,7 +191,7 @@ Example:
 
 The structured plugin control channel is `handler_message`.
 
-Current directions:
+Directions:
 
 - frontend -> backend
   - `followup`
@@ -213,7 +213,7 @@ Interactive handlers should advertise terminal attachment through client transpo
 - `transport.client_id`
 - optional `transport.handler_id`
 
-The current attach bridge is:
+The attach bridge is:
 
 - `python -m jusi client-process terminal-attach`
 

@@ -1,12 +1,12 @@
 # Jusi Protocol
 
-This document defines the wire contract between Jusi and its editor-side plugin.
+This document defines the wire contract between Jusi and the `jusivim` editor-side plugin.
 
 The transport implementation may use Vim/Neovim facilities, but the protocol stays transport-agnostic.
 
 ## Scope
 
-Current backend slice covers:
+The backend slice covers:
 
 - `start_session`
 - `attach_session`
@@ -56,14 +56,14 @@ Notes:
 - `sign_id` is not part of the backend contract
 - history regions stay editor-local
 - buffer numbers may be absent or unbound from backend perspective
-- current ids are backend-generated high-entropy values with `sess-` prefix
+- ids are backend-generated high-entropy values with `sess-` prefix
 
 ## Client Transport
 
 Backend clients may expose one of these transport kinds:
 
 - `inspection`
-  - current default
+  - default inspection transport
   - the editor plugin renders through `client_updated` plus `inspect_client`
 - `native_terminal`
   - native-terminal-friendly client advertisement for fullscreen interactive clients
@@ -94,7 +94,7 @@ Notes:
 
 ## Session Target
 
-Backend session metadata currently keeps only explicit `target`:
+Backend session metadata keeps only explicit `target`:
 
 ```json
 {
@@ -144,7 +144,7 @@ Behavior:
 - starts a new durable session for the notebook
 - enters `starting`, then `connected`
 - backend generates a durable `session_id`
-- the editor plugin may omit `target`; backend derives the current default target from `kernel_name`
+- the editor plugin may omit `target`; backend derives the default target from `kernel_name`
 
 ### `attach_session`
 
@@ -165,10 +165,10 @@ Behavior:
 
 - attaches to an existing durable session target
 - backend generates a durable `session_id` for the Jusi-side binding
-- current honest attach slice is intentionally narrow:
+- the attach slice is intentionally narrow:
   - `target.kind` must be `connection_file`
-- this path is now real in both the in-memory runtime and the managed runtime
-- attached sessions now only establish the durable backend session; client allocation happens on execute
+- this path is implemented in both the in-memory runtime and the managed runtime
+- attached sessions establish the durable backend session; client allocation happens on execute
 - managed runtime keeps a small connection-file sidecar registry of attached Jusi root-process PIDs for stop fanout
 - other target kinds may still be recorded as identity, but are not executable attach paths yet
 
@@ -196,7 +196,7 @@ Behavior:
 - terminal `cell_updated` may arrive later as an async event
 - every cell enters through the Jupyter kernel
 - handler takeover is driven by a kernel-emitted Jusi handoff mime payload
-- once that handoff is accepted, backend starts one handler worker process for that active handler-owned cell/client
+- once that handoff is accepted, backend starts the handler control path for that active handler-owned cell/client
 
 ### `interrupt_cell`
 
@@ -210,7 +210,7 @@ Behavior:
 
 Behavior:
 
-- routes interrupt by current execution owner
+- routes interrupt by tracked execution owner
 - fails explicitly if owner is unknown or not interruptible
 
 ### `input_reply`
@@ -252,22 +252,22 @@ Behavior:
 - event form is backend -> editor plugin
 - valid only while that client still has an active handler runtime registered
 
-Current live handler usage:
+Live handler usage:
 
 - editor plugin -> backend call:
   - `followup`
   - `complete`
 - backend -> editor plugin callback:
-  - current structured action callback:
+  - structured action callback:
     - `action_request`
 
 Boundary note:
 
 - if an operation can be completed entirely on the backend/plugin side, it should stay there
-- `copy` is not currently part of the generic frontend callback model
+- `copy` is not part of the generic frontend callback model
 - the editor plugin should not be expected to implement plugin-specific operational logic for such paths
 
-Current backend -> editor-plugin built-in action shape:
+Backend -> editor-plugin built-in action shape:
 
 ```json
 {
@@ -288,7 +288,7 @@ Current backend -> editor-plugin built-in action shape:
 }
 ```
 
-Current built-in editor action:
+Built-in editor actions:
 
 - `action_type = open_path`
   - `path` is required
@@ -315,14 +315,14 @@ When frontend finishes an `edit_path` request, it must reply through
 
 Direction note:
 
-- current native-terminal direction does not keep raw terminal transport on the notebook control channel
+- native-terminal transport does not keep raw terminal transport on the notebook control channel
 - `handler_message` remains the structured control channel for:
   - follow-up
   - completion
   - plugin commands
-- backend root process remains the router for this traffic; the editor plugin does not talk to handler workers directly
+- backend root process remains the router for this traffic; the editor plugin does not talk to handlers directly
 
-Current generic completion result shape on the handler channel:
+Generic completion result shape on the handler channel:
 
 ```json
 {
@@ -358,13 +358,13 @@ Completion replacement semantics:
 
 Attach note for native-terminal clients:
 
-- current native-terminal attach metadata is available as part of normal client state
+- native-terminal attach metadata is available as part of normal client state
 - terminal attach lifecycle is:
   - execute handler cell
   - observe `client.transport.kind = native_terminal`
   - launch the terminal client from `attach_cmd` + `attach_env`
 - `attach_cmd` is target-local attach intent, not always a host-local executable path
-- frontend may need to materialize attach through the current session target, for example:
+- frontend may need to materialize attach through the session target, for example:
   - local backend: execute `attach_cmd` directly
   - `venv` target: execute through the target virtualenv Python
   - `docker` target: execute through `docker exec -i <container> ...`
@@ -382,16 +382,16 @@ Handler activation uses a kernel-emitted Jusi handoff mime payload carrying:
 
 That handoff is sufficient for backend to start the correct handler client runtime without further kernel messaging.
 
-Current behavior:
+Behavior:
 
-- managed runtime now recognizes `application/vnd.jusi.handoff+json` in kernel `display_data` / `execute_result`
+- managed runtime recognizes `application/vnd.jusi.handoff+json` in kernel `display_data` / `execute_result`
 - backend records that as a structured handoff event in the active client transcript/view
-- backend registry now supports validating `magic_name -> handler_id` handoff combinations, including one magic mapping to multiple handlers
-- matched handler-owned executions now replace the initial transcript runtime with a dedicated `handler` client runtime
+- backend registry validates `magic_name -> handler_id` handoff combinations, including one magic mapping to multiple handlers
+- matched handler-owned executions replace the initial transcript runtime with a dedicated `handler` client runtime
 - backend root process remains the router/supervisor for editor-plugin <-> handler traffic
-- backend now prefers validated kernel handoff to start that runtime when the handoff is present
+- backend uses validated kernel handoff to start that runtime when the handoff is present
 - backend no longer starts handler runtimes from header parsing in `ExecuteCell`
-- the in-memory runtime now synthesizes handoff events for magic cells so tests and the non-managed stub path still exercise the same takeover flow
+- the in-memory runtime synthesizes handoff events for magic cells so tests and the non-managed stub path exercise the same takeover flow
 
 ### `healthcheck_reply`
 
@@ -406,7 +406,7 @@ Current behavior:
 Behavior:
 
 - valid only while the session is still `connected`
-- acknowledges the current backend-issued `healthcheck` event
+- acknowledges the active backend-issued `healthcheck` event
 - clears the outstanding editor-liveness check and refreshes backend liveness tracking
 
 ### `disconnect_session`
@@ -424,7 +424,7 @@ Behavior:
 - moves the session to `disconnected`
 - active execution ownership degrades to `unknown`
 - session identity remains durable for later reconnect
-- session payload exposes `expires_at` as the current disconnect deadline
+- session payload exposes `expires_at` as the disconnect deadline
 - if that deadline passes, backend performs final session teardown without waiting for a reconnect attempt
 - backend may also enter this path after missed editor healthchecks
 
@@ -465,7 +465,7 @@ Behavior:
   - `owner.kind -> unknown`
   - `client_state -> shutdown`
   - cleared live runtime identity means `client_id`, `runtime_mode`, and transport metadata are omitted from later `cell_updated` payloads
-- for externally attached `connection_file` sessions, managed runtime now:
+- for externally attached `connection_file` sessions, managed runtime:
   - sends kernel shutdown through the attached Jupyter client
   - tears down local Jusi channels and clients
   - signals peer attached Jusi root processes registered for the same connection file so they shut down too
@@ -608,7 +608,7 @@ Behavior:
 - emitted when backend observes that a client's visible view revision changed
 - intended as a redraw invalidation signal, not as a full view payload
 - the editor plugin should respond by calling `inspect_client` for the same client if it needs the updated snapshot
-- this is the first backend-driven redraw signal for client rendering; `inspect_client` remains the content source for now
+- this is the backend-driven redraw signal for client rendering; `inspect_client` remains the content source
 - planned native-terminal clients are expected to rely less on this hot path and more on direct terminal attachment via advertised transport metadata
 
 ### `handler_message`
@@ -632,7 +632,7 @@ Behavior:
 
 - backend -> editor-plugin side of the structured handler channel
 - used for plugin/display-handler control messages
-- current native-terminal direction keeps `handler_message` for control semantics, not as the live fullscreen terminal transport
+- native-terminal transport keeps `handler_message` for control semantics, not as the live fullscreen terminal transport
 - `inspect_client` remains useful for debug/recovery metadata, but the real terminal surface is the advertised native-terminal attach command
 
 ### `healthcheck`
@@ -656,8 +656,8 @@ Behavior:
 
 - `start_session` still routes actual start behavior mainly through `kernel_name`
 - `attach_session` is only real for `target.kind=connection_file`
-- durable session metadata is currently in-memory per backend root process; cross-process persistence is still future work
-- transcript-style client redraw remains invalidation-plus-pull for now:
+- durable session metadata is in-memory per backend root process; cross-process persistence is future work
+- transcript-style client redraw remains invalidation-plus-pull:
   - backend emits `client_updated`
   - the editor plugin still pulls the full snapshot through `inspect_client`
 - native-terminal transport is preferred for fullscreen interactive handlers:

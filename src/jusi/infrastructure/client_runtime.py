@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
@@ -61,6 +62,12 @@ def _spawn_client_process(client_id: str, notebook_id: str, session_id: str, con
         start_new_session=True,
         env=_build_client_env(client_id, notebook_id, session_id, control_dir),
     )
+
+
+def _cleanup_control_dir(control_dir: str) -> None:
+    if not control_dir:
+        return
+    shutil.rmtree(control_dir, ignore_errors=True)
 
 
 @dataclass
@@ -305,6 +312,7 @@ class ProcessClientHandle:
             self._wait_for_status(lambda status: status.shutdown_reason == reason)
         except RuntimeError:
             pass
+        _cleanup_control_dir(self.control_dir)
 
     def _shutdown_plugin_runtime(self) -> None:
         try:
@@ -570,6 +578,7 @@ class InProcessTranscriptHandle:
         self._shutdown_plugin_runtime()
         self._apply_command(ClientRuntimeCommand.shutdown(reason))
         self.lifecycle.append(f"shutdown:{reason}")
+        _cleanup_control_dir(self.control_dir)
 
     def _shutdown_plugin_runtime(self) -> None:
         try:

@@ -1,6 +1,6 @@
 # Session Lifecycle
 
-This document defines the intended backend state transitions for the current contract slice.
+This document defines the backend state transitions for the contract slice.
 
 ## Session
 
@@ -32,19 +32,19 @@ Rules:
 - one backend root process is expected to hold one durable session record
 - the editor plugin may keep a persisted reconnectables registry across editor lifetimes
 - timed-out durable sessions do not need proactive editor expiry events
-- backend now actively tears timed-out disconnected sessions down on the backend side
+- backend actively tears timed-out disconnected sessions down
 - stale reconnectable entries may still be discovered later on attach/reconnect attempts
-- backend session metadata currently keeps explicit `target` only
+- backend session metadata keeps explicit `target` only
 - backend session payloads may include `plugin_specs`, which are editor-facing presentation defaults keyed by magic name for plugins installed in this kernel environment
 - backend session payloads may include `palette`, which is the editor-facing creation palette keyed by magic name and may include empty entry lists for built-in or non-config plugins
-- disconnected sessions now also carry `expires_at` timeout metadata
-- backend now also drives editor-link liveness with explicit healthchecks while sessions are `connected`
+- disconnected sessions carry `expires_at` timeout metadata
+- backend drives editor-link liveness with explicit healthchecks while sessions are `connected`
 - missed editor healthcheck replies transition the session into normal `disconnected` timeout handling
 - `endpoint`/backend residence stays outside core backend session state
 - `disconnected` is not equivalent to kernel death
 - `failed` should record a reason
 - externally attached `connection_file` sessions may also participate in a small sidecar peer registry so stop can fan out to other attached Jusi root processes
-- that same sidecar now carries the shared disconnect timeout deadline for attached peers
+- that same sidecar carries the shared disconnect timeout deadline for attached peers
 - known issue: suspended Vim, for example via `Ctrl-Z`, may look like link loss to backend healthchecks
 
 ## Cell Execution

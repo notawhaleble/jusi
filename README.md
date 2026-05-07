@@ -1,6 +1,6 @@
 # Jusi
 
-Jusi is the Python backend for notebook-style execution used by a Vim/Neovim plugin.
+Jusi is the Python backend for notebook-style execution used by the `jusivim` Vim/Neovim plugin.
 
 It is responsible for:
 
@@ -12,20 +12,28 @@ It is responsible for:
 
 Jusi is designed as part of a two-component system:
 
-- editor plugin
+- `jusivim` editor plugin
 - Jusi backend
 
 The backend may run locally or remotely depending on the selected session target.
 
-## Runtime Entrypoints
+## Entrypoints
+
+Primary editor-facing entrypoint:
 
 - backend root process: `python -m jusi`
-- client runtime: `python -m jusi client-runtime`
+
+Internal/support entrypoints used by the backend and `jusivim`:
+
+- native terminal attach: `python -m jusi client-process terminal-attach`
 - plugin runtime starter: `python -m jusi plugin-runtime`
+- transcript runtime entrypoint: `python -m jusi client-runtime`
+
+Normal usage is through `jusivim`, which starts and talks to the backend over the Jusi protocol.
 
 ## Protocol Features
 
-Current backend protocol supports:
+The backend protocol supports:
 
 - session start and attach
 - cell execution
@@ -72,7 +80,6 @@ Cell metadata may include:
 - [Session Lifecycle](docs/session-lifecycle.md)
 - [Plugin Contract](docs/plugins.md)
 - [Architecture](docs/architecture.md)
-- [Single Client Runtime Pivot](docs/client-runtime-pivot.md)
 - [Backend Map](docs/backend-map.md)
 
 ## Contributing

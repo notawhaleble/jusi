@@ -23,6 +23,7 @@ from jusi.infrastructure.runtime import (
     _jusi_kernel_env,
     build_runtime,
 )
+from jusi.infrastructure.client_runtime import InProcessTranscriptHandle
 from jusi.interfaces.protocol import parse_envelope
 from jusi.interfaces.server import ProtocolServer
 
@@ -701,6 +702,19 @@ class ManagedRuntimeTest(unittest.TestCase):
         managed_client = runtime._sessions[session_id].client
         self.assertEqual([("prin", 4)], managed_client.completion_requests)
         self.assertEqual([], runtime.list_clients(session_id))
+
+    def test_inprocess_client_handle_shutdown_removes_control_dir(self) -> None:
+        handle = InProcessTranscriptHandle(
+            client_id="client-1",
+            notebook_id="nb-1",
+            session_id="sess-1",
+        )
+        control_dir = handle.control_dir
+        self.assertTrue(os.path.isdir(control_dir))
+
+        handle.shutdown("done")
+
+        self.assertFalse(os.path.exists(control_dir))
 
     def test_managed_start_target_uses_python3_for_venv_target_by_default(self) -> None:
         manager = FakeManager()

@@ -1,6 +1,6 @@
 # Jusi Backend Map
 
-This document is the practical backend map for the current Jusi shape.
+This document is the practical backend map for Jusi.
 
 It is meant to answer:
 
@@ -13,7 +13,7 @@ It is meant to answer:
 ## Glossary
 
 - `editor plugin`
-  - the Vim/Neovim side
+  - the `jusivim` Vim/Neovim side
   - starts the backend
   - sends protocol requests
   - consumes protocol events and responses
@@ -21,7 +21,7 @@ It is meant to answer:
 
 - `backend root process`
   - the main `jusi` process
-  - current entrypoint: `python -m jusi`
+  - entrypoint: `python -m jusi`
   - owns protocol parsing, session state, runtime supervision, handler supervision
 
 - `session`
@@ -45,8 +45,7 @@ It is meant to answer:
   - a cell may be bound to one active client at a time
 
 - `managed client process`
-  - current entrypoint: `python -m jusi client-process`
-  - a backend child process that maintains client transcript/view state
+  - compatibility/runtime-support entrypoint: `python -m jusi client-process`
   - not the same thing as a plugin runtime
 
 - `kernel handle`
@@ -67,7 +66,7 @@ It is meant to answer:
   - owned by backend root
 
 - `plugin runtime`
-  - current entrypoint: `python -m jusi plugin-runtime`
+  - entrypoint: `python -m jusi plugin-runtime`
   - terminal-hosted live runtime for a plugin
   - usually attached to a real editor terminal buffer
   - examples:
@@ -75,7 +74,7 @@ It is meant to answer:
     - live shell runtime
 
 - `native terminal attach`
-  - current outer attach entrypoint:
+  - outer attach entrypoint:
     - `python -m jusi client-process terminal-attach`
   - launched by the editor plugin in a real terminal buffer
   - then `exec`s into plugin runtime
@@ -123,8 +122,8 @@ This layer decides:
 Owns concrete runtime/process integrations:
 
 - managed kernel integration
-- client process supervision
-- handler worker supervision
+- in-process client state and runtime support
+- in-process handler control
 - plugin runtime bridge/support
 - client view rendering helpers
 - debug timing
@@ -156,7 +155,7 @@ flowchart LR
     W -->|transport metadata| B
     F -->|launch attach_cmd in terminal| T
     T -->|exec| P
-    W <-->|stdin/stdout worker protocol| B
+    B <-->|controller method calls| W
     W <-->|plugin-runtime control request/response| P
     P -->|frontend action mailbox| B
 ```
@@ -186,7 +185,7 @@ Examples:
 
 Not the Jusi protocol.
 
-Current mechanism:
+Mechanism:
 
 - Jupyter client APIs
 - shell/iopub/stdin channels
@@ -198,9 +197,9 @@ Used for:
 - loading kernel extensions
 - receiving plugin handoff mime payloads
 
-### Backend Root <-> Handler Worker
+### Backend Root <-> Handler Controller
 
-Worker stdio protocol.
+In-process control boundary.
 
 Used for:
 
@@ -210,16 +209,14 @@ Used for:
 - status updates
 - transport publication
 - live handler message routing
-- backend action requests from worker
+- backend action requests from handler control
 
-### Handler Worker <-> Plugin Runtime
+### Handler Controller <-> Plugin Runtime
 
 Plugin runtime control request/response.
 
-Current shape:
-
 - Unix socket owned by plugin runtime
-- synchronous request/response from handler worker side
+- synchronous request/response from handler-controller side
 
 Used for:
 
@@ -229,15 +226,15 @@ Used for:
 
 ### Plugin Runtime -> Backend Root
 
-Current shape is asymmetric and minimal.
+This path is asymmetric and minimal.
 
 Used only when plugin runtime must emit an unsolicited backend callback.
 
-Current example:
+Example:
 
 - shell `jusi-open ...`
 
-Current mechanism:
+Mechanism:
 
 - append JSON lines to the per-client action mailbox file
 - backend root drains that file during `poll_client_updates()`
@@ -247,7 +244,7 @@ Current mechanism:
 
 This is not the same path as normal `followup` / `complete`.
 
-## Current Built-in Editor Callback
+## Built-in Editor Callback
 
 ```mermaid
 classDiagram
@@ -276,21 +273,21 @@ classDiagram
     ActionRequestPayload --> OpenPathPayload
 ```
 
-Current built-in action:
+Built-in action:
 
 - `action_type = open_path`
 
-Current semantics:
+Semantics:
 
 - `path` is required
 - `open_in` is optional
-  - current known values:
+  - known values:
     - `split`
     - `tab`
 - `line` is optional and 1-based
 - `column` is optional and 1-based
 
-Other current built-in editor actions:
+Other built-in editor actions:
 
 - `action_type = yank_text`
   - `payload.text` is required
@@ -328,8 +325,8 @@ flowchart TB
 
     subgraph Infrastructure
         R1[Managed runtime]
-        R2[Client registry/runtime]
-        R3[Handler worker supervisor]
+        R2[Client runtime support]
+        R3[Handler controller]
         R4[Plugin runtime bridge]
         R5[Client view builder]
     end
@@ -376,26 +373,26 @@ sequenceDiagram
     participant F as Frontend
     participant B as Backend Root
     participant K as Kernel
-    participant C as Client Process
+    participant C as Client State
 
     F->>B: execute_cell(code)
     B->>B: allocate client_id
-    B->>C: activate client + set busy
+    B->>B: activate client + set busy
     B-->>F: cell_updated(status=busy, owner=kernel, client_id=...)
     B->>K: execute_request
     K-->>B: iopub stream(stdout="lalala\\n")
-    B->>C: append transcript event
+    B->>B: append transcript event
     B-->>F: client_updated(revision++)
     F->>B: inspect_client(client_id)
     B-->>F: client view lines with stdout
     K-->>B: idle / execute done
-    B->>C: set execution status done
+    B->>B: set execution status done
     B-->>F: cell_updated(status=done)
 ```
 
 Important points:
 
-- no handler worker
+- no separate handler controller path
 - no plugin runtime
 - all execution authority stays in the Jupyter kernel path
 
@@ -412,22 +409,22 @@ sequenceDiagram
     participant F as Frontend
     participant B as Backend Root
     participant K as Kernel
-    participant C as Client Process
-    participant W as Handler Worker
+    participant C as Client State
+    participant W as Handler Controller
     participant T as Terminal Window
     participant P as Plugin Runtime
 
     F->>B: execute_cell(magic cell)
-    B->>C: activate client + busy
+    B->>B: activate client + busy
     B->>K: execute_request
     K-->>B: handoff mime
-    B->>W: start worker(handler_id, handoff payload)
-    W->>C: publish native_terminal transport
-    W-->>B: execute_result(status=follow-up)
+    B->>W: start controller(handler_id, handoff payload)
+    W->>B: publish native_terminal transport
+    W-->>B: handler status update(status=follow-up)
     B-->>F: cell_updated(owner=handler, status=follow-up, transport=native_terminal)
     F->>T: launch attach_cmd in editor terminal
     T->>P: exec plugin-runtime
-    P->>C: visible terminal output only through terminal surface
+    Note over P: visible terminal output only through terminal surface
     F->>B: handler_message(followup/complete)
     B->>W: route live handler message
     W->>P: plugin runtime control request
@@ -456,13 +453,13 @@ flowchart LR
 
     subgraph Client A
         CA[client-A]
-        WA[worker-A]
+        WA[controller-A]
         PA[plugin-runtime-A]
     end
 
     subgraph Client B
         CB[client-B]
-        WB[worker-B]
+        WB[controller-B]
         PB[plugin-runtime-B]
     end
 
@@ -480,7 +477,7 @@ Operational meaning:
 - one session may supervise multiple live clients
 - each live handler-owned client has:
   - its own `client_id`
-  - its own worker
+  - its own handler controller
   - usually its own terminal/runtime surface
 - follow-up/completion target the active `client_id`
 - shutdown/interrupt are also routed per client/cell ownership
@@ -492,7 +489,7 @@ Operational meaning:
 - session lifecycle
 - cell status truth
 - runtime supervision
-- worker supervision
+- handler supervision
 - protocol routing
 - healthchecks
 - disconnect timeout logic
@@ -506,7 +503,7 @@ Operational meaning:
 - completion UI application
 - built-in callback actions like `open_path`
 
-### Handler Worker Owns
+### Handler Controller Owns
 
 - plugin-side control semantics
 - interpretation of `followup`
@@ -520,9 +517,9 @@ Operational meaning:
 - VisiData session state
 - plugin-local terminal interaction
 
-## Current Non-Goals
+## Non-Goals
 
-These are intentionally not part of the current map:
+These are intentionally not part of the map:
 
 - arbitrary Vimscript/Lua injection from backend
 - fullscreen terminal bytes over `handler_message`
