@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from jusi.application.ports import AttachSessionCommand, HandlerMessageCommand, StartSessionCommand
 from jusi.application.use_cases import AttachSession, HandlerMessage, StartSession
-from jusi.domain.models import ClientTransport, Session, SessionTarget
+from jusi.domain.models import CellExecution, ClientTransport, Session, SessionTarget
 from jusi.infrastructure.client_runtime_controller import ActiveClientController, LiveClientControllerRegistry
 from jusi.infrastructure.runtime import InMemoryClientHandle, InMemoryKernelRuntime, InMemorySessionStore
 from jusi.visidata_support import JUSI_VISIDATARC_ENV
@@ -106,6 +106,16 @@ class BlockingBackgroundExecuteRuntime(InMemoryKernelRuntime):
         self.release.wait(timeout=1.0)
         self.seen_client_ids.append(client.client_id)
         return super().execute_cell(session, cell, client)
+
+
+class RecordingExecuteRuntime(InMemoryKernelRuntime):
+    def __init__(self) -> None:
+        super().__init__()
+        self.executed_cells = []
+
+    def execute_cell(self, session, cell, client):  # type: ignore[no-untyped-def]
+        self.executed_cells.append(cell)
+        return "done"
 
 
 class HandlerMessageProbe:
@@ -763,6 +773,33 @@ class StartSessionTest(unittest.TestCase):
         self.assertEqual("busy", next_envelopes[2].payload["cell"]["status"])
         self.assertEqual("done", next_envelopes[3].payload["cell"]["status"])
 
+    def test_execute_cell_bootstraps_effectively_blank_magic_body_before_runtime_execution(self) -> None:
+        runtime = RecordingExecuteRuntime()
+        registry = DisplayHandlerRegistry(
+            [
+                DisplayHandlerSpec(
+                    handler_id="sql",
+                    factory=object,
+                    magic_commands=(MagicCommand("sql", bootstrap_body="-- jusi bootstrap"),),
+                )
+            ]
+        )
+        server = ProtocolServer(runtime=runtime, display_handlers=registry)
+        session_id, _client_id = self.start_and_bind(server)
+
+        execute_messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "sql", "main_lines": ["%%sql prod", " ", ""]}}}'
+            )
+        )
+        execute_envelopes = [parse_envelope(message) for message in execute_messages]
+
+        self.assertTrue(execute_envelopes[0].ok)
+        self.assertEqual(["%%sql prod", "-- jusi bootstrap"], runtime.executed_cells[-1].main_lines)
+
     def test_handler_handoff_cell_update_includes_presentation(self) -> None:
         registry = DisplayHandlerRegistry(
             (
@@ -1205,6 +1242,52 @@ class StartSessionTest(unittest.TestCase):
             },
             action_messages[0].payload["payload"],
         )
+
+    def test_poll_client_updates_applies_runtime_execution_status_record(self) -> None:
+        runtime = FrontendActionRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, client_id = self.start_and_bind(server)
+        server._active_client_controllers.register(
+            session_id,
+            client_id,
+            ActiveClientController(
+                client_id=client_id,
+                controller=HandlerMessageProbe(),
+                runtime_mode="handler",
+                handler_id="codex",
+            ),
+        )
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        runtime.set_client_transport(
+            session,
+            client_id,
+            ClientTransport(
+                kind="native_terminal",
+                attach_cmd=["codex"],
+                attach_env={},
+                session_id=session_id,
+                client_id=client_id,
+                handler_id="codex",
+            ),
+        )
+        execution = CellExecution(cell_id=12, status="follow-up", owner_kind="handler", client_id=client_id, runtime_mode="handler")
+        server._store.save_execution("nb-1", execution)
+        runtime_client = runtime.get_client(session_id, client_id)
+        self.assertIsNotNone(runtime_client)
+        runtime_client.cell_id = 12
+        handle = runtime_client.handle
+        self.assertIsInstance(handle, FrontendActionHandle)
+        handle.pending_actions.append({"record_type": "execution_status", "status": "busy"})
+
+        server.poll_client_updates()
+
+        updated = server._store.get_execution("nb-1", 12)
+        self.assertIsNotNone(updated)
+        self.assertEqual("busy", updated.status)
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        cell_messages = [env for env in pending if env.type == "cell_updated"]
+        self.assertEqual("busy", cell_messages[-1].payload["cell"]["status"])
 
     def test_poll_client_updates_ignores_frontend_actions_for_transcript_runtime(self) -> None:
         runtime = FrontendActionRuntime()

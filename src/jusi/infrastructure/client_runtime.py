@@ -70,6 +70,75 @@ def _cleanup_control_dir(control_dir: str) -> None:
     shutil.rmtree(control_dir, ignore_errors=True)
 
 
+def _bind_runtime_events_socket(path: str) -> socket.socket | None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    runtime_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        runtime_socket.bind(path)
+        runtime_socket.setblocking(False)
+        return runtime_socket
+    except OSError:
+        runtime_socket.close()
+        return None
+
+
+def _drain_runtime_events_socket(runtime_socket: socket.socket | None) -> list[dict]:
+    if runtime_socket is None:
+        return []
+    records: list[dict] = []
+    while True:
+        try:
+            raw = runtime_socket.recv(65536)
+        except BlockingIOError:
+            break
+        except OSError:
+            break
+        if not raw:
+            break
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            records.append(dict(payload))
+    return records
+
+
+def _close_runtime_events_socket(runtime_socket: socket.socket | None, path: str) -> None:
+    if runtime_socket is not None:
+        try:
+            runtime_socket.close()
+        except OSError:
+            pass
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+def _drain_frontend_actions_file(path: str, offset: int) -> tuple[list[dict], int]:
+    if not os.path.exists(path):
+        return [], offset
+    actions: list[dict] = []
+    with open(path, "r", encoding="utf-8") as handle:
+        handle.seek(offset)
+        for raw_line in handle:
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                payload = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                actions.append(dict(payload))
+        offset = handle.tell()
+    return actions, offset
+
+
 @dataclass
 class ProcessClientHandle:
     client_id: str
@@ -89,7 +158,9 @@ class ProcessClientHandle:
     status_path: str = field(init=False)
     plugin_runtime_pid_path: str = field(init=False)
     plugin_runtime_socket_path: str = field(init=False)
+    plugin_runtime_events_socket_path: str = field(init=False)
     plugin_frontend_actions_path: str = field(init=False)
+    _runtime_events_socket: socket.socket | None = field(init=False, default=None)
     runtime_kind: str = "process"
 
     def __post_init__(self) -> None:
@@ -98,7 +169,9 @@ class ProcessClientHandle:
         self.status_path = os.path.join(self.control_dir, "status.json")
         self.plugin_runtime_pid_path = os.path.join(self.control_dir, "plugin-runtime.pid")
         self.plugin_runtime_socket_path = os.path.join(self.control_dir, "plugin-runtime.sock")
+        self.plugin_runtime_events_socket_path = os.path.join(self.control_dir, "plugin-runtime-events.sock")
         self.plugin_frontend_actions_path = os.path.join(self.control_dir, "plugin-runtime-actions.jsonl")
+        self._runtime_events_socket = _bind_runtime_events_socket(self.plugin_runtime_events_socket_path)
         self._frontend_actions_offset = 0
         self.process = _spawn_client_process(
             client_id=self.client_id,
@@ -261,23 +334,12 @@ class ProcessClientHandle:
         return True
 
     def drain_frontend_actions(self) -> list[dict]:
-        if not os.path.exists(self.plugin_frontend_actions_path):
-            return []
-        actions: list[dict] = []
-        with open(self.plugin_frontend_actions_path, "r", encoding="utf-8") as handle:
-            handle.seek(self._frontend_actions_offset)
-            for raw_line in handle:
-                raw_line = raw_line.strip()
-                if not raw_line:
-                    continue
-                try:
-                    payload = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(payload, dict):
-                    actions.append(dict(payload))
-            self._frontend_actions_offset = handle.tell()
-        return actions
+        socket_actions = _drain_runtime_events_socket(self._runtime_events_socket)
+        file_actions, self._frontend_actions_offset = _drain_frontend_actions_file(
+            self.plugin_frontend_actions_path,
+            self._frontend_actions_offset,
+        )
+        return socket_actions + file_actions
 
     def shutdown(self, reason: str) -> None:
         if self.shutdown_reason:
@@ -312,6 +374,8 @@ class ProcessClientHandle:
             self._wait_for_status(lambda status: status.shutdown_reason == reason)
         except RuntimeError:
             pass
+        _close_runtime_events_socket(self._runtime_events_socket, self.plugin_runtime_events_socket_path)
+        self._runtime_events_socket = None
         _cleanup_control_dir(self.control_dir)
 
     def _shutdown_plugin_runtime(self) -> None:
@@ -413,7 +477,9 @@ class InProcessTranscriptHandle:
     status_path: str = field(init=False)
     plugin_runtime_pid_path: str = field(init=False)
     plugin_runtime_socket_path: str = field(init=False)
+    plugin_runtime_events_socket_path: str = field(init=False)
     plugin_frontend_actions_path: str = field(init=False)
+    _runtime_events_socket: socket.socket | None = field(init=False, default=None)
     runtime_kind: str = "inprocess"
 
     def __post_init__(self) -> None:
@@ -422,7 +488,9 @@ class InProcessTranscriptHandle:
         self.status_path = os.path.join(self.control_dir, "status.json")
         self.plugin_runtime_pid_path = os.path.join(self.control_dir, "plugin-runtime.pid")
         self.plugin_runtime_socket_path = os.path.join(self.control_dir, "plugin-runtime.sock")
+        self.plugin_runtime_events_socket_path = os.path.join(self.control_dir, "plugin-runtime-events.sock")
         self.plugin_frontend_actions_path = os.path.join(self.control_dir, "plugin-runtime-actions.jsonl")
+        self._runtime_events_socket = _bind_runtime_events_socket(self.plugin_runtime_events_socket_path)
         self._frontend_actions_offset = 0
         self._session = TranscriptRuntimeSession(
             client_id=self.client_id,
@@ -554,28 +622,19 @@ class InProcessTranscriptHandle:
         return True
 
     def drain_frontend_actions(self) -> list[dict]:
-        if not os.path.exists(self.plugin_frontend_actions_path):
-            return []
-        actions: list[dict] = []
-        with open(self.plugin_frontend_actions_path, "r", encoding="utf-8") as handle:
-            handle.seek(self._frontend_actions_offset)
-            for raw_line in handle:
-                raw_line = raw_line.strip()
-                if not raw_line:
-                    continue
-                try:
-                    payload = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(payload, dict):
-                    actions.append(dict(payload))
-            self._frontend_actions_offset = handle.tell()
-        return actions
+        socket_actions = _drain_runtime_events_socket(self._runtime_events_socket)
+        file_actions, self._frontend_actions_offset = _drain_frontend_actions_file(
+            self.plugin_frontend_actions_path,
+            self._frontend_actions_offset,
+        )
+        return socket_actions + file_actions
 
     def shutdown(self, reason: str) -> None:
         if self.shutdown_reason:
             return
         self._shutdown_plugin_runtime()
+        _close_runtime_events_socket(self._runtime_events_socket, self.plugin_runtime_events_socket_path)
+        self._runtime_events_socket = None
         self._apply_command(ClientRuntimeCommand.shutdown(reason))
         self.lifecycle.append(f"shutdown:{reason}")
         _cleanup_control_dir(self.control_dir)

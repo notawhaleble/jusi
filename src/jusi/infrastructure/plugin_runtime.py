@@ -14,7 +14,7 @@ from jusi.infrastructure.runtime_supervisor import (
     parse_supervisor_pid,
 )
 from jusi.visidata_support import (
-    handle_plugin_runtime_control_request,
+    dispatch_visidata_control_request,
     install_visidata_runtime_hooks,
     load_visidatarc_from_env,
 )
@@ -55,7 +55,7 @@ def _prepare_common_plugin_runtime() -> None:
     try:
         load_visidatarc_from_env()
         install_visidata_runtime_hooks()
-        set_plugin_control_handler(handle_plugin_runtime_control_request)
+        set_plugin_control_handler(dispatch_visidata_control_request)
     except ModuleNotFoundError:
         return
 

@@ -366,8 +366,9 @@ class ExecuteCell:
             cell_id=current_client.cell_id,
             client_id=current_client.client_id,
         )
+        runtime_cell = self._display_handlers.cell_with_blank_body_bootstrap(command.cell)
         try:
-            current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
+            current_client.status = self._runtime.execute_cell(session, runtime_cell, current_client)
         except Exception as exc:
             if not self._execution_still_active(command.notebook_id, current_client):
                 return self._tracked_terminal_execution(command.notebook_id, current_client)

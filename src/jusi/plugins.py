@@ -7,7 +7,7 @@ import asyncio
 import inspect
 from dataclasses import dataclass, field
 from importlib import metadata
-from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Protocol, Sequence, Union
 
 from jusi.domain.models import ClientTransport, ExecutableCell, HandlerHandoff
 from jusi.infrastructure.native_terminal_transport import (
@@ -19,9 +19,13 @@ from jusi.infrastructure.native_terminal_transport import (
 DISPLAY_HANDLER_ENTRY_POINT_GROUP = "jusi.display_handlers"
 
 
+BootstrapCellBody = Union[str, Callable[[str], Optional[str]]]
+
+
 @dataclass(frozen=True)
 class MagicCommand:
     name: str
+    bootstrap_body: Optional[BootstrapCellBody] = None
 
 
 class FrontendChannel(Protocol):
@@ -134,18 +138,49 @@ class DisplayHandlerRegistry:
         return self._by_id.get(handler_id)
 
     def find_for_cell(self, main_lines: Sequence[str]) -> DisplayHandlerSpec | None:
-        if not main_lines:
-            return None
-        first_line = main_lines[0].strip()
-        if not first_line.startswith("%%"):
-            return None
-        magic_name = first_line[2:].split(None, 1)[0]
+        magic_name = self._magic_name_for_lines(main_lines)
         if not magic_name:
             return None
         specs = self._by_magic.get(magic_name, [])
         if len(specs) != 1:
             return None
         return specs[0]
+
+    def cell_with_blank_body_bootstrap(self, cell: ExecutableCell) -> ExecutableCell:
+        if cell.kind != "magic":
+            return cell
+        magic_name = self._magic_name_for_lines(cell.main_lines)
+        if not magic_name:
+            return cell
+        body_lines = cell.main_lines[1:]
+        if any(line.strip() for line in body_lines):
+            return cell
+        specs = self._by_magic.get(magic_name, [])
+        if len(specs) != 1:
+            return cell
+        magic = next((item for item in specs[0].magic_commands if item.name == magic_name), None)
+        if magic is None or magic.bootstrap_body is None:
+            return cell
+        first_line = cell.main_lines[0] if cell.main_lines else f"%%{magic_name}"
+        body = magic.bootstrap_body(first_line) if callable(magic.bootstrap_body) else magic.bootstrap_body
+        if body is None:
+            return cell
+        return ExecutableCell(
+            cell_id=cell.cell_id,
+            kind=cell.kind,
+            syntax=cell.syntax,
+            main_lines=[first_line, *str(body).splitlines()],
+            keep_running=cell.keep_running,
+        )
+
+    @staticmethod
+    def _magic_name_for_lines(main_lines: Sequence[str]) -> str:
+        if not main_lines:
+            return ""
+        first_line = main_lines[0].strip()
+        if not first_line.startswith("%%"):
+            return ""
+        return first_line[2:].split(None, 1)[0].strip()
 
     def validate_handoff(self, handoff: HandlerHandoff) -> DisplayHandlerSpec | None:
         spec = self._by_id.get(handoff.handler_id)
@@ -251,6 +286,11 @@ class RecordingFrontendChannel:
         )
 
 class BaseHandler:
+    @staticmethod
+    def bootstrap_cell_body(first_line: str) -> str | None:
+        _ = first_line
+        return None
+
     def execute(self, context: HandlerContext, cell: ExecutableCell) -> str:
         status = self.handle(context, cell)
         if inspect.isawaitable(status):
@@ -415,6 +455,40 @@ class BaseVdHandler(BaseTerminalHandler):
         if self._mode == "live":
             snapshot.update({"ready": True, "transport": "native_terminal"})
         return snapshot
+
+
+class BasePluginRuntimeVdHandler(BaseVdHandler):
+    def normalize_followup_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return dict(payload)
+
+    def normalize_complete_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return dict(payload)
+
+    def normalize_completion_items(
+        self,
+        payload: dict[str, Any],
+        items: Sequence[dict[str, Any]],
+    ) -> Sequence[dict[str, Any]]:
+        _ = payload
+        return tuple(dict(item) for item in items)
+
+    def complete(self, context: HandlerContext, payload: dict[str, Any]) -> Sequence[dict[str, Any]]:
+        request_payload = self.normalize_complete_payload(payload)
+        response = context.call_backend_action(
+            "plugin_runtime_request",
+            {"message_type": "complete", "payload": request_payload},
+        )
+        items = response.get("items", ())
+        if not isinstance(items, list):
+            return ()
+        return self.normalize_completion_items(payload, [dict(item) for item in items if isinstance(item, dict)])
+
+    def followup(self, context: HandlerContext, payload: dict[str, Any]) -> None:
+        request_payload = self.normalize_followup_payload(payload)
+        context.call_backend_action(
+            "plugin_runtime_request",
+            {"message_type": "followup", "payload": request_payload},
+        )
 
 
 TerminalDisplayHandler = BaseTerminalHandler

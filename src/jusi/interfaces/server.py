@@ -303,21 +303,110 @@ class ProtocolServer:
     def _drain_client_frontend_actions(self, notebook_id: str, session, runtime_client) -> None:  # type: ignore[no-untyped-def]
         drain = getattr(runtime_client.handle, "drain_frontend_actions", None)
         if not callable(drain):
+            emit_timing(
+                "server.runtime_records.drain_skip",
+                reason="no_drain_method",
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+            )
             return
         active = self._active_client_controllers.get(session.session_id, runtime_client.client_id)
         if active is None or not active.runtime_mode:
+            emit_timing(
+                "server.runtime_records.drain_skip",
+                reason="no_active_handler",
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+            )
             return
         mode = require_registered_runtime_mode(active.runtime_mode)
         if not mode.accepts_frontend_messages:
+            emit_timing(
+                "server.runtime_records.drain_skip",
+                reason="mode_rejects_frontend_messages",
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+                runtime_mode=active.runtime_mode,
+            )
             return
         handler_id = str(getattr(runtime_client.transport, "handler_id", "") or "").strip()
         if not handler_id:
+            emit_timing(
+                "server.runtime_records.drain_skip",
+                reason="missing_handler_id",
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+                runtime_mode=active.runtime_mode,
+            )
             return
-        for action in drain():
-            if not isinstance(action, dict):
+        for record in drain():
+            if not isinstance(record, dict):
                 continue
-            action_type = str(action.get("action_type", "")).strip()
-            payload = action.get("payload", {})
+            record_type = str(record.get("record_type", "")).strip() or "action_request"
+            emit_timing(
+                "server.runtime_records.drain_record",
+                record_type=record_type,
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+                handler_id=handler_id,
+                runtime_mode=active.runtime_mode,
+                status=str(record.get("status", "")).strip(),
+            )
+            payload = record.get("payload", {})
+            if record_type == "execution_status":
+                status = str(record.get("status", "")).strip()
+                if not status:
+                    emit_timing(
+                        "server.runtime_records.status_skip",
+                        reason="empty_status",
+                        session_id=session.session_id,
+                        client_id=runtime_client.client_id,
+                    )
+                    continue
+                self._runtime.update_client_execution_status(session, runtime_client.client_id, status)
+                cell_id = getattr(runtime_client, "cell_id", None)
+                execution = self._store.get_execution(notebook_id, cell_id) if cell_id is not None else None
+                if execution is not None and execution.client_id == runtime_client.client_id:
+                    execution.status = status
+                    self._store.save_execution(notebook_id, execution)
+                    self._pending_events.put(
+                        Envelope(
+                            version=1,
+                            kind="event",
+                            type="cell_updated",
+                            payload={"notebook_id": notebook_id, "cell": _cell_payload(execution)},
+                        )
+                    )
+                    emit_timing(
+                        "server.runtime_records.status_applied",
+                        session_id=session.session_id,
+                        client_id=runtime_client.client_id,
+                        cell_id=execution.cell_id,
+                        status=status,
+                    )
+                else:
+                    emit_timing(
+                        "server.runtime_records.status_skip",
+                        reason="no_matching_execution",
+                        session_id=session.session_id,
+                        client_id=runtime_client.client_id,
+                        cell_id=cell_id,
+                        status=status,
+                    )
+                continue
+            if record_type == "execution_event":
+                if isinstance(payload, dict):
+                    self._runtime.append_client_execution_event(session, runtime_client.client_id, dict(payload))
+                    emit_timing(
+                        "server.runtime_records.event_appended",
+                        session_id=session.session_id,
+                        client_id=runtime_client.client_id,
+                        event_type=str(payload.get("type", "")).strip(),
+                    )
+                continue
+            if record_type != "action_request":
+                continue
+            action_type = str(record.get("action_type", "")).strip()
             if not action_type or not isinstance(payload, dict):
                 continue
             self._runtime.append_client_execution_event(

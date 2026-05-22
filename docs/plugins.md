@@ -96,6 +96,7 @@ The supported base classes are:
 - `BaseHandler`
 - `BaseTerminalHandler`
 - `BaseVdHandler`
+- `BasePluginRuntimeVdHandler`
 
 Use them as convenience layers, not as protocol replacements.
 
@@ -103,11 +104,21 @@ Purpose:
 
 - `BaseHandler` defines the handler-facing hook shape
 - `BaseTerminalHandler` advertises native-terminal transport and terminal startup
-- `BaseVdHandler` adds reusable VisiData-oriented follow-up and completion seams
+- `BaseVdHandler` adds VisiData-oriented terminal/bootstrap behavior
+- `BasePluginRuntimeVdHandler` forwards `followup` and `complete` requests to the live plugin runtime
 
 Common VisiData yank/open/edit behavior does not live on the handler base anymore.
 It is installed centrally by core `plugin-runtime` bootstrap so VisiData-based
 plugins get it automatically.
+Plugin runtimes can also emit backend runtime records such as execution status
+updates through `jusi.visidata_support.set_plugin_execution_status(status)`.
+
+The plugin runtime bootstrap also installs generic `BaseSheet.jusi_followup`
+and `BaseSheet.jusi_complete` helpers. Simple VisiData plugins can bind their
+runtime object with `jusi.visidata_support.bind_visidata_runtime()` and handle
+requests through `handle_followup(payload)` / `handle_complete(payload)`.
+Complex plugins may override plugin-runtime request dispatch when their active
+mode is not a normal VisiData sheet workflow.
 
 ## Session Metadata
 
