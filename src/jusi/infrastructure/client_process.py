@@ -9,6 +9,7 @@ from typing import Any
 from jusi.infrastructure.client_view import build_client_terminal_lines
 from jusi.infrastructure.client_runtime_host import build_transcript_runtime_host_factory
 from jusi.infrastructure.client_runtime_protocol import ClientRuntimeSnapshot
+from jusi.infrastructure.debug_timing import emit_timing
 
 
 def run_client_process() -> int:
@@ -88,7 +89,31 @@ def run_terminal_attach() -> int:
             for key, value in env_updates.items():
                 if isinstance(key, str) and isinstance(value, str):
                     child_env[key] = value
-    os.execvpe(command[0], command, child_env)
+    emit_timing(
+        "client_process.terminal_attach.exec",
+        session_id=str(os.environ.get("JUSI_SESSION_ID", "")).strip(),
+        client_id=str(os.environ.get("JUSI_CLIENT_ID", "")).strip(),
+        handler_id=str(os.environ.get("JUSI_HANDLER_ID", "")).strip(),
+        command=list(command),
+        env_keys=sorted(child_env.keys()),
+        has_plugin_callable=bool(str(child_env.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "")).strip()),
+        plugin_runtime_callable=str(child_env.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "")).strip(),
+        has_events_socket=bool(str(child_env.get("JUSI_PLUGIN_RUNTIME_EVENTS_SOCKET", "")).strip()),
+        has_actions_file=bool(str(child_env.get("JUSI_PLUGIN_FRONTEND_ACTIONS_FILE", "")).strip()),
+    )
+    try:
+        os.execvpe(command[0], command, child_env)
+    except Exception as exc:
+        emit_timing(
+            "client_process.terminal_attach.exec_error",
+            session_id=str(os.environ.get("JUSI_SESSION_ID", "")).strip(),
+            client_id=str(os.environ.get("JUSI_CLIENT_ID", "")).strip(),
+            handler_id=str(os.environ.get("JUSI_HANDLER_ID", "")).strip(),
+            command=list(command),
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+        raise
 
 
 def _run_transcript_terminal_attach() -> int:

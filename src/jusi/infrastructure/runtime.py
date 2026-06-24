@@ -7,8 +7,8 @@ import os
 import pickle
 import re
 import rlcompleter
-import signal
 import threading
+import time
 from queue import Empty
 from dataclasses import dataclass, field
 from itertools import count
@@ -29,6 +29,7 @@ class RuntimeDependencyError(RuntimeError):
 
 
 MANAGED_IOPUB_POLL_TIMEOUT_SECONDS = 0.01
+MANAGED_SHELL_REPLY_IDLE_GRACE_SECONDS = 0.25
 JUSI_SESSION_CONFIG_ENV = "JUSI_SESSION_CONFIG_JSON"
 JUSI_KERNEL_EXTENSIONS_ENV = "JUSI_KERNEL_EXTENSION_MODULES_JSON"
 
@@ -182,28 +183,6 @@ def _get_attached_expiry(connection_file: str) -> float | None:
     record = _load_attached_record(connection_file)
     expires_at = record.get("expires_at")
     return float(expires_at) if isinstance(expires_at, (int, float)) else None
-
-
-def _signal_attached_supervisors(connection_file: str, *, sig: int, exclude_pid: int) -> None:
-    live_peers: list[int] = []
-    record = _load_attached_record(connection_file)
-    expires_at = record["expires_at"] if isinstance(record.get("expires_at"), (int, float)) else None
-    for pid in list(record["pids"]):
-        if pid == exclude_pid:
-            continue
-        try:
-            os.kill(pid, sig)
-        except ProcessLookupError:
-            continue
-        except PermissionError:
-            live_peers.append(pid)
-            continue
-        live_peers.append(pid)
-    _store_attached_record(
-        connection_file,
-        pids=live_peers + ([exclude_pid] if _is_live_pid(exclude_pid) else []),
-        expires_at=expires_at,
-    )
 
 
 class RuntimeClientHandle(Protocol):
@@ -448,6 +427,23 @@ class ClientRegistryRuntime:
                 actions_path = getattr(runtime_client.handle, "plugin_frontend_actions_path", "")
                 if actions_path:
                     transport_env["JUSI_PLUGIN_FRONTEND_ACTIONS_FILE"] = actions_path
+        emit_timing(
+            "runtime.client_transport.set",
+            session_id=session.session_id,
+            notebook_id=session.notebook_id,
+            client_id=client_id,
+            handler_id=transport.handler_id,
+            kind=transport.kind,
+            attach_cmd=list(transport.attach_cmd),
+            attach_env_keys=sorted(transport_env.keys()),
+            has_status_path=bool(str(transport_env.get("JUSI_CLIENT_STATUS_FILE", "")).strip()),
+            has_pid_path=bool(str(transport_env.get("JUSI_PLUGIN_RUNTIME_PID_FILE", "")).strip()),
+            has_control_socket=bool(str(transport_env.get("JUSI_PLUGIN_RUNTIME_CONTROL_SOCKET", "")).strip()),
+            has_events_socket=bool(str(transport_env.get("JUSI_PLUGIN_RUNTIME_EVENTS_SOCKET", "")).strip()),
+            has_actions_file=bool(str(transport_env.get("JUSI_PLUGIN_FRONTEND_ACTIONS_FILE", "")).strip()),
+            has_plugin_callable=bool(str(transport_env.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "")).strip()),
+            plugin_runtime_callable=str(transport_env.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "")).strip(),
+        )
         transport = ClientTransport(
             kind=transport.kind,
             attach_cmd=list(transport.attach_cmd),
@@ -1014,6 +1010,9 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         status = client.status if client.status in {"error", "follow-up", "interrupted"} else "done"
         saw_iopub = False
         saw_stream = False
+        shell_reply_status: str | None = None
+        shell_reply_deadline: float | None = None
+        shell_reply_error: dict[str, object] | None = None
         while True:
             stdin_message = self._try_get_stdin_request(runtime_session.client, msg_id)
             if stdin_message is not None:
@@ -1040,8 +1039,33 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                 )
                 return "busy"
 
+            shell_message = self._try_get_shell_message(runtime_session.client)
+            if shell_message is not None and shell_message.get("parent_header", {}).get("msg_id") == msg_id:
+                shell_status, shell_error = self._shell_execute_reply_status(shell_message, status)
+                if shell_status is not None:
+                    shell_reply_status = shell_status
+                    shell_reply_deadline = time.monotonic() + MANAGED_SHELL_REPLY_IDLE_GRACE_SECONDS
+                    shell_reply_error = shell_error
+                    emit_timing(
+                        "runtime.managed.shell_execute_reply",
+                        session_id=session.session_id,
+                        client_id=client.client_id,
+                        cell_id=client.cell_id,
+                        msg_id=msg_id,
+                        status=shell_reply_status,
+                    )
+
             message = self._try_get_iopub_message(runtime_session.client)
             if message is None:
+                if shell_reply_deadline is not None and time.monotonic() >= shell_reply_deadline:
+                    return self._finish_from_shell_execute_reply(
+                        runtime_session,
+                        session,
+                        client,
+                        msg_id,
+                        shell_reply_status or status,
+                        shell_reply_error,
+                    )
                 continue
             if message.get("parent_header", {}).get("msg_id") != msg_id:
                 continue
@@ -1088,6 +1112,16 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                 )
                 runtime_session.pending_inputs.pop(client.client_id, None)
                 return status
+
+            if shell_reply_deadline is not None and time.monotonic() >= shell_reply_deadline:
+                return self._finish_from_shell_execute_reply(
+                    runtime_session,
+                    session,
+                    client,
+                    msg_id,
+                    shell_reply_status or status,
+                    shell_reply_error,
+                )
 
     def _handle_iopub_message(self, runtime_session: Any, session: Session, client_id: str, message: dict, status: str) -> str | None:
         msg_type = message.get("msg_type", "")
@@ -1256,6 +1290,63 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
         except Empty:
             return None
 
+    def _try_get_shell_message(self, kernel_client: Any) -> dict | None:
+        get_shell_msg = getattr(kernel_client, "get_shell_msg", None)
+        if not callable(get_shell_msg):
+            return None
+        try:
+            return get_shell_msg(timeout=0.0)
+        except Empty:
+            return None
+
+    @staticmethod
+    def _shell_execute_reply_status(message: dict, current_status: str) -> tuple[str | None, dict[str, object] | None]:
+        if str(message.get("msg_type", "")).strip() != "execute_reply":
+            return None, None
+        content = message.get("content", {})
+        if not isinstance(content, dict):
+            return current_status, None
+        raw_status = str(content.get("status", "")).strip()
+        if raw_status in {"error", "abort"}:
+            return "error", {
+                "type": "error",
+                "ename": content.get("ename", ""),
+                "evalue": content.get("evalue", ""),
+                "traceback": list(content.get("traceback", [])),
+            }
+        if raw_status == "ok":
+            return current_status, None
+        return current_status, None
+
+    def _finish_from_shell_execute_reply(
+        self,
+        runtime_session: Any,
+        session: Session,
+        client: CellExecution,
+        msg_id: str,
+        status: str,
+        error_event: dict[str, object] | None,
+    ) -> str:
+        final_status = status if status in {"error", "follow-up", "interrupted"} else "done"
+        if error_event is not None:
+            self.append_client_execution_event(session, client.client_id, error_event)
+        self.update_client_execution_status(session, client.client_id, final_status)
+        self.append_client_execution_event(
+            session,
+            client.client_id,
+            {"type": "execution_finished", "status": final_status},
+        )
+        emit_timing(
+            "runtime.managed.shell_execute_reply_finish",
+            session_id=session.session_id,
+            client_id=client.client_id,
+            cell_id=client.cell_id,
+            msg_id=msg_id,
+            final_status=final_status,
+        )
+        runtime_session.pending_inputs.pop(client.client_id, None)
+        return final_status
+
     def _drive_export_execution(self, kernel_client: Any, msg_id: str) -> str:
         while True:
             message = self._try_get_iopub_message(kernel_client)
@@ -1359,7 +1450,6 @@ class ManagedKernelRuntime(ClientRegistryRuntime):
                     pass
             if connection_file:
                 _set_attached_expiry(connection_file, None)
-                _signal_attached_supervisors(connection_file, sig=signal.SIGTERM, exclude_pid=os.getpid())
                 _unregister_attached_supervisor(connection_file, os.getpid())
             return
         try:

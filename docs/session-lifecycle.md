@@ -43,8 +43,8 @@ Rules:
 - `endpoint`/backend residence stays outside core backend session state
 - `disconnected` is not equivalent to kernel death
 - `failed` should record a reason
-- externally attached `connection_file` sessions may also participate in a small sidecar peer registry so stop can fan out to other attached Jusi root processes
-- that same sidecar carries the shared disconnect timeout deadline for attached peers
+- externally attached `connection_file` sessions may also participate in a small sidecar peer registry for shared disconnect timeout deadlines
+- stop/restart cleanup unregisters only the current Jusi root process from that sidecar; peers are not signaled
 - known issue: suspended Vim, for example via `Ctrl-Z`, may look like link loss to backend healthchecks
 
 ## Cell Execution

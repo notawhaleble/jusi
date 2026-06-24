@@ -1,6 +1,5 @@
 import json
 import os
-import signal
 import sys
 import tempfile
 import threading
@@ -201,6 +200,29 @@ class CompletionClient(FakeClient):
 
     def get_shell_msg(self, timeout: float = 0) -> dict:
         _ = timeout
+        return self.shell_messages.pop(0)
+
+
+class ShellReplyOnlyClient(FakeClient):
+    def __init__(self, *, status: str = "ok") -> None:
+        super().__init__()
+        self.messages = []
+        self.shell_messages = [
+            {
+                "parent_header": {"msg_id": "msg-1"},
+                "msg_type": "execute_reply",
+                "content": {"status": status, "ename": "UsageError", "evalue": "broken magic", "traceback": ["tb"]},
+            }
+        ]
+
+    def get_iopub_msg(self, timeout: int = 0) -> dict:
+        _ = timeout
+        raise Empty()
+
+    def get_shell_msg(self, timeout: float = 0) -> dict:
+        _ = timeout
+        if not self.shell_messages:
+            raise Empty()
         return self.shell_messages.pop(0)
 
 
@@ -568,6 +590,61 @@ class ManagedRuntimeTest(unittest.TestCase):
         view = runtime.read_client_view(session, client_id)
         self.assertIn("handler.handoff> magic=vd handler=vd", view["lines"])
 
+    def test_managed_execution_finishes_from_shell_reply_when_iopub_idle_is_missing(self) -> None:
+        runtime = ManagedKernelRuntime()
+        self.addCleanup(runtime.close)
+        fake_client = ShellReplyOnlyClient()
+        runtime._sessions["sess-1"] = SimpleNamespace(
+            manager=None,
+            client=fake_client,
+            interrupted_client_ids=set(),
+            pending_inputs={},
+            handoffs={},
+            jusi_magics_registered=True,
+        )
+        session = Session(notebook_id="nb-1", session_id="sess-1")
+        client_id = runtime.prepare_client("nb-1", "sess-1")
+        runtime.bind_prepared_client(session, client_id, 91)
+        execution = CellExecution(cell_id=12, client_id=client_id, client_bufnr=91)
+
+        status = runtime.execute_cell(
+            session,
+            ExecutableCell(cell_id=12, kind="magic", syntax="python", main_lines=["%%sql broken", "select 1"]),
+            execution,
+        )
+
+        self.assertEqual("done", status)
+        view = runtime.read_client_view(session, client_id)
+        self.assertIn("finished: done", view["lines"])
+
+    def test_managed_execution_records_shell_reply_error_when_iopub_error_is_missing(self) -> None:
+        runtime = ManagedKernelRuntime()
+        self.addCleanup(runtime.close)
+        fake_client = ShellReplyOnlyClient(status="error")
+        runtime._sessions["sess-1"] = SimpleNamespace(
+            manager=None,
+            client=fake_client,
+            interrupted_client_ids=set(),
+            pending_inputs={},
+            handoffs={},
+            jusi_magics_registered=True,
+        )
+        session = Session(notebook_id="nb-1", session_id="sess-1")
+        client_id = runtime.prepare_client("nb-1", "sess-1")
+        runtime.bind_prepared_client(session, client_id, 91)
+        execution = CellExecution(cell_id=12, client_id=client_id, client_bufnr=91)
+
+        status = runtime.execute_cell(
+            session,
+            ExecutableCell(cell_id=12, kind="magic", syntax="python", main_lines=["%%sql broken", "select 1"]),
+            execution,
+        )
+
+        self.assertEqual("error", status)
+        view = runtime.read_client_view(session, client_id)
+        self.assertIn("error: UsageError: broken magic", view["lines"])
+        self.assertIn("finished: error", view["lines"])
+
     def _start_bound_managed_server(self, client: FakeClient) -> tuple[ProtocolServer, str, str]:
         manager = FakeManager()
         with patch("jusi.infrastructure.runtime._start_new_kernel", return_value=(manager, client)):
@@ -895,7 +972,7 @@ class ManagedRuntimeTest(unittest.TestCase):
         self.assertTrue(client.channels_stopped)
         self.assertTrue(client.shutdown_called)
 
-    def test_managed_runtime_attach_stop_signals_peer_supervisors(self) -> None:
+    def test_managed_runtime_attach_stop_does_not_signal_peer_supervisors(self) -> None:
         client = FakeClient()
         peer_signals: list[tuple[int, int]] = []
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -913,7 +990,10 @@ class ManagedRuntimeTest(unittest.TestCase):
                                 json.dump([1001, 1002], handle)
                             session = Session(notebook_id="nb-1", session_id=session_id, connection=connection)
                             runtime.stop_session(session)
-                            self.assertIn((1002, signal.SIGTERM), peer_signals)
+                            self.assertEqual([], peer_signals)
+                            with open(registry_path, "r", encoding="utf-8") as handle:
+                                record = json.load(handle)
+                            self.assertEqual([1002], record["pids"])
 
     def test_protocol_server_managed_attach_session_uses_connection_file_target(self) -> None:
         client = FakeClient()

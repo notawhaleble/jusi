@@ -10,6 +10,7 @@ from importlib import metadata
 from typing import Any, Callable, Iterable, Mapping, Optional, Protocol, Sequence, Union
 
 from jusi.domain.models import ClientTransport, ExecutableCell, HandlerHandoff
+from jusi.infrastructure.debug_timing import emit_timing
 from jusi.infrastructure.native_terminal_transport import (
     build_exec_terminal_attach_env,
     native_terminal_attach_command,
@@ -375,6 +376,17 @@ class BaseTerminalHandler(BaseHandler):
     def _prepare_native_terminal_transport(self, context: HandlerContext) -> tuple[list[str], str, dict[str, str]]:
         command, fallback_notice = self.terminal_command()
         env = self.terminal_env()
+        emit_timing(
+            "handler.native_transport.prepare",
+            session_id=context.session_id,
+            client_id=context.client_id,
+            handler_id=self.handler_id(),
+            command=list(command),
+            fallback_notice=bool(fallback_notice),
+            env_keys=sorted(env.keys()),
+            has_plugin_callable=bool(str(env.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "")).strip()),
+            plugin_runtime_callable=str(env.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "")).strip(),
+        )
         transport = ClientTransport(
             kind="native_terminal",
             attach_cmd=_native_terminal_attach_command(),

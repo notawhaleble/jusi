@@ -341,6 +341,29 @@ class PluginRegistryTest(unittest.TestCase):
         load_visidatarc_from_env.assert_called_once_with()
         set_plugin_control_handler.assert_called_once()
 
+    def test_run_plugin_runtime_emits_error_record_for_nonzero_runner_exit(self) -> None:
+        records: list[dict[str, Any]] = []
+
+        def failing_runner() -> int:
+            os.sys.stderr.write("missing dependency\n")
+            return 2
+
+        with patch.dict(
+            "os.environ",
+            {"JUSI_PLUGIN_RUNTIME_CALLABLE": "jusi_vd.runner:run_vd_runner", "JUSI_VD_PAYLOAD_JSON": json.dumps({"content": "", "meta": {}})},
+            clear=True,
+        ), patch("jusi_vd.runner.run_vd_runner", side_effect=failing_runner), patch(
+            "jusi.infrastructure.plugin_runtime.emit_plugin_runtime_record",
+            side_effect=lambda record: records.append(dict(record)) or True,
+        ):
+            self.assertEqual(2, run_plugin_runtime())
+
+        self.assertEqual("execution_event", records[0]["record_type"])
+        self.assertEqual("error", records[0]["payload"]["type"])
+        self.assertEqual("PluginRuntimeError", records[0]["payload"]["ename"])
+        self.assertEqual("missing dependency", records[0]["payload"]["evalue"])
+        self.assertEqual({"record_type": "execution_status", "status": "error"}, records[1])
+
     def test_run_plugin_runtime_starts_supervisor_monitor_when_configured(self) -> None:
         events: list[str] = []
 

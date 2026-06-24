@@ -64,9 +64,23 @@ class FrontendActionHandle(InMemoryClientHandle):
         return actions
 
 
+class DeadPluginRuntimeFrontendActionHandle(FrontendActionHandle):
+    def plugin_runtime_is_alive(self):
+        return False
+
+
 class FrontendActionRuntime(InMemoryKernelRuntime):
     def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str):  # type: ignore[no-untyped-def]
         return FrontendActionHandle(
+            client_id=client_id,
+            notebook_id=notebook_id,
+            session_id=session_id,
+        )
+
+
+class DeadPluginRuntimeFrontendActionRuntime(InMemoryKernelRuntime):
+    def _build_client_handle(self, client_id: str, notebook_id: str, session_id: str):  # type: ignore[no-untyped-def]
+        return DeadPluginRuntimeFrontendActionHandle(
             client_id=client_id,
             notebook_id=notebook_id,
             session_id=session_id,
@@ -831,6 +845,38 @@ class StartSessionTest(unittest.TestCase):
             envelopes[3].payload["cell"]["presentation"],
         )
 
+    def test_unknown_handler_handoff_marks_cell_error_and_records_visible_message(self) -> None:
+        runtime = InMemoryKernelRuntime()
+        server = ProtocolServer(runtime=runtime, display_handlers=DisplayHandlerRegistry(()))
+        session_id, _client_id = self.start_and_bind(server)
+
+        messages = server.handle_message(
+            (
+                '{"version": 1, "kind": "request", "type": "execute_cell", '
+                '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
+                + session_id
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
+            )
+        )
+        envelopes = [parse_envelope(message) for message in messages]
+
+        self.assertTrue(envelopes[0].ok)
+        self.assertEqual("error", envelopes[3].payload["cell"]["status"])
+        self.assertNotEqual("handler", envelopes[3].payload["cell"]["owner"]["kind"])
+        self.assertNotEqual("handler", envelopes[3].payload["cell"].get("runtime_mode"))
+        client_id = envelopes[3].payload["cell"]["client_id"]
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        view = runtime.read_client_view(session, client_id)
+        self.assertEqual("error", view["execution_status"])
+        self.assertTrue(
+            any(
+                line.startswith("error: DisplayHandlerUnavailable: Display handler 'vd' is not installed for magic '%%vd'.")
+                for line in view["lines"]
+            ),
+            view["lines"],
+        )
+
     def test_interrupt_finished_execution_fails_explicitly(self) -> None:
         server = ProtocolServer(runtime=InMemoryKernelRuntime())
         session_id, _client_id = self.start_and_bind(server)
@@ -887,7 +933,16 @@ class StartSessionTest(unittest.TestCase):
 
     def test_shutdown_cell_client_transitions_client_state_to_shutdown(self) -> None:
         runtime = InMemoryKernelRuntime()
-        server = ProtocolServer(runtime=runtime)
+        registry = DisplayHandlerRegistry(
+            (
+                DisplayHandlerSpec(
+                    handler_id="vd",
+                    factory=object,  # type: ignore[arg-type]
+                    magic_commands=(MagicCommand("vd"),),
+                ),
+            )
+        )
+        server = ProtocolServer(runtime=runtime, display_handlers=registry)
         session_id, _client_id = self.start_and_bind(server)
 
         followup_messages = server.handle_message(
@@ -895,7 +950,7 @@ class StartSessionTest(unittest.TestCase):
                 '{"version": 1, "kind": "request", "type": "execute_cell", '
                 '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
                 + session_id
-                + '", "cell": {"id": 12, "kind": "magic", "syntax": "sql", "main_lines": ["%%sql", "select 1"]}}}'
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
             )
         )
         followup_envelopes = [parse_envelope(message) for message in followup_messages]
@@ -1289,6 +1344,72 @@ class StartSessionTest(unittest.TestCase):
         cell_messages = [env for env in pending if env.type == "cell_updated"]
         self.assertEqual("busy", cell_messages[-1].payload["cell"]["status"])
 
+    def test_poll_client_updates_drains_error_record_before_dead_handler_cleanup(self) -> None:
+        runtime = DeadPluginRuntimeFrontendActionRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, client_id = self.start_and_bind(server)
+        server._active_client_controllers.register(
+            session_id,
+            client_id,
+            ActiveClientController(
+                client_id=client_id,
+                controller=HandlerMessageProbe(),
+                runtime_mode="handler",
+                handler_id="clickhouse",
+            ),
+        )
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        runtime.set_client_transport(
+            session,
+            client_id,
+            ClientTransport(
+                kind="native_terminal",
+                attach_cmd=["jusi", "plugin-runtime"],
+                attach_env={},
+                session_id=session_id,
+                client_id=client_id,
+                handler_id="clickhouse",
+            ),
+        )
+        execution = CellExecution(cell_id=12, status="follow-up", owner_kind="handler", client_id=client_id, runtime_mode="handler")
+        server._store.save_execution("nb-1", execution)
+        runtime_client = runtime.get_client(session_id, client_id)
+        self.assertIsNotNone(runtime_client)
+        runtime_client.cell_id = 12
+        handle = runtime_client.handle
+        self.assertIsInstance(handle, DeadPluginRuntimeFrontendActionHandle)
+        handle.pending_actions.extend(
+            [
+                {
+                    "record_type": "execution_event",
+                    "payload": {
+                        "type": "error",
+                        "ename": "PluginRuntimeError",
+                        "evalue": "Missing dependency 'clickhouse_connect'",
+                        "traceback": [],
+                    },
+                },
+                {"record_type": "execution_status", "status": "error"},
+            ]
+        )
+
+        server.poll_client_updates()
+
+        updated = server._store.get_execution("nb-1", 12)
+        self.assertIsNotNone(updated)
+        self.assertEqual("error", updated.status)
+        self.assertEqual("unknown", updated.owner_kind)
+        self.assertEqual("shutdown", updated.client_state)
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        cell_messages = [env for env in pending if env.type == "cell_updated"]
+        self.assertEqual("error", cell_messages[-1].payload["cell"]["status"])
+        self.assertNotIn("client_id", cell_messages[-1].payload["cell"])
+        self.assertIsNone(runtime.get_client(session_id, client_id))
+        retired = runtime._retired_client_handles[session_id][-1]
+        view = retired.read_view()
+        self.assertIn("error: PluginRuntimeError: Missing dependency 'clickhouse_connect'", view["lines"])
+
     def test_poll_client_updates_ignores_frontend_actions_for_transcript_runtime(self) -> None:
         runtime = FrontendActionRuntime()
         server = ProtocolServer(runtime=runtime)
@@ -1467,7 +1588,7 @@ class StartSessionTest(unittest.TestCase):
                     presentation={"syntax": "python", "indent": "python", "followup": True, "completion": False},
                 ),
                 DisplayHandlerSpec(
-                    handler_id="sqlite",
+                    handler_id="sql",
                     factory=object,  # type: ignore[arg-type]
                     magic_commands=(MagicCommand("sql"),),
                     family_presentation={"syntax": "sql", "indent": "sql", "followup": True, "completion": True},
@@ -1493,7 +1614,7 @@ class StartSessionTest(unittest.TestCase):
                 '{"version": 1, "kind": "request", "type": "execute_cell", '
                 '"request_id": "req-2", "payload": {"notebook_id": "nb-1", "session_id": "'
                 + session_id
-                + '", "cell": {"id": 12, "kind": "magic", "syntax": "sql", "main_lines": ["%%sql", "select 1"]}}}'
+                + '", "cell": {"id": 12, "kind": "magic", "syntax": "python", "main_lines": ["%%vd", "pods"]}}}'
             )
         )
         disconnect_messages = server.handle_message(
@@ -1510,7 +1631,7 @@ class StartSessionTest(unittest.TestCase):
         self.assertGreater(disconnect_envelopes[1].payload["session"]["expires_at"], 0)
         self.assertEqual("unknown", disconnect_envelopes[2].payload["cell"]["owner"]["kind"])
         self.assertEqual("follow-up", disconnect_envelopes[2].payload["cell"]["status"])
-        self.assertEqual("transcript", disconnect_envelopes[2].payload["cell"]["runtime_mode"])
+        self.assertEqual("handler", disconnect_envelopes[2].payload["cell"]["runtime_mode"])
         self.assertEqual([], runtime.list_clients(session_id))
 
         reconnect_messages = server.handle_message(

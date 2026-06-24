@@ -263,13 +263,13 @@ class ProtocolServer:
         live_keys: set[tuple[str, str]] = set()
         for session in self._store.list_sessions():
             for runtime_client in list(list_clients(session.session_id)):
+                self._drain_client_frontend_actions(session.notebook_id, session, runtime_client)
                 if self._normalize_dead_handler_client(
                     session.notebook_id,
                     session.session_id,
                     runtime_client.client_id,
                 ):
                     continue
-                self._drain_client_frontend_actions(session.notebook_id, session, runtime_client)
                 key = (session.session_id, runtime_client.client_id)
                 live_keys.add(key)
                 try:
@@ -339,9 +339,19 @@ class ProtocolServer:
                 runtime_mode=active.runtime_mode,
             )
             return
+        drained_count = 0
+        emit_timing(
+            "server.runtime_records.drain_start",
+            session_id=session.session_id,
+            client_id=runtime_client.client_id,
+            handler_id=handler_id,
+            runtime_mode=active.runtime_mode,
+            handle_type=type(runtime_client.handle).__name__,
+        )
         for record in drain():
             if not isinstance(record, dict):
                 continue
+            drained_count += 1
             record_type = str(record.get("record_type", "")).strip() or "action_request"
             emit_timing(
                 "server.runtime_records.drain_record",
@@ -429,6 +439,14 @@ class ProtocolServer:
                     "payload": dict(payload),
                 },
             )
+        emit_timing(
+            "server.runtime_records.drain_done",
+            session_id=session.session_id,
+            client_id=runtime_client.client_id,
+            handler_id=handler_id,
+            runtime_mode=active.runtime_mode,
+            record_count=drained_count,
+        )
 
     def handle_message(self, raw: str) -> List[str]:
         try:
@@ -882,14 +900,38 @@ class ProtocolServer:
         is_alive = getattr(handle, "plugin_runtime_is_alive", None)
         if not callable(is_alive):
             return None
-        if is_alive() is not False:
+        alive = is_alive()
+        emit_timing(
+            "server.dead_handler.liveness",
+            notebook_id=notebook_id,
+            session_id=session_id,
+            client_id=client_id,
+            cell_id=tracked_execution.cell_id,
+            status=tracked_execution.status,
+            runtime_mode=tracked_execution.runtime_mode,
+            owner_kind=tracked_execution.owner_kind,
+            is_alive=alive,
+            handle_type=type(handle).__name__,
+        )
+        if alive is not False:
             return None
         session = self._store.get_by_notebook(notebook_id)
         if session is None or session.session_id != session_id:
             return None
+        emit_timing(
+            "server.dead_handler.normalize",
+            notebook_id=notebook_id,
+            session_id=session_id,
+            client_id=client_id,
+            cell_id=tracked_execution.cell_id,
+            status_before=tracked_execution.status,
+            runtime_mode=tracked_execution.runtime_mode,
+            owner_kind_before=tracked_execution.owner_kind,
+        )
         self._runtime.shutdown_client(session, client_id, "plugin_runtime_exit")
         self._active_client_controllers.remove_client(session_id, client_id)
         normalize_closed_followup_execution(tracked_execution)
+        tracked_execution.owner_kind = "unknown"
         tracked_execution.client_state = "shutdown"
         clear_execution_runtime_identity(tracked_execution)
         self._store.save_execution(notebook_id, tracked_execution)
