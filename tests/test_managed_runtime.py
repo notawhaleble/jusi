@@ -703,7 +703,7 @@ class ManagedRuntimeTest(unittest.TestCase):
         self.assertEqual([("prin", 4)], managed_client.completion_requests)
         self.assertEqual([], runtime.list_clients(session_id))
 
-    def test_inprocess_client_handle_shutdown_removes_control_dir(self) -> None:
+    def test_inprocess_client_handle_shutdown_preserves_final_status_until_dispose(self) -> None:
         handle = InProcessTranscriptHandle(
             client_id="client-1",
             notebook_id="nb-1",
@@ -713,6 +713,11 @@ class ManagedRuntimeTest(unittest.TestCase):
         self.assertTrue(os.path.isdir(control_dir))
 
         handle.shutdown("done")
+
+        self.assertTrue(os.path.isdir(control_dir))
+        self.assertEqual("done", handle.read_status()["shutdown_reason"])
+
+        handle.dispose()
 
         self.assertFalse(os.path.exists(control_dir))
 
@@ -1142,6 +1147,7 @@ class ManagedRuntimeTest(unittest.TestCase):
         self.assertTrue(runtime_client.handle.is_running())
 
         handle = runtime_client.handle
+        control_dir = handle.control_dir
         runtime.shutdown_client(session, prepared_client_id, "user_close")
 
         self.assertEqual(3, len(handle.lifecycle))
@@ -1149,8 +1155,13 @@ class ManagedRuntimeTest(unittest.TestCase):
         self.assertEqual("bind:91", handle.lifecycle[1])
         self.assertEqual("shutdown:user_close", handle.lifecycle[2])
         self.assertFalse(handle.is_running())
+        self.assertTrue(os.path.isdir(control_dir))
         self.assertEqual("user_close", handle.read_status()["shutdown_reason"])
         self.assertIsNone(runtime.get_client(session_id, prepared_client_id))
+
+        runtime.dispose_retired_clients(session_id)
+
+        self.assertFalse(os.path.exists(control_dir))
 
     def test_protocol_server_shutdown_busy_client_interrupts_kernel_first(self) -> None:
         manager = FakeManager()

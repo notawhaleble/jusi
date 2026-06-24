@@ -228,6 +228,9 @@ class RuntimeClientHandle(Protocol):
     def shutdown(self, reason: str) -> None:
         ...
 
+    def dispose(self) -> None:
+        ...
+
     def plugin_runtime_is_alive(self) -> bool | None:
         ...
 
@@ -301,6 +304,9 @@ class InMemoryClientHandle:
         self.view_revision += 1
         self.lifecycle.append(f"shutdown:{reason}")
 
+    def dispose(self) -> None:
+        return None
+
     def plugin_runtime_is_alive(self) -> bool | None:
         return None
 
@@ -332,6 +338,7 @@ class ClientRegistryRuntime:
     def __init__(self) -> None:
         self._client_counter = count(1)
         self._session_clients: dict[str, RuntimeSessionClients] = {}
+        self._retired_client_handles: dict[str, list[RuntimeClientHandle]] = {}
 
     def start_client(self, session: Session, notebook_id: str, cell_id: int, initial_status: str) -> str:
         client_id = self.prepare_client(notebook_id, session.session_id)
@@ -473,6 +480,7 @@ class ClientRegistryRuntime:
         runtime_client.shutdown_reason = reason
         runtime_client.client_bufnr = -1
         session_clients.clients.pop(client_id, None)
+        self._retire_client_handle(session.session_id, runtime_client.handle)
 
     def request_plugin_runtime(self, session: Session, client_id: str, payload: dict[str, object]) -> dict[str, object]:
         runtime_client = self._require_client(session.session_id, client_id)
@@ -486,13 +494,13 @@ class ClientRegistryRuntime:
 
     def release_session_clients(self, session_id: str, reason: str) -> None:
         session_clients = self._session_clients.pop(session_id, None)
-        if session_clients is None:
-            return
-        for runtime_client in session_clients.clients.values():
-            runtime_client.handle.shutdown(reason)
-            runtime_client.state = "shutdown"
-            runtime_client.shutdown_reason = reason
-            runtime_client.client_bufnr = -1
+        if session_clients is not None:
+            for runtime_client in session_clients.clients.values():
+                runtime_client.handle.shutdown(reason)
+                runtime_client.state = "shutdown"
+                runtime_client.shutdown_reason = reason
+                runtime_client.client_bufnr = -1
+                self._retire_client_handle(session_id, runtime_client.handle)
 
     def get_client(self, session_id: str, client_id: str) -> RuntimeClient | None:
         session_clients = self._session_clients.get(session_id)
@@ -509,6 +517,7 @@ class ClientRegistryRuntime:
     def close(self) -> None:
         for session_id in list(self._session_clients.keys()):
             self.release_session_clients(session_id, reason="backend_shutdown")
+        self.dispose_retired_clients()
 
     def sync_disconnect_deadline(self, session: Session, expires_at: float | None) -> float | None:
         _ = session
@@ -541,6 +550,19 @@ class ClientRegistryRuntime:
         if session_clients is None or client_id not in session_clients.clients:
             raise ValueError("Runtime client id does not match current session state")
         return session_clients.clients[client_id]
+
+    def _retire_client_handle(self, session_id: str, handle: RuntimeClientHandle) -> None:
+        self._retired_client_handles.setdefault(session_id, []).append(handle)
+
+    def dispose_retired_clients(self, session_id: str | None = None) -> None:
+        if session_id is None:
+            session_ids = list(self._retired_client_handles.keys())
+        else:
+            session_ids = [session_id]
+        for current_session_id in session_ids:
+            handles = self._retired_client_handles.pop(current_session_id, [])
+            for handle in handles:
+                handle.dispose()
 
 
 def _jusi_kernel_env(

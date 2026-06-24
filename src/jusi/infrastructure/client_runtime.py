@@ -185,6 +185,7 @@ class ProcessClientHandle:
         ready = parse_ready_line(ready_line)
         if ready is None:
             self.shutdown("spawn_failed")
+            self.dispose()
             raise RuntimeError(f"Managed client process failed to start for {self.client_id}")
         self.lifecycle.append(f"spawn:{self.process.pid}")
         self._wait_for_status(lambda status: status.lifecycle == ["ready"])
@@ -376,6 +377,8 @@ class ProcessClientHandle:
             pass
         _close_runtime_events_socket(self._runtime_events_socket, self.plugin_runtime_events_socket_path)
         self._runtime_events_socket = None
+
+    def dispose(self) -> None:
         _cleanup_control_dir(self.control_dir)
 
     def _shutdown_plugin_runtime(self) -> None:
@@ -637,6 +640,8 @@ class InProcessTranscriptHandle:
         self._runtime_events_socket = None
         self._apply_command(ClientRuntimeCommand.shutdown(reason))
         self.lifecycle.append(f"shutdown:{reason}")
+
+    def dispose(self) -> None:
         _cleanup_control_dir(self.control_dir)
 
     def _shutdown_plugin_runtime(self) -> None:
