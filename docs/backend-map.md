@@ -157,7 +157,7 @@ flowchart LR
     T -->|exec| P
     B <-->|controller method calls| W
     W <-->|plugin-runtime control request/response| P
-    P -->|frontend action mailbox| B
+    P -->|runtime event socket, file fallback| B
 ```
 
 ## Protocol Surfaces
@@ -228,19 +228,22 @@ Used for:
 
 This path is asymmetric and minimal.
 
-Used only when plugin runtime must emit an unsolicited backend callback.
+Used when plugin runtime must emit an unsolicited backend callback or runtime state update.
 
 Example:
 
 - shell `jusi-open ...`
+- Codex turn status switching between `busy` and `follow-up`
 
 Mechanism:
 
-- append JSON lines to the per-client action mailbox file
-- backend root drains that file during `poll_client_updates()`
-- backend root converts records into:
+- send JSON records to the per-client runtime event socket
+- fall back to the per-client action JSONL file when the socket is unavailable
+- backend root drains records during `poll_client_updates()`
+- backend root converts action records into:
   - transcript `frontend_action_request`
   - `handler_message` callback with `message_type = action_request`
+- backend root applies runtime records such as `execution_status` to canonical cell/client state
 
 This is not the same path as normal `followup` / `complete`.
 

@@ -169,7 +169,7 @@ Behavior:
   - `target.kind` must be `connection_file`
 - this path is implemented in both the in-memory runtime and the managed runtime
 - attached sessions establish the durable backend session; client allocation happens on execute
-- managed runtime keeps a small connection-file sidecar registry of attached Jusi root-process PIDs for stop fanout
+- managed runtime keeps a small connection-file sidecar registry of attached Jusi root-process PIDs for shared disconnect timeout coordination
 - other target kinds may still be recorded as identity, but are not executable attach paths yet
 
 ### `execute_cell`
@@ -468,8 +468,9 @@ Behavior:
 - for externally attached `connection_file` sessions, managed runtime:
   - sends kernel shutdown through the attached Jupyter client
   - tears down local Jusi channels and clients
-  - signals peer attached Jusi root processes registered for the same connection file so they shut down too
-- timeout teardown follows that same whole-session rule for attached `connection_file` sessions
+  - unregisters only the current Jusi root process from the connection-file sidecar
+- peer attached Jusi root processes are not signaled by stop; they must observe kernel loss or their own frontend/session lifecycle
+- timeout teardown follows that same current-session cleanup rule for attached `connection_file` sessions
 
 ### `shutdown_client`
 

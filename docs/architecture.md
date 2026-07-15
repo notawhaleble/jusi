@@ -68,8 +68,8 @@ Interpretation:
 - `attach_session` exists as a real backend path, but is intentionally narrow:
   - only `target.kind=connection_file` is executable today
 - managed runtime supports that same narrow attach slice against a real external connection file
-- managed attached sessions use a small connection-file sidecar registry to coordinate stop fanout across peer Jusi root processes
-- that same sidecar carries the shared disconnect timeout deadline for attached peers
+- managed attached sessions use a small connection-file sidecar registry to coordinate shared disconnect timeout deadlines across peer Jusi root processes
+- stop/restart cleanup unregisters only the current Jusi root process from that sidecar; peers are not signaled
 - `execute_cell` allocates the real execution client directly for that cell
 - `disconnect_session` preserves durable session identity as `disconnected`
 - `reconnect_session` restores the durable session linkage without inventing false execution ownership

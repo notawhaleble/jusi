@@ -366,8 +366,9 @@ class ExecuteCell:
             cell_id=current_client.cell_id,
             client_id=current_client.client_id,
         )
+        runtime_cell = self._display_handlers.cell_with_blank_body_bootstrap(command.cell)
         try:
-            current_client.status = self._runtime.execute_cell(session, command.cell, current_client)
+            current_client.status = self._runtime.execute_cell(session, runtime_cell, current_client)
         except Exception as exc:
             if not self._execution_still_active(command.notebook_id, current_client):
                 return self._tracked_terminal_execution(command.notebook_id, current_client)
@@ -429,6 +430,30 @@ class ExecuteCell:
                 )
                 current_client.owner_kind = handler_mode.owner_kind
                 current_client.runtime_mode = handler_mode.name
+            else:
+                message = self._invalid_handoff_message(handoff)
+                emit_timing(
+                    "use_case.execute.handoff_rejected",
+                    notebook_id=command.notebook_id,
+                    session_id=session.session_id,
+                    cell_id=current_client.cell_id,
+                    client_id=current_client.client_id,
+                    magic_name=handoff.magic_name,
+                    handler_id=handoff.handler_id,
+                    message=message,
+                )
+                current_client.status = "error"
+                self._runtime.update_client_execution_status(session, current_client.client_id, current_client.status)
+                self._runtime.append_client_execution_event(
+                    session,
+                    current_client.client_id,
+                    {
+                        "type": "error",
+                        "ename": "DisplayHandlerUnavailable",
+                        "evalue": message,
+                        "traceback": [],
+                    },
+                )
         self._maybe_release_managed_controller(session.session_id, current_client)
         self._store.save_execution(command.notebook_id, current_client)
         self._events.cell_updated(command.notebook_id, _cell_payload(current_client))
@@ -452,6 +477,19 @@ class ExecuteCell:
             return current_client
         self._events.cell_updated(notebook_id, _cell_payload(tracked))
         return tracked
+
+    def _invalid_handoff_message(self, handoff) -> str:  # type: ignore[no-untyped-def]
+        spec = self._display_handlers.get(handoff.handler_id)
+        if spec is None:
+            return (
+                f"Display handler '{handoff.handler_id}' is not installed for magic '%%{handoff.magic_name}'. "
+                "Install the matching Jusi plugin in the environment that runs Jusi, then restart this kernel session."
+            )
+        allowed_magics = ", ".join(f"%%{magic.name}" for magic in spec.magic_commands) or "none"
+        return (
+            f"Display handler '{handoff.handler_id}' rejected magic '%%{handoff.magic_name}'. "
+            f"Registered magics for this handler: {allowed_magics}."
+        )
 
     @staticmethod
     def _presentation_for_handoff(handoff, matched_handler) -> dict[str, object]:  # type: ignore[no-untyped-def]

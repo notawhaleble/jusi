@@ -4,6 +4,8 @@ import json
 import os
 import sys
 
+from jusi.infrastructure.debug_timing import emit_timing
+
 _SAFE_ATTACH_ENV_KEYS = {
     "HOME",
     "LANG",
@@ -51,6 +53,17 @@ def build_exec_terminal_attach_env(
     supervisor_pid = str(os.getpid()).strip()
     if supervisor_pid:
         attach_env["JUSI_SUPERVISOR_PID"] = supervisor_pid
+    emit_timing(
+        "native_terminal.attach_env.build",
+        session_id=session_id,
+        client_id=client_id,
+        handler_id=handler_id,
+        command=list(command),
+        child_env_keys=sorted(attach_child_env.keys()),
+        attach_env_keys=sorted(attach_env.keys()),
+        has_plugin_callable=bool(str(attach_child_env.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "")).strip()),
+        plugin_runtime_callable=str(attach_child_env.get("JUSI_PLUGIN_RUNTIME_CALLABLE", "")).strip(),
+    )
     return attach_env
 
 

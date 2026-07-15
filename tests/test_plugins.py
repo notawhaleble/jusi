@@ -8,9 +8,10 @@ from typing import Any
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from jusi.domain.models import HandlerHandoff
+from jusi.domain.models import ExecutableCell, HandlerHandoff
 from jusi.plugins import (
     BaseHandler,
+    BasePluginRuntimeVdHandler,
     BaseVdHandler,
     collect_plugin_palette,
     collect_kernel_extension_modules,
@@ -35,6 +36,8 @@ from jusi.visidata_support import (
     JUSI_PLUGIN_FRONTEND_ACTIONS_ENV,
     JUSI_VISIDATARC_ENV,
     append_plugin_frontend_action,
+    bind_visidata_runtime,
+    dispatch_visidata_control_request,
     handle_plugin_runtime_control_request,
     install_visidata_runtime_hooks,
     load_visidatarc_from_env,
@@ -139,6 +142,25 @@ class FakeVDHandler(BaseVdHandler):
                 "payload": {"cell_text": str(payload.get("cell_text", "")).upper()},
             },
         )
+
+
+class FakePluginRuntimeVDHandler(BasePluginRuntimeVdHandler):
+    def handler_id(self) -> str:
+        return "fake_runtime_vd"
+
+    def normalize_followup_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        normalized["normalized"] = "followup"
+        return normalized
+
+    def normalize_complete_payload(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        normalized["normalized"] = "complete"
+        return normalized
+
+    def normalize_completion_items(self, payload, items):  # type: ignore[no-untyped-def]
+        _ = payload
+        return [dict(item, detail="normalized") for item in items]
 
 
 class AsyncBaseHandler(BaseHandler):
@@ -319,6 +341,29 @@ class PluginRegistryTest(unittest.TestCase):
         load_visidatarc_from_env.assert_called_once_with()
         set_plugin_control_handler.assert_called_once()
 
+    def test_run_plugin_runtime_emits_error_record_for_nonzero_runner_exit(self) -> None:
+        records: list[dict[str, Any]] = []
+
+        def failing_runner() -> int:
+            os.sys.stderr.write("missing dependency\n")
+            return 2
+
+        with patch.dict(
+            "os.environ",
+            {"JUSI_PLUGIN_RUNTIME_CALLABLE": "jusi_vd.runner:run_vd_runner", "JUSI_VD_PAYLOAD_JSON": json.dumps({"content": "", "meta": {}})},
+            clear=True,
+        ), patch("jusi_vd.runner.run_vd_runner", side_effect=failing_runner), patch(
+            "jusi.infrastructure.plugin_runtime.emit_plugin_runtime_record",
+            side_effect=lambda record: records.append(dict(record)) or True,
+        ):
+            self.assertEqual(2, run_plugin_runtime())
+
+        self.assertEqual("execution_event", records[0]["record_type"])
+        self.assertEqual("error", records[0]["payload"]["type"])
+        self.assertEqual("PluginRuntimeError", records[0]["payload"]["ename"])
+        self.assertEqual("missing dependency", records[0]["payload"]["evalue"])
+        self.assertEqual({"record_type": "execution_status", "status": "error"}, records[1])
+
     def test_run_plugin_runtime_starts_supervisor_monitor_when_configured(self) -> None:
         events: list[str] = []
 
@@ -463,6 +508,55 @@ class PluginRegistryTest(unittest.TestCase):
                 records,
             )
             self.assertEqual(["yanked value to editor", "yanked selection to editor"], fake_vd.statuses)
+
+    def test_visidata_runtime_hooks_dispatch_followup_and_complete_from_active_sheet(self) -> None:
+        class FakeRuntime:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, Any]]] = []
+
+            def handle_followup(self, payload: dict[str, Any]) -> dict[str, Any]:
+                self.calls.append(("followup", dict(payload)))
+                return {"handled": True}
+
+            def handle_complete(self, payload: dict[str, Any]) -> dict[str, Any]:
+                self.calls.append(("complete", dict(payload)))
+                return {"items": [{"value": "pods"}]}
+
+        class FakeVD:
+            pass
+
+        class FakeBaseSheet:
+            pass
+
+        class DerivedSheet(FakeBaseSheet):
+            pass
+
+        fake_vd = FakeVD()
+        fake_visidata = SimpleNamespace(vd=fake_vd, Sheet=FakeBaseSheet, BaseSheet=FakeBaseSheet)
+        sheet = DerivedSheet()
+        runtime = FakeRuntime()
+
+        with patch.dict("sys.modules", {"visidata": fake_visidata}):
+            self.assertTrue(install_visidata_runtime_hooks())
+            bind_visidata_runtime(sheet, runtime)
+            fake_vd.activeSheet = sheet
+
+            followup_result = dispatch_visidata_control_request(
+                {"message_type": "followup", "payload": {"cell_text": "select 1"}}
+            )
+            complete_result = dispatch_visidata_control_request(
+                {"message_type": "complete", "payload": {"line_text": "sel"}}
+            )
+
+        self.assertEqual({"handled": True}, followup_result)
+        self.assertEqual({"items": [{"value": "pods"}]}, complete_result)
+        self.assertEqual(
+            [
+                ("followup", {"cell_text": "select 1"}),
+                ("complete", {"line_text": "sel"}),
+            ],
+            runtime.calls,
+        )
 
     def test_install_visidata_runtime_hooks_redirects_launch_editor_to_open_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -684,6 +778,58 @@ class PluginRegistryTest(unittest.TestCase):
             pushed[1],
         )
 
+    def test_vd_plugin_runtime_base_forwards_complete_and_followup(self) -> None:
+        handler = FakePluginRuntimeVDHandler()
+        calls: list[tuple[str, dict[str, Any]]] = []
+        pushed: list[tuple[str, dict[str, Any]]] = []
+
+        def call_backend_action(action_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+            calls.append((action_name, payload))
+            if payload["message_type"] == "complete":
+                return {"items": [{"value": "SELECT", "label": "SELECT"}]}
+            return {"handled": True}
+
+        context = type(
+            "Ctx",
+            (),
+            {
+                "call_backend_action": lambda _self, action_name, payload: call_backend_action(action_name, payload),
+                "send_frontend_message": lambda _self, message_type, payload: pushed.append((message_type, payload)),
+            },
+        )()
+
+        handler.on_frontend_message(context, "complete", {"line_text": "SEL"})  # type: ignore[arg-type]
+        handler.on_frontend_message(context, "followup", {"cell_text": "select 1"})  # type: ignore[arg-type]
+
+        self.assertEqual(
+            [
+                ("plugin_runtime_request", {"message_type": "complete", "payload": {"line_text": "SEL", "normalized": "complete"}}),
+                ("plugin_runtime_request", {"message_type": "followup", "payload": {"cell_text": "select 1", "normalized": "followup"}}),
+            ],
+            calls,
+        )
+        self.assertEqual(
+            (
+                "complete_result",
+                {
+                    "handler_id": "fake_runtime_vd",
+                    "message_type": "complete",
+                    "items": [
+                        {
+                            "value": "SELECT",
+                            "label": "SELECT",
+                            "kind": None,
+                            "detail": "normalized",
+                            "documentation": None,
+                            "start_col": None,
+                            "end_col": None,
+                        }
+                    ],
+                },
+            ),
+            pushed[0],
+        )
+
     def test_base_handler_generic_complete_and_followup_hooks_emit_results(self) -> None:
         handler = FakeGenericHandler()
         pushed: list[tuple[str, dict]] = []
@@ -737,6 +883,24 @@ class PluginRegistryTest(unittest.TestCase):
         self.assertEqual("vd", registry.find_for_cell(["%%vd pods"]).handler_id)
         self.assertEqual("vd", registry.find_for_cell(["%%sql select 1"]).handler_id)
         self.assertIsNone(registry.find_for_cell(["print('x')"]))
+
+    def test_registry_substitutes_blank_magic_body_with_declared_bootstrap_body(self) -> None:
+        registry = DisplayHandlerRegistry(
+            [
+                DisplayHandlerSpec(
+                    handler_id="sql",
+                    factory=object(),
+                    magic_commands=(MagicCommand("sql", bootstrap_body=lambda first_line: f"-- bootstrap {first_line}"),),
+                )
+            ]
+        )
+        cell = ExecutableCell(cell_id=12, kind="magic", syntax="sql", main_lines=["%%sql prod", " ", ""])
+
+        bootstrapped = registry.cell_with_blank_body_bootstrap(cell)
+        nonblank = ExecutableCell(12, "magic", "sql", ["%%sql prod", "select 1"])
+
+        self.assertEqual(["%%sql prod", "-- bootstrap %%sql prod"], bootstrapped.main_lines)
+        self.assertIs(nonblank, registry.cell_with_blank_body_bootstrap(nonblank))
 
     def test_registry_rejects_duplicate_handler_ids(self) -> None:
         registry = DisplayHandlerRegistry()
@@ -823,7 +987,40 @@ class PluginRegistryTest(unittest.TestCase):
         self.assertEqual("sql", registry.find_for_cell(["%%sql select 1"]).handler_id)
 
     def test_collect_kernel_extension_modules_reads_registry_specs(self) -> None:
-        registry = build_display_handler_registry()
+        entry_points = SelectableEntryPoints(
+            {
+                DISPLAY_HANDLER_ENTRY_POINT_GROUP: [
+                    FakeEntryPoint(
+                        DisplayHandlerSpec(
+                            handler_id="vd",
+                            factory=object,
+                            magic_commands=(MagicCommand("vd"),),
+                            kernel_extension_modules=("jusi_vd.kernel",),
+                        )
+                    ),
+                    FakeEntryPoint(
+                        DisplayHandlerSpec(
+                            handler_id="shell",
+                            factory=object,
+                            magic_commands=(MagicCommand("shell"),),
+                            kernel_extension_modules=("jusi_shell.kernel",),
+                        )
+                    ),
+                    FakeEntryPoint(
+                        DisplayHandlerSpec(
+                            handler_id="sql",
+                            factory=object,
+                            magic_commands=(MagicCommand("sql"),),
+                            kernel_extension_modules=("jusi_sql.kernel",),
+                        )
+                    ),
+                ]
+            }
+        )
+
+        with patch("jusi.plugins.metadata.entry_points", return_value=entry_points):
+            registry = build_display_handler_registry()
+
         modules = collect_kernel_extension_modules(registry)
         self.assertEqual(("jusi_vd.kernel", "jusi_shell.kernel", "jusi_sql.kernel"), modules)
 

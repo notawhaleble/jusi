@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import tempfile
 import json
 from typing import Any, Sequence
@@ -8,13 +9,17 @@ from types import MethodType
 import threading
 import uuid
 
+from jusi.infrastructure.debug_timing import emit_timing
+
 
 JUSI_VISIDATARC_ENV = "JUSI_VISIDATARC_CONTENT"
 JUSI_PLUGIN_FRONTEND_ACTIONS_ENV = "JUSI_PLUGIN_FRONTEND_ACTIONS_FILE"
+JUSI_PLUGIN_RUNTIME_EVENTS_SOCKET_ENV = "JUSI_PLUGIN_RUNTIME_EVENTS_SOCKET"
 JUSI_VISIDATA_EDIT_TIMEOUT_ENV = "JUSI_VISIDATA_EDIT_TIMEOUT_SECONDS"
 
 
 _PENDING_ACTION_RESULTS: dict[str, tuple[threading.Event, dict[str, Any]]] = {}
+_JUSI_RUNTIME_ATTR = "jusi_runtime"
 
 
 def normalize_visidatarc_content(content: object) -> str:
@@ -53,14 +58,99 @@ def plugin_frontend_actions_path_from_env() -> str:
     return str(os.environ.get(JUSI_PLUGIN_FRONTEND_ACTIONS_ENV, "")).strip()
 
 
-def append_plugin_frontend_action(action_type: str, payload: dict[str, Any]) -> bool:
+def plugin_runtime_events_socket_from_env() -> str:
+    return str(os.environ.get(JUSI_PLUGIN_RUNTIME_EVENTS_SOCKET_ENV, "")).strip()
+
+
+def emit_plugin_runtime_record(record: dict[str, Any]) -> bool:
+    record_type = str(record.get("record_type", "")).strip()
+    socket_path = plugin_runtime_events_socket_from_env()
+    if socket_path:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as client:
+                client.connect(socket_path)
+                client.sendall(json.dumps(dict(record)).encode("utf-8"))
+            emit_timing(
+                "plugin_runtime.record.emit",
+                record_type=record_type,
+                transport="socket",
+                socket_path=socket_path,
+                status=str(record.get("status", "")).strip(),
+            )
+            return True
+        except OSError as exc:
+            emit_timing(
+                "plugin_runtime.record.emit_error",
+                record_type=record_type,
+                transport="socket",
+                socket_path=socket_path,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            pass
+
     path = plugin_frontend_actions_path_from_env()
     if not path:
+        emit_timing("plugin_runtime.record.emit_skip", record_type=record_type, reason="no_transport")
         return False
-    record = {"action_type": str(action_type), "payload": dict(payload)}
     with open(path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record) + "\n")
+        handle.write(json.dumps(dict(record)) + "\n")
+    emit_timing(
+        "plugin_runtime.record.emit",
+        record_type=record_type,
+        transport="file",
+        path=path,
+        status=str(record.get("status", "")).strip(),
+    )
     return True
+
+
+def append_plugin_frontend_action(action_type: str, payload: dict[str, Any]) -> bool:
+    record = {"record_type": "action_request", "action_type": str(action_type), "payload": dict(payload)}
+    socket_path = plugin_runtime_events_socket_from_env()
+    if socket_path:
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as client:
+                client.connect(socket_path)
+                client.sendall(json.dumps(record).encode("utf-8"))
+            emit_timing(
+                "plugin_runtime.record.emit",
+                record_type="action_request",
+                action_type=str(action_type),
+                transport="socket",
+                socket_path=socket_path,
+            )
+            return True
+        except OSError as exc:
+            emit_timing(
+                "plugin_runtime.record.emit_error",
+                record_type="action_request",
+                action_type=str(action_type),
+                transport="socket",
+                socket_path=socket_path,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            pass
+
+    path = plugin_frontend_actions_path_from_env()
+    if not path:
+        emit_timing("plugin_runtime.record.emit_skip", record_type="action_request", action_type=str(action_type), reason="no_transport")
+        return False
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"action_type": str(action_type), "payload": dict(payload)}) + "\n")
+    emit_timing(
+        "plugin_runtime.record.emit",
+        record_type="action_request",
+        action_type=str(action_type),
+        transport="file",
+        path=path,
+    )
+    return True
+
+
+def set_plugin_execution_status(status: str) -> bool:
+    return emit_plugin_runtime_record({"record_type": "execution_status", "status": str(status)})
 
 
 def _edit_timeout_seconds() -> float | None:
@@ -108,6 +198,86 @@ def handle_plugin_runtime_control_request(request: dict[str, Any]) -> dict[str, 
     return {}
 
 
+def bind_visidata_runtime(sheet: Any, runtime: Any) -> None:
+    import visidata
+
+    base_sheet = getattr(visidata, "BaseSheet", None)
+    setattr(sheet, _JUSI_RUNTIME_ATTR, runtime)
+    setattr(sheet, "_jusi_runtime", runtime)
+    if base_sheet is not None:
+        setattr(base_sheet, _JUSI_RUNTIME_ATTR, runtime)
+        setattr(base_sheet, "_jusi_runtime", runtime)
+    vd = getattr(visidata, "vd", None)
+    if vd is not None:
+        setattr(vd, "_jusi_runtime", runtime)
+
+
+def _visidata_runtime(sheet: Any) -> Any:
+    import visidata
+
+    current = sheet
+    seen: set[int] = set()
+    while current is not None:
+        marker = id(current)
+        if marker in seen:
+            break
+        seen.add(marker)
+        runtime = getattr(current, _JUSI_RUNTIME_ATTR, None) or getattr(current, "_jusi_runtime", None)
+        if runtime is not None:
+            return runtime
+        current = getattr(current, "source", None)
+    base_sheet = getattr(visidata, "BaseSheet", None)
+    if base_sheet is not None:
+        runtime = getattr(base_sheet, _JUSI_RUNTIME_ATTR, None) or getattr(base_sheet, "_jusi_runtime", None)
+        if runtime is not None:
+            return runtime
+    vd = getattr(visidata, "vd", None)
+    if vd is not None:
+        runtime = getattr(vd, "_jusi_runtime", None)
+        if runtime is not None:
+            return runtime
+    raise RuntimeError("No active Jusi runtime is bound to the current VisiData session")
+
+
+def _call_runtime_control(runtime: Any, message_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    names = {
+        "followup": ("handle_followup", "followup"),
+        "complete": ("handle_complete", "complete"),
+    }.get(message_type, ())
+    for name in names:
+        method = getattr(runtime, name, None)
+        if callable(method):
+            result = method(dict(payload))
+            return dict(result) if isinstance(result, dict) else {}
+    return {}
+
+
+def dispatch_visidata_runtime_message(message_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    import visidata
+
+    vd = getattr(visidata, "vd", None)
+    active_sheet = getattr(vd, "activeSheet", None) if vd is not None else None
+    if active_sheet is not None:
+        method = getattr(active_sheet, f"jusi_{message_type}", None)
+        if callable(method):
+            result = method(dict(payload))
+            return dict(result) if isinstance(result, dict) else {}
+        return _call_runtime_control(_visidata_runtime(active_sheet), message_type, payload)
+    return _call_runtime_control(_visidata_runtime(None), message_type, payload)
+
+
+def dispatch_visidata_control_request(request: dict[str, Any]) -> dict[str, Any]:
+    message_type = str(request.get("message_type", "")).strip()
+    if message_type == "action_result":
+        return handle_plugin_runtime_control_request(request)
+    if message_type not in {"followup", "complete"}:
+        return {}
+    payload = request.get("payload", {})
+    if not isinstance(payload, dict):
+        payload = {}
+    return dispatch_visidata_runtime_message(message_type, payload)
+
+
 def request_blocking_edit(path: str, *, line: int | None = None) -> dict[str, Any]:
     request_id = f"edit-{uuid.uuid4().hex}"
     payload: dict[str, Any] = {"request_id": request_id, "path": str(path)}
@@ -143,6 +313,7 @@ def install_visidata_runtime_hooks() -> bool:
 
     original_launch_editor = getattr(vd, "launchEditor", None)
     original_launch_external_editor = getattr(vd, "launchExternalEditor", None)
+    base_sheet = getattr(visidata, "BaseSheet", Sheet)
 
     def syscopy_value(sheet, val):  # type: ignore[no-untyped-def]
         append_plugin_frontend_action("yank_text", {"text": str(val)})
@@ -201,8 +372,16 @@ def install_visidata_runtime_hooks() -> bool:
                 vd_obj.exceptionCaught(exc)
                 return ""
 
+    def jusi_followup(sheet, payload):  # type: ignore[no-untyped-def]
+        return _call_runtime_control(_visidata_runtime(sheet), "followup", dict(payload))
+
+    def jusi_complete(sheet, payload):  # type: ignore[no-untyped-def]
+        return _call_runtime_control(_visidata_runtime(sheet), "complete", dict(payload))
+
     Sheet.syscopyValue = syscopy_value
     Sheet.syscopyCells_async = syscopy_cells_async
+    base_sheet.jusi_followup = jusi_followup
+    base_sheet.jusi_complete = jusi_complete
     vd.launchEditor = MethodType(launch_editor, vd)
     vd.launchExternalEditor = MethodType(launch_external_editor, vd)
     vd.launchExternalEditorPath = MethodType(launch_external_editor_path, vd)

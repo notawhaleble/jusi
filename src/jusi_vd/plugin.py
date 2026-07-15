@@ -55,6 +55,11 @@ class VDDisplayHandler(BaseVdHandler):
     def handler_id(self) -> str:
         return "vd"
 
+    @staticmethod
+    def bootstrap_cell_body(first_line: str) -> str | None:
+        _ = first_line
+        return "None"
+
     def terminal_command(self) -> tuple[list[str], str]:
         command, fallback_notice = _build_vd_command()
         self._mode = "live"
@@ -101,7 +106,7 @@ def display_handler_specs() -> tuple[DisplayHandlerSpec, ...]:
         DisplayHandlerSpec(
             handler_id="vd",
             factory=VDDisplayHandler,
-            magic_commands=(MagicCommand("vd"),),
+            magic_commands=(MagicCommand("vd", bootstrap_body=VDDisplayHandler.bootstrap_cell_body),),
             kernel_extension_modules=("jusi_vd.kernel",),
             presentation={"syntax": "python", "indent": "python", "followup": True, "completion": False},
         ),

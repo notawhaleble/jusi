@@ -263,13 +263,13 @@ class ProtocolServer:
         live_keys: set[tuple[str, str]] = set()
         for session in self._store.list_sessions():
             for runtime_client in list(list_clients(session.session_id)):
+                self._drain_client_frontend_actions(session.notebook_id, session, runtime_client)
                 if self._normalize_dead_handler_client(
                     session.notebook_id,
                     session.session_id,
                     runtime_client.client_id,
                 ):
                     continue
-                self._drain_client_frontend_actions(session.notebook_id, session, runtime_client)
                 key = (session.session_id, runtime_client.client_id)
                 live_keys.add(key)
                 try:
@@ -303,21 +303,120 @@ class ProtocolServer:
     def _drain_client_frontend_actions(self, notebook_id: str, session, runtime_client) -> None:  # type: ignore[no-untyped-def]
         drain = getattr(runtime_client.handle, "drain_frontend_actions", None)
         if not callable(drain):
+            emit_timing(
+                "server.runtime_records.drain_skip",
+                reason="no_drain_method",
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+            )
             return
         active = self._active_client_controllers.get(session.session_id, runtime_client.client_id)
         if active is None or not active.runtime_mode:
+            emit_timing(
+                "server.runtime_records.drain_skip",
+                reason="no_active_handler",
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+            )
             return
         mode = require_registered_runtime_mode(active.runtime_mode)
         if not mode.accepts_frontend_messages:
+            emit_timing(
+                "server.runtime_records.drain_skip",
+                reason="mode_rejects_frontend_messages",
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+                runtime_mode=active.runtime_mode,
+            )
             return
         handler_id = str(getattr(runtime_client.transport, "handler_id", "") or "").strip()
         if not handler_id:
+            emit_timing(
+                "server.runtime_records.drain_skip",
+                reason="missing_handler_id",
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+                runtime_mode=active.runtime_mode,
+            )
             return
-        for action in drain():
-            if not isinstance(action, dict):
+        drained_count = 0
+        emit_timing(
+            "server.runtime_records.drain_start",
+            session_id=session.session_id,
+            client_id=runtime_client.client_id,
+            handler_id=handler_id,
+            runtime_mode=active.runtime_mode,
+            handle_type=type(runtime_client.handle).__name__,
+        )
+        for record in drain():
+            if not isinstance(record, dict):
                 continue
-            action_type = str(action.get("action_type", "")).strip()
-            payload = action.get("payload", {})
+            drained_count += 1
+            record_type = str(record.get("record_type", "")).strip() or "action_request"
+            emit_timing(
+                "server.runtime_records.drain_record",
+                record_type=record_type,
+                session_id=session.session_id,
+                client_id=runtime_client.client_id,
+                handler_id=handler_id,
+                runtime_mode=active.runtime_mode,
+                status=str(record.get("status", "")).strip(),
+            )
+            payload = record.get("payload", {})
+            if record_type == "execution_status":
+                status = str(record.get("status", "")).strip()
+                if not status:
+                    emit_timing(
+                        "server.runtime_records.status_skip",
+                        reason="empty_status",
+                        session_id=session.session_id,
+                        client_id=runtime_client.client_id,
+                    )
+                    continue
+                self._runtime.update_client_execution_status(session, runtime_client.client_id, status)
+                cell_id = getattr(runtime_client, "cell_id", None)
+                execution = self._store.get_execution(notebook_id, cell_id) if cell_id is not None else None
+                if execution is not None and execution.client_id == runtime_client.client_id:
+                    execution.status = status
+                    self._store.save_execution(notebook_id, execution)
+                    self._pending_events.put(
+                        Envelope(
+                            version=1,
+                            kind="event",
+                            type="cell_updated",
+                            payload={"notebook_id": notebook_id, "cell": _cell_payload(execution)},
+                        )
+                    )
+                    emit_timing(
+                        "server.runtime_records.status_applied",
+                        session_id=session.session_id,
+                        client_id=runtime_client.client_id,
+                        cell_id=execution.cell_id,
+                        status=status,
+                    )
+                else:
+                    emit_timing(
+                        "server.runtime_records.status_skip",
+                        reason="no_matching_execution",
+                        session_id=session.session_id,
+                        client_id=runtime_client.client_id,
+                        cell_id=cell_id,
+                        status=status,
+                    )
+                continue
+            if record_type == "execution_event":
+                if isinstance(payload, dict):
+                    self._runtime.append_client_execution_event(session, runtime_client.client_id, dict(payload))
+                    emit_timing(
+                        "server.runtime_records.event_appended",
+                        session_id=session.session_id,
+                        client_id=runtime_client.client_id,
+                        event_type=str(payload.get("type", "")).strip(),
+                    )
+                continue
+            if record_type != "action_request":
+                continue
+            action_type = str(record.get("action_type", "")).strip()
             if not action_type or not isinstance(payload, dict):
                 continue
             self._runtime.append_client_execution_event(
@@ -340,6 +439,14 @@ class ProtocolServer:
                     "payload": dict(payload),
                 },
             )
+        emit_timing(
+            "server.runtime_records.drain_done",
+            session_id=session.session_id,
+            client_id=runtime_client.client_id,
+            handler_id=handler_id,
+            runtime_mode=active.runtime_mode,
+            record_count=drained_count,
+        )
 
     def handle_message(self, raw: str) -> List[str]:
         try:
@@ -793,14 +900,38 @@ class ProtocolServer:
         is_alive = getattr(handle, "plugin_runtime_is_alive", None)
         if not callable(is_alive):
             return None
-        if is_alive() is not False:
+        alive = is_alive()
+        emit_timing(
+            "server.dead_handler.liveness",
+            notebook_id=notebook_id,
+            session_id=session_id,
+            client_id=client_id,
+            cell_id=tracked_execution.cell_id,
+            status=tracked_execution.status,
+            runtime_mode=tracked_execution.runtime_mode,
+            owner_kind=tracked_execution.owner_kind,
+            is_alive=alive,
+            handle_type=type(handle).__name__,
+        )
+        if alive is not False:
             return None
         session = self._store.get_by_notebook(notebook_id)
         if session is None or session.session_id != session_id:
             return None
+        emit_timing(
+            "server.dead_handler.normalize",
+            notebook_id=notebook_id,
+            session_id=session_id,
+            client_id=client_id,
+            cell_id=tracked_execution.cell_id,
+            status_before=tracked_execution.status,
+            runtime_mode=tracked_execution.runtime_mode,
+            owner_kind_before=tracked_execution.owner_kind,
+        )
         self._runtime.shutdown_client(session, client_id, "plugin_runtime_exit")
         self._active_client_controllers.remove_client(session_id, client_id)
         normalize_closed_followup_execution(tracked_execution)
+        tracked_execution.owner_kind = "unknown"
         tracked_execution.client_state = "shutdown"
         clear_execution_runtime_identity(tracked_execution)
         self._store.save_execution(notebook_id, tracked_execution)

@@ -74,6 +74,7 @@ class ClientProcessTest(unittest.TestCase):
             runner._state.client_id = "client-1"
             runner._state.notebook_id = "nb-1"
             runner._state.session_id = "sess-1"
+            runner._supervisor_pid = 0
 
             original_signal = signal.signal
             ticks = {"count": 0}
