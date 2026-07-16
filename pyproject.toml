@@ -4,14 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jusi"
-version = "0.1.0"
+version = "0.1.1"
 description = "Standalone backend for Jusivim notebook execution"
-readme = "README.md"
+readme = { file = "PYPI.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [
-  { name = "notawhaleble", email = "ponival@gmail.com" },
-  { name = "OpenAI Codex" }
+  { name = "notawhaleble", email = "ponival@gmail.com" }
 ]
 maintainers = [
   { name = "notawhaleble", email = "ponival@gmail.com" }
