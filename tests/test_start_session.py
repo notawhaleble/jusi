@@ -1298,6 +1298,67 @@ class StartSessionTest(unittest.TestCase):
             action_messages[0].payload["payload"],
         )
 
+    def test_poll_client_updates_emits_open_url_action_request(self) -> None:
+        runtime = FrontendActionRuntime()
+        server = ProtocolServer(runtime=runtime)
+        session_id, client_id = self.start_and_bind(server)
+        server._active_client_controllers.register(
+            session_id,
+            client_id,
+            ActiveClientController(
+                client_id=client_id,
+                controller=HandlerMessageProbe(),
+                runtime_mode="handler",
+                handler_id="shell",
+            ),
+        )
+        session = server._store.get_by_notebook("nb-1")
+        self.assertIsNotNone(session)
+        runtime.set_client_transport(
+            session,
+            client_id,
+            ClientTransport(
+                kind="native_terminal",
+                attach_cmd=["/bin/sh"],
+                attach_env={},
+                session_id=session_id,
+                client_id=client_id,
+                handler_id="shell",
+            ),
+        )
+        runtime_client = runtime.get_client(session_id, client_id)
+        self.assertIsNotNone(runtime_client)
+        handle = runtime_client.handle
+        self.assertIsInstance(handle, FrontendActionHandle)
+        handle.pending_actions.append(
+            {
+                "record_type": "action_request",
+                "action_type": "open_url",
+                "payload": {
+                    "url": "https://example.com",
+                    "open_in": "client",
+                },
+            }
+        )
+
+        server.poll_client_updates()
+
+        pending = [parse_envelope(message) for message in server.drain_pending_messages()]
+        action_messages = [env for env in pending if env.type == "handler_message"]
+        self.assertEqual(1, len(action_messages))
+        self.assertEqual("action_request", action_messages[0].payload["message_type"])
+        self.assertEqual("shell", action_messages[0].payload["handler_id"])
+        self.assertEqual(
+            {
+                "action_type": "open_url",
+                "payload": {
+                    "url": "https://example.com",
+                    "open_in": "client",
+                },
+            },
+            action_messages[0].payload["payload"],
+        )
+
     def test_poll_client_updates_applies_runtime_execution_status_record(self) -> None:
         runtime = FrontendActionRuntime()
         server = ProtocolServer(runtime=runtime)

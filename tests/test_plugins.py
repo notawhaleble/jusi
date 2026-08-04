@@ -42,6 +42,7 @@ from jusi.visidata_support import (
     install_visidata_runtime_hooks,
     load_visidatarc_from_env,
     normalize_visidatarc_content,
+    open_plugin_url,
     request_blocking_edit,
 )
 from jusi.interfaces.protocol import parse_envelope
@@ -430,6 +431,23 @@ class PluginRegistryTest(unittest.TestCase):
             with open(path, "r", encoding="utf-8") as handle:
                 self.assertEqual(
                     {"action_type": "yank_text", "payload": {"text": "abc"}},
+                    json.loads(handle.read().strip()),
+                )
+
+    def test_open_plugin_url_writes_open_url_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "actions.jsonl")
+            with patch.dict("os.environ", {JUSI_PLUGIN_FRONTEND_ACTIONS_ENV: path}, clear=True):
+                self.assertTrue(open_plugin_url("https://example.com/report", open_in="tab"))
+            with open(path, "r", encoding="utf-8") as handle:
+                self.assertEqual(
+                    {
+                        "action_type": "open_url",
+                        "payload": {
+                            "url": "https://example.com/report",
+                            "open_in": "tab",
+                        },
+                    },
                     json.loads(handle.read().strip()),
                 )
 

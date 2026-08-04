@@ -296,6 +296,13 @@ Built-in editor actions:
   - `line` is optional and 1-based
   - `column` is optional and 1-based
 
+- `action_type = open_url`
+  - `url` is required
+  - `open_in` is optional; `client` opens a frontend-local web buffer in the attached handler window and `tab` opens it in a new tab
+  - `open_link` is accepted by the frontend as an alias action type
+  - URL field aliases accepted by the frontend are `url`, `href`, and `link`
+  - backend must not send or manage `client_bufnr` for the web buffer
+
 - `action_type = yank_text`
   - `text` is required
   - frontend should write it into the main editor register path
@@ -584,7 +591,7 @@ Notes:
 - `client_id` appears when backend has allocated the real execution client
 - `runtime_mode` is optional and identifies the backend-side runtime currently owning that cell
 - when backend clears live runtime identity, `client_id`, `runtime_mode`, and transport metadata are omitted rather than emitted as empty strings
-- `client_bufnr` may be omitted when the editor plugin has not yet bound a local buffer
+- `client_bufnr` is frontend-local editor state and is omitted unless backend has a real bound buffer number
 - native-terminal transport metadata belongs to that real execution client, not to any session-level prepared slot
 - `owner` is independent from `status`
 - `presentation` is optional and only appears when backend has authoritative editor presentation metadata for this cell

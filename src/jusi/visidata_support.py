@@ -149,6 +149,14 @@ def append_plugin_frontend_action(action_type: str, payload: dict[str, Any]) -> 
     return True
 
 
+def open_plugin_url(url: str, *, open_in: str = "client") -> bool:
+    payload: dict[str, Any] = {"url": str(url)}
+    target = str(open_in).strip()
+    if target:
+        payload["open_in"] = target
+    return append_plugin_frontend_action("open_url", payload)
+
+
 def set_plugin_execution_status(status: str) -> bool:
     return emit_plugin_runtime_record({"record_type": "execution_status", "status": str(status)})
 
