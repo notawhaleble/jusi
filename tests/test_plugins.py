@@ -36,6 +36,7 @@ from jusi.visidata_support import (
     JUSI_PLUGIN_FRONTEND_ACTIONS_ENV,
     JUSI_VISIDATARC_ENV,
     append_plugin_frontend_action,
+    apply_pending_visidata_terminal_resize,
     bind_visidata_runtime,
     dispatch_visidata_control_request,
     handle_plugin_runtime_control_request,
@@ -43,6 +44,7 @@ from jusi.visidata_support import (
     load_visidatarc_from_env,
     normalize_visidatarc_content,
     open_plugin_url,
+    queue_visidata_terminal_resize,
     request_blocking_edit,
 )
 from jusi.interfaces.protocol import parse_envelope
@@ -576,6 +578,62 @@ class PluginRegistryTest(unittest.TestCase):
             runtime.calls,
         )
 
+    def test_visidata_control_request_queues_resize_and_wakes_curses(self) -> None:
+        class FakeVD:
+            def __init__(self) -> None:
+                self.commands: list[str] = []
+
+            def queueCommand(self, command: str) -> None:
+                self.commands.append(command)
+
+        fake_vd = FakeVD()
+        fake_visidata = SimpleNamespace(vd=fake_vd)
+
+        with patch.dict("sys.modules", {"visidata": fake_visidata}), patch("curses.ungetch") as ungetch:
+            result = dispatch_visidata_control_request(
+                {"message_type": "terminal_resize", "payload": {"rows": 42, "cols": 121}}
+            )
+            duplicate = queue_visidata_terminal_resize({"rows": 42, "cols": 121})
+
+        self.assertEqual(["jusi-terminal-resize"], fake_vd.commands)
+        self.assertEqual(42, result["rows"])
+        self.assertEqual(121, result["cols"])
+        self.assertTrue(result["queued"])
+        self.assertTrue(duplicate["queued"])
+        self.assertEqual(2, ungetch.call_count)
+
+    def test_apply_pending_visidata_terminal_resize_runs_on_visidata_command_path(self) -> None:
+        class FakeScreen:
+            def __init__(self) -> None:
+                self.cleared = False
+
+            def clear(self) -> None:
+                self.cleared = True
+
+        fake_vd = SimpleNamespace(
+            _jusi_pending_terminal_resize=(37, 96),
+            _jusi_terminal_resize_queued=True,
+            scrFull=FakeScreen(),
+        )
+        fake_vd.setWindows = unittest.mock.Mock()
+
+        with patch("curses.update_lines_cols") as update_lines_cols, patch("curses.resizeterm") as resizeterm:
+            result = apply_pending_visidata_terminal_resize(fake_vd)
+
+        update_lines_cols.assert_called_once_with()
+        resizeterm.assert_called_once_with(37, 96)
+        self.assertTrue(fake_vd.scrFull.cleared)
+        fake_vd.setWindows.assert_called_once_with(fake_vd.scrFull)
+        self.assertEqual({"applied": True, "rows": 37, "cols": 96}, result)
+
+    def test_visidata_control_request_rejects_invalid_resize(self) -> None:
+        self.assertEqual(
+            {"queued": False, "reason": "invalid_geometry"},
+            dispatch_visidata_control_request(
+                {"message_type": "terminal_resize", "payload": {"rows": 0, "cols": "wide"}}
+            ),
+        )
+
     def test_install_visidata_runtime_hooks_redirects_launch_editor_to_open_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = os.path.join(tmpdir, "actions.jsonl")
@@ -847,6 +905,25 @@ class PluginRegistryTest(unittest.TestCase):
             ),
             pushed[0],
         )
+
+    def test_vd_handlers_forward_terminal_resize_to_plugin_runtime(self) -> None:
+        for handler in (FakeVDHandler(), FakePluginRuntimeVDHandler()):
+            calls: list[tuple[str, dict[str, Any]]] = []
+            context = SimpleNamespace(
+                call_backend_action=lambda action_name, payload: calls.append((action_name, payload)) or {}
+            )
+
+            handler.on_frontend_message(context, "terminal_resize", {"rows": 51, "cols": 88})  # type: ignore[arg-type]
+
+            self.assertEqual(
+                [
+                    (
+                        "plugin_runtime_request",
+                        {"message_type": "terminal_resize", "payload": {"rows": 51, "cols": 88}},
+                    )
+                ],
+                calls,
+            )
 
     def test_base_handler_generic_complete_and_followup_hooks_emit_results(self) -> None:
         handler = FakeGenericHandler()

@@ -45,10 +45,6 @@ def run_vd_runner() -> int:
         sys.stderr.flush()
         return 2
 
-    # Jusi-controlled VisiData runtimes must keep polling the main loop,
-    # otherwise externally queued actions won't be consumed until a keypress.
-    visidata.vd.timeouts_before_idle = -1
-
     if isinstance(meta, dict) and meta.get("ftype") == "pandas":
         visidata.vd.view_pandas(value)
     else:

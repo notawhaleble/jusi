@@ -20,6 +20,11 @@ JUSI_VISIDATA_EDIT_TIMEOUT_ENV = "JUSI_VISIDATA_EDIT_TIMEOUT_SECONDS"
 
 _PENDING_ACTION_RESULTS: dict[str, tuple[threading.Event, dict[str, Any]]] = {}
 _JUSI_RUNTIME_ATTR = "jusi_runtime"
+_VISIDATA_RESIZE_LOCK = threading.Lock()
+_JUSI_PENDING_RESIZE_ATTR = "_jusi_pending_terminal_resize"
+_JUSI_RESIZE_QUEUED_ATTR = "_jusi_terminal_resize_queued"
+_JUSI_APPLIED_RESIZE_ATTR = "_jusi_applied_terminal_resize"
+_JUSI_RESIZE_COMMAND = "jusi-terminal-resize"
 
 
 def normalize_visidatarc_content(content: object) -> str:
@@ -274,15 +279,98 @@ def dispatch_visidata_runtime_message(message_type: str, payload: dict[str, Any]
     return _call_runtime_control(_visidata_runtime(None), message_type, payload)
 
 
+def _terminal_resize_geometry(payload: dict[str, Any]) -> tuple[int, int] | None:
+    raw_rows = payload.get("rows")
+    raw_cols = payload.get("cols")
+    if isinstance(raw_rows, bool) or isinstance(raw_cols, bool):
+        return None
+    try:
+        rows = int(raw_rows)
+        cols = int(raw_cols)
+    except (TypeError, ValueError):
+        return None
+    if rows <= 0 or cols <= 0:
+        return None
+    return rows, cols
+
+
+def queue_visidata_terminal_resize(payload: dict[str, Any]) -> dict[str, Any]:
+    geometry = _terminal_resize_geometry(payload)
+    if geometry is None:
+        return {"queued": False, "reason": "invalid_geometry"}
+
+    import curses
+    import visidata
+
+    vd = getattr(visidata, "vd", None)
+    queue_command = getattr(vd, "queueCommand", None) if vd is not None else None
+    if vd is None or not callable(queue_command):
+        return {"queued": False, "reason": "runtime_not_ready"}
+
+    with _VISIDATA_RESIZE_LOCK:
+        already_applied = getattr(vd, _JUSI_APPLIED_RESIZE_ATTR, None) == geometry
+        command_queued = bool(getattr(vd, _JUSI_RESIZE_QUEUED_ATTR, False))
+        pending = getattr(vd, _JUSI_PENDING_RESIZE_ATTR, None)
+        if already_applied and not command_queued and pending is None:
+            return {"queued": False, "duplicate": True, "rows": geometry[0], "cols": geometry[1]}
+        setattr(vd, _JUSI_PENDING_RESIZE_ATTR, geometry)
+        if not command_queued:
+            queue_command(_JUSI_RESIZE_COMMAND)
+            setattr(vd, _JUSI_RESIZE_QUEUED_ATTR, True)
+
+    woke = False
+    try:
+        curses.ungetch(curses.KEY_RESIZE)
+        woke = True
+    except (AttributeError, curses.error):
+        pass
+    return {"queued": True, "woke": woke, "rows": geometry[0], "cols": geometry[1]}
+
+
+def apply_pending_visidata_terminal_resize(vd: Any) -> dict[str, Any]:
+    with _VISIDATA_RESIZE_LOCK:
+        geometry = getattr(vd, _JUSI_PENDING_RESIZE_ATTR, None)
+        setattr(vd, _JUSI_PENDING_RESIZE_ATTR, None)
+        setattr(vd, _JUSI_RESIZE_QUEUED_ATTR, False)
+    if geometry is None:
+        return {"applied": False}
+
+    rows, cols = geometry
+    import curses
+
+    update_lines_cols = getattr(curses, "update_lines_cols", None)
+    if callable(update_lines_cols):
+        update_lines_cols()
+    resize_terminal = getattr(curses, "resizeterm", None) or getattr(curses, "resize_term", None)
+    if not callable(resize_terminal):
+        return {"applied": False, "reason": "resize_unavailable", "rows": rows, "cols": cols}
+    resize_terminal(rows, cols)
+
+    redraw = getattr(vd, "redraw", None)
+    if callable(redraw):
+        redraw()
+    else:
+        scr = getattr(vd, "scrFull", None)
+        if scr is not None:
+            scr.clear()
+            set_windows = getattr(vd, "setWindows", None)
+            if callable(set_windows):
+                set_windows(scr)
+    setattr(vd, _JUSI_APPLIED_RESIZE_ATTR, geometry)
+    return {"applied": True, "rows": rows, "cols": cols}
+
+
 def dispatch_visidata_control_request(request: dict[str, Any]) -> dict[str, Any]:
     message_type = str(request.get("message_type", "")).strip()
     if message_type == "action_result":
         return handle_plugin_runtime_control_request(request)
-    if message_type not in {"followup", "complete"}:
-        return {}
     payload = request.get("payload", {})
     if not isinstance(payload, dict):
         payload = {}
+    if message_type == "terminal_resize":
+        return queue_visidata_terminal_resize(payload)
+    if message_type not in {"followup", "complete"}:
+        return {}
     return dispatch_visidata_runtime_message(message_type, payload)
 
 
@@ -386,10 +474,23 @@ def install_visidata_runtime_hooks() -> bool:
     def jusi_complete(sheet, payload):  # type: ignore[no-untyped-def]
         return _call_runtime_control(_visidata_runtime(sheet), "complete", dict(payload))
 
+    def jusi_apply_terminal_resize(vd_obj):  # type: ignore[no-untyped-def]
+        return apply_pending_visidata_terminal_resize(vd_obj)
+
     Sheet.syscopyValue = syscopy_value
     Sheet.syscopyCells_async = syscopy_cells_async
     base_sheet.jusi_followup = jusi_followup
     base_sheet.jusi_complete = jusi_complete
+    vd.jusiApplyTerminalResize = MethodType(jusi_apply_terminal_resize, vd)
+    add_command = getattr(base_sheet, "addCommand", None)
+    if callable(add_command):
+        add_command(
+            "",
+            _JUSI_RESIZE_COMMAND,
+            "vd.jusiApplyTerminalResize()",
+            "apply a terminal resize queued by Jusi",
+            replay=False,
+        )
     vd.launchEditor = MethodType(launch_editor, vd)
     vd.launchExternalEditor = MethodType(launch_external_editor, vd)
     vd.launchExternalEditorPath = MethodType(launch_external_editor_path, vd)

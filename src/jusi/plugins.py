@@ -444,6 +444,17 @@ class BaseVdHandler(BaseTerminalHandler):
         return "follow-up"
 
     def on_frontend_message(self, context: HandlerContext, message_type: str, payload: dict[str, Any]) -> None:
+        if message_type == "terminal_resize":
+            try:
+                context.call_backend_action(
+                    "plugin_runtime_request",
+                    {"message_type": message_type, "payload": dict(payload)},
+                )
+            except (OSError, RuntimeError, ValueError):
+                # Resize notifications are best-effort: the native terminal can
+                # outlive (or race the startup of) its plugin runtime.
+                pass
+            return
         super().on_frontend_message(context, message_type, payload)
 
     def complete(self, context: HandlerContext, payload: dict[str, Any]) -> Sequence[dict[str, Any]]:
