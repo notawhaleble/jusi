@@ -63,6 +63,12 @@ Deferred:
 
 ## Next Boundary
 
-1. design the target-side terminal surface resource and transport for render-only and interactive clients
+ADR 0016 proposes the target-side PTY/per-surface bridge boundary for review.
+Incident 0003 preserves the legacy VisiData geometry failure that its handshake
+and tests must address. No terminal transport implementation has begun.
+
+If accepted:
+
+1. specify the terminal surface, attach, geometry, cursor, and failure contract atomically
 2. prove worker-owned terminal bytes, input, and geometry without routing the stream through the request/response control channel
 3. design the remote-safe web-surface contract after the terminal boundary is established
