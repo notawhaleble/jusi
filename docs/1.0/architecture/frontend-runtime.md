@@ -7,8 +7,14 @@ notebook buffer. A session combines the notebook model, frontend transport,
 controller, and presentation manager without merging their ownership.
 
 `:JusiConnect [base_url]` attaches the current buffer and opens its event stream.
-It does not start a kernel. `:JusiDisconnect` closes only frontend transport and
-projections; it does not claim that the supervisor or kernel stopped.
+It does not start a kernel. `:JusiDisconnect` closes only frontend transport; it
+preserves the notebook model, cell identities, and output projections and does
+not claim that the supervisor or kernel stopped. A later `:JusiConnect` on the
+same buffer inspects and resumes through ADR 0008.
+
+Wiping the notebook buffer destroys its frontend model and projections. That
+editor-local cleanup still does not stop a kernel; kernel stop remains an
+explicit service operation.
 
 The first commands are:
 

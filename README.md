@@ -48,5 +48,6 @@ cell delimiters and use:
 :JusiDisconnect
 ```
 
-Connecting and disconnecting affect only the frontend transport. They do not
-implicitly start or stop a kernel.
+Connecting and disconnecting affect only the frontend transport. Disconnect
+preserves the current notebook model and output surfaces for later transport
+resumption. Neither command implicitly starts or stops a kernel.

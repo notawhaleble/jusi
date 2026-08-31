@@ -91,7 +91,7 @@ function M.connect(options)
     buffer = buf,
     once = true,
     callback = function()
-      M.disconnect(buf)
+      M._destroy_session(buf)
     end,
   })
   controller:connect(function(connected, failure)
@@ -178,6 +178,15 @@ end
 function M.disconnect(buf)
   local buffer = buf or vim.api.nvim_get_current_buf()
   local session = current_session(buffer)
+  if not session then
+    return false
+  end
+  session.controller:close()
+  return true
+end
+
+function M._destroy_session(buf)
+  local session = current_session(buf)
   if not session then
     return false
   end
