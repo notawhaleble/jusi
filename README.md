@@ -8,7 +8,7 @@ Jusi 1.0 is a unified Neovim notebook system containing:
 - backend, frontend, and end-to-end tests
 - durable architecture, incident, and continuity records
 
-The foundation and walking skeleton are implemented. The Python package provides the authoritative supervisor, managed Jupyter adapter, HTTP commands, and ordered SSE events. The Neovim frontend provides the symbolic notebook parser, model-owned cell identities, extmark anchoring, localized reconciliation, HTTP/SSE transport, and service controller. A headless test proves the full start, execute, ordered-result, and stop path without an interactive UI. Commands and rendering remain deferred.
+The foundation and walking skeleton are implemented. The Python package provides the authoritative supervisor, managed Jupyter adapter, HTTP commands, and ordered SSE events. The Neovim frontend provides the symbolic notebook parser, model-owned cell identities, extmark anchoring, localized reconciliation, HTTP/SSE transport, service controller, and media-driven native-terminal text projection. A headless test proves the full start, execute, ordered-result, render, and stop path without an interactive UI. User commands and window layout remain deferred.
 
 The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-compatible 0.x frontend. Its Vimscript is not being moved into this repository.
 

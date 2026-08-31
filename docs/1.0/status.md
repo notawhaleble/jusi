@@ -10,7 +10,8 @@ Updated: 2026-08-31
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
 - Python and Lua consume shared command and event fixtures, including unchanged ANSI-bearing text.
 - The Neovim frontend has a pure Lua symbolic-format parser, model-owned cell identities, extmark anchors, locally spliced structural reconciliation, and an executable 10,000-line/1,000-cell performance harness.
-- A replaceable curl/`vim.system` adapter and Lua controller now bind that model to HTTP commands and ordered SSE events. Rendering and user commands have not started.
+- A replaceable curl/`vim.system` adapter and Lua controller now bind that model to HTTP commands and ordered SSE events.
+- Textual output now projects unchanged through `nvim_open_term()` into a hidden, cell-attached terminal buffer. Renderer choice is media-driven; window layout and user commands have not started.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - The archival tag `legacy/0.x-pre-1.0-2026-08-31` and detached sibling worktree `/Users/niku/Documents/dev/jusi-0.x` preserve the audited backend snapshot.
@@ -34,11 +35,11 @@ Deferred:
 - full notebook restart command
 - plugin discovery and workers
 - remote supervisors and `checking`
-- Neovim rendering, user commands, and terminal presentation
+- terminal window layout, user commands, and interactive PTY clients
 - authoritative resynchronization after supervisor replacement or event cursor expiry
 - input, interrupt, completion, rich media, PTY clients, and durable event storage
 
 ## Next Boundary
 
-1. define the smallest media-driven output projection without coupling it to cell kind
-2. define the first explicit user command surface over the controller
+1. define the first explicit user command surface over the controller
+2. add predictable output-window placement without coupling layout to transport

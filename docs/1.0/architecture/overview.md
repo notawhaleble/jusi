@@ -38,6 +38,8 @@ The Lua model parses visible plain text into stable cells. Extmarks preserve anc
 
 The implemented parser, linked reconciliation model, and edit paths are specified in [frontend-notebook-model.md](frontend-notebook-model.md). The service binding and its separation from rendering are specified in [frontend-controller.md](frontend-controller.md).
 
+The initial cell-attached native terminal projection is specified in [frontend-presentation.md](frontend-presentation.md).
+
 ## Failure Boundaries
 
 The supervisor treats kernel, execution, client, plugin worker, service, protocol, and frontend transport as separate failure layers. Events and failures retain the originating layer and trace.

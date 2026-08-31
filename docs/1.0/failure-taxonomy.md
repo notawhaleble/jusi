@@ -17,6 +17,7 @@ A failure must answer:
 - `protocol`: invalid or incompatible wire data
 - `frontend_transport`: HTTP/SSE reachability, cursor, or stream failure
 - `frontend_model`: local notebook structure, cell identity, or controller precondition failure; this layer is currently local-only and is not emitted by the backend SSE stream
+- `frontend_presentation`: local renderer selection or output-surface failure; this layer is currently local-only and is not emitted by the backend SSE stream
 - `service`: request routing, persistence, configuration, or internal service failure
 - `supervisor`: ownership, orchestration, cleanup, and child supervision
 - `kernel`: kernel process, readiness, channels, or kernel protocol

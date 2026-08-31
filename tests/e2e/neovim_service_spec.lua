@@ -1,5 +1,6 @@
 local controller_module = require("jusi.controller")
 local notebook = require("jusi.notebook")
+local presentation_module = require("jusi.presentation")
 local transport_module = require("jusi.transport.http_sse")
 
 local M = {}
@@ -52,6 +53,7 @@ local function run_scenario()
   local service, service_state = start_service()
   local model
   local controller
+  local presentation
   local ok, result = xpcall(function()
     local ready = service_state.ready
     local buf = vim.api.nvim_create_buf(false, true)
@@ -62,13 +64,17 @@ local function run_scenario()
     local outputs = {}
     local events = {}
     local failures = {}
+    presentation = presentation_module.new({ notebook_id = model.notebook_id })
+    local presentation_callbacks = presentation:controller_callbacks()
     controller = controller_module.new({
       notebook = model,
       transport = transport,
       on_event = function(event)
         table.insert(events, event)
       end,
+      on_execution_started = presentation_callbacks.on_execution_started,
       on_output = function(output_cell_id, output)
+        presentation_callbacks.on_output(output_cell_id, output)
         table.insert(outputs, { cell_id = output_cell_id, output = output })
       end,
       on_failure = function(failure)
@@ -110,6 +116,11 @@ local function run_scenario()
     assert(outputs[1].cell_id == cell_id)
     assert(outputs[1].output.media_type == "text/plain")
     assert(outputs[1].output.data == "2")
+    local output_buf = assert(presentation:buffer_for_cell(cell_id))
+    wait_for(1000, function()
+      return vim.api.nvim_buf_get_lines(output_buf, 0, 1, false)[1] == "2"
+    end, "native terminal did not render the result")
+    assert(vim.bo[output_buf].buftype == "terminal")
 
     local stop_response
     local stop_failure
@@ -135,6 +146,9 @@ local function run_scenario()
 
   if controller then
     controller:close()
+  end
+  if presentation then
+    presentation:close()
   end
   if model then
     model:detach()

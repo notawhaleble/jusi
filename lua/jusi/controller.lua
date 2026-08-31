@@ -147,6 +147,9 @@ function Controller:_on_event(event)
       client_id = event.payload.client_id,
       outcome = event.payload.outcome,
     }
+    if self.on_execution_started then
+      self.on_execution_started(event.payload.cell_id, self.executions[event.payload.execution_id], event)
+    end
   elseif event.kind == "execution.output" then
     local execution = self.executions[event.payload.execution_id]
     if execution and self.on_output then
@@ -156,6 +159,9 @@ function Controller:_on_event(event)
     local execution = self.executions[event.payload.execution_id]
     if execution then
       execution.outcome = event.payload.outcome
+      if self.on_execution_completed then
+        self.on_execution_completed(execution.cell_id, execution, event)
+      end
     end
   elseif event.kind == "failure.occurred" and self.on_failure then
     self.on_failure(event.payload)
@@ -277,6 +283,8 @@ function M.new(options)
     transport_state = "disconnected",
     executions = {},
     on_event = opts.on_event,
+    on_execution_started = opts.on_execution_started,
+    on_execution_completed = opts.on_execution_completed,
     on_output = opts.on_output,
     on_failure = opts.on_failure,
     last_transport_failure = nil,
