@@ -31,6 +31,8 @@ RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "clie
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
 FAILURE_SCOPES = {"request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor"}
+WORKER_OPERATIONS = {"execute", "followup", "complete", "editor_action"}
+WORKER_FAILURE_REASONS = {"invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error"}
 
 
 def _required_strings(value: dict[str, Any], fields: tuple[str, ...], context: str) -> None:
@@ -292,4 +294,71 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
                 raise ProtocolValidationError(f"Magic {family['magic_name']} is claimed by incompatible families")
             family_by_id[family["family_id"]] = descriptor
             family_by_magic[family["magic_name"]] = family["family_id"]
+    return dict(data)
+
+
+def validate_plugin_worker_message(data: object) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ProtocolValidationError("Plugin worker message must be an object")
+    if data.get("protocol_version") != PROTOCOL_VERSION:
+        raise ProtocolValidationError(f"protocol_version must be {PROTOCOL_VERSION}")
+    kind = data.get("kind")
+    if kind not in {
+        "worker.ready",
+        "worker.request",
+        "worker.result",
+        "worker.failure",
+        "worker.shutdown",
+        "worker.stopped",
+    }:
+        raise ProtocolValidationError("Plugin worker message kind is unsupported")
+    if not _bounded_string(data.get("plugin_worker_id"), 3, 128):
+        raise ProtocolValidationError("plugin_worker_id length is invalid")
+
+    if kind == "worker.ready":
+        fields = {
+            "protocol_version", "kind", "plugin_worker_id", "runtime_id", "plugin_id",
+            "family_id", "client_id", "execution_id", "pid",
+        }
+        if set(data) != fields:
+            raise ProtocolValidationError("Plugin worker ready fields are invalid")
+        for field in ("runtime_id", "plugin_id", "client_id", "execution_id"):
+            if not _bounded_string(data[field], 3, 128):
+                raise ProtocolValidationError(f"{field} length is invalid")
+        if not _bounded_string(data["family_id"], 1, 128):
+            raise ProtocolValidationError("family_id length is invalid")
+        if not isinstance(data["pid"], int) or isinstance(data["pid"], bool) or data["pid"] < 1:
+            raise ProtocolValidationError("pid must be a positive integer")
+        return dict(data)
+
+    base_fields = {"protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id"}
+    for field in ("request_id", "trace_id"):
+        if not _bounded_string(data.get(field), 3, 128):
+            raise ProtocolValidationError(f"{field} length is invalid")
+    if kind in {"worker.shutdown", "worker.stopped"}:
+        if set(data) != base_fields:
+            raise ProtocolValidationError(f"Plugin worker {kind} fields are invalid")
+        return dict(data)
+
+    common_fields = base_fields | {"operation"}
+    if data.get("operation") not in WORKER_OPERATIONS:
+        raise ProtocolValidationError("Plugin worker operation is unsupported")
+    if kind == "worker.request":
+        if set(data) != common_fields | {"payload"} or not isinstance(data.get("payload"), dict):
+            raise ProtocolValidationError("Plugin worker request fields are invalid")
+    elif kind == "worker.result":
+        if set(data) != common_fields | {"result"} or not isinstance(data.get("result"), dict):
+            raise ProtocolValidationError("Plugin worker result fields are invalid")
+    else:
+        if set(data) != common_fields | {"failure"} or not isinstance(data.get("failure"), dict):
+            raise ProtocolValidationError("Plugin worker failure fields are invalid")
+        failure = data["failure"]
+        if set(failure) - {"reason", "message", "retryable", "details"} or not {"reason", "message", "retryable"} <= set(failure):
+            raise ProtocolValidationError("Plugin worker failure body fields are invalid")
+        if failure["reason"] not in WORKER_FAILURE_REASONS:
+            raise ProtocolValidationError("Plugin worker failure reason is unsupported")
+        if not _bounded_string(failure["message"], 1, 1000) or not isinstance(failure["retryable"], bool):
+            raise ProtocolValidationError("Plugin worker failure body is invalid")
+        if "details" in failure and not isinstance(failure["details"], dict):
+            raise ProtocolValidationError("Plugin worker failure details must be an object")
     return dict(data)

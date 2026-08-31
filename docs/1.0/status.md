@@ -4,7 +4,7 @@ Updated: 2026-08-31
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0010 are active.
+- The foundation review is accepted; ADRs 0001-0011 are active.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -26,6 +26,9 @@ Updated: 2026-08-31
 - Start now creates an authoritative notebook-runtime generation only after fresh catalog discovery and kernel readiness; health snapshots bind `runtime_id`, `notebook_id`, `discovery_id`, catalog, and `kernel_id`.
 - Protocol v1 and the Neovim frontend now implement full `restart_notebook`/`:JusiRestart`: teardown fences the old kernel, discovery and configuration are reloaded, backend and frontend runtime identities are replaced, text/undo/buffer identity survive, and post-teardown failure leaves the kernel off without stale runtime restoration.
 - Real Neovim end-to-end coverage sets a kernel global, restarts, verifies fresh runtime/discovery/kernel/notebook/cell identities and retired output, then proves the new kernel no longer contains the global.
+- Exact-plugin workers now have a versioned generic control envelope, a fresh-process child host, private bounded length-prefixed control descriptors, immutable context, catalog-only entry-point selection, runtime/family/capability validation, and idempotent process-aware cleanup.
+- Plugin stdout cannot corrupt worker control; it joins bounded stderr diagnostics. Worker handler failure, timeout, malformed/oversized data, exit, and signal fence only that worker. This is reliability isolation, not a security sandbox.
+- Notebook-runtime stop/restart owns worker cleanup. Incomplete cleanup prevents full replacement before the old kernel is stopped; ordinary kernel stop still establishes authoritative `off` and reports any worker cleanup failure.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
@@ -47,13 +50,12 @@ Implemented:
 
 Deferred:
 
-- full notebook restart command
-- plugin discovery and workers
 - remote supervisors and `checking`
 - richer window/focus policy and interactive PTY clients
 - input, interrupt, completion, rich media, PTY clients, and durable event storage
 
 ## Next Boundary
 
-1. define and implement isolated exact-plugin workers plus their control envelope
-2. load versioned kernel adapters and validate exact-provider handoffs against the runtime catalog
+1. load versioned kernel adapters and validate exact-provider handoffs against the runtime catalog
+2. narrow supervisor locking so plugin-worker I/O never holds the global state lock
+3. expose generic plugin operations only after handoff identity, containment, and conformance tests pass

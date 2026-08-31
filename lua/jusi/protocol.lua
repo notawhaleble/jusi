@@ -28,6 +28,8 @@ local event_kinds = set({ "service.ready", "operation.started", "operation.compl
 local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
+local worker_operations = set({ "execute", "followup", "complete", "editor_action" })
+local worker_failure_reasons = set({ "invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error" })
 
 local function exact_fields(value, required, optional)
   for _, field in ipairs(required) do
@@ -285,6 +287,43 @@ function M.validate_plugin_catalog(catalog)
     end
   end
   return true
+end
+
+function M.validate_plugin_worker_message(message)
+  if type(message) ~= "table" or message.protocol_version ~= 1 then return false, "invalid plugin worker envelope" end
+  local kind = message.kind
+  if not set({ "worker.ready", "worker.request", "worker.result", "worker.failure", "worker.shutdown", "worker.stopped" })[kind] then
+    return false, "unsupported plugin worker message kind"
+  end
+  if not bounded_string(message.plugin_worker_id, 3, 128) then return false, "invalid plugin worker identity" end
+  if kind == "worker.ready" then
+    local ok, err = exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "runtime_id", "plugin_id", "family_id", "client_id", "execution_id", "pid" })
+    if not ok then return false, err end
+    for _, field in ipairs({ "runtime_id", "plugin_id", "client_id", "execution_id" }) do
+      if not bounded_string(message[field], 3, 128) then return false, "invalid worker ready identity" end
+    end
+    if not bounded_string(message.family_id, 1, 128) then return false, "invalid worker family identity" end
+    if type(message.pid) ~= "number" or message.pid < 1 or message.pid % 1 ~= 0 then return false, "invalid worker pid" end
+    return true
+  end
+  if not bounded_string(message.request_id, 3, 128) or not bounded_string(message.trace_id, 3, 128) then return false, "invalid worker request identity" end
+  if kind == "worker.shutdown" or kind == "worker.stopped" then
+    return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id" })
+  end
+  if not worker_operations[message.operation] then return false, "unsupported worker operation" end
+  if kind == "worker.request" then
+    if type(message.payload) ~= "table" then return false, "worker payload must be an object" end
+    return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "payload" })
+  elseif kind == "worker.result" then
+    if type(message.result) ~= "table" then return false, "worker result must be an object" end
+    return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "result" })
+  end
+  if type(message.failure) ~= "table" then return false, "worker failure must be an object" end
+  local failure_ok, failure_error = exact_fields(message.failure, { "reason", "message", "retryable" }, { "details" })
+  if not failure_ok then return false, failure_error end
+  if not worker_failure_reasons[message.failure.reason] or not bounded_string(message.failure.message, 1, 1000) or type(message.failure.retryable) ~= "boolean" then return false, "invalid worker failure" end
+  if message.failure.details ~= nil and type(message.failure.details) ~= "table" then return false, "invalid worker failure details" end
+  return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "failure" })
 end
 
 return M

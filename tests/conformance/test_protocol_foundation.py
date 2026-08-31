@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from jusi.protocol import ProtocolValidationError, validate_event, validate_health_response, validate_plugin_catalog
+from jusi.protocol import (
+    ProtocolValidationError,
+    validate_event,
+    validate_health_response,
+    validate_plugin_catalog,
+    validate_plugin_worker_message,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -105,3 +111,15 @@ def test_python_consumes_shared_plugin_catalog_fixtures() -> None:
     short_identity = load_json(fixture_root / "invalid" / "plugin-catalog-short-identity.json")
     with pytest.raises(ProtocolValidationError, match="length"):
         validate_plugin_catalog(short_identity)
+
+
+def test_python_consumes_shared_plugin_worker_fixtures() -> None:
+    fixture_root = ROOT / "protocol" / "fixtures" / "v1"
+    request = load_json(fixture_root / "valid" / "plugin-worker-request.json")
+    result = load_json(fixture_root / "valid" / "plugin-worker-result.json")
+    assert validate_plugin_worker_message(request)["operation"] == "complete"
+    assert validate_plugin_worker_message(result)["result"] == {"items": ["select"]}
+
+    invalid = load_json(fixture_root / "invalid" / "plugin-worker-identity-missing.json")
+    with pytest.raises(ProtocolValidationError, match="plugin_worker_id"):
+        validate_plugin_worker_message(invalid)

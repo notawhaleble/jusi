@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from jusi.protocol import ProtocolValidationError, validate_plugin_catalog
 
 
 ENTRY_POINT_GROUP = "jusi.plugins.v1"
+
+
+@dataclass(frozen=True)
+class WorkerContext:
+    plugin_worker_id: str
+    runtime_id: str
+    plugin_id: str
+    family_id: str
+    client_id: str
+    execution_id: str
 
 
 def validate_discovered_entry(

@@ -12,6 +12,7 @@ from jusi.application.ports import (
     PluginCatalogDiscovery,
     PluginCatalogDiscoveryError,
 )
+from jusi.application.plugin_workers import PluginWorkerManager
 from jusi.domain.models import (
     ExecutionResource,
     Failure,
@@ -34,11 +35,17 @@ class SupervisorError(RuntimeError):
 
 
 class Supervisor:
-    def __init__(self, kernel_factory: KernelFactory, plugin_discovery: PluginCatalogDiscovery) -> None:
+    def __init__(
+        self,
+        kernel_factory: KernelFactory,
+        plugin_discovery: PluginCatalogDiscovery,
+        plugin_workers: PluginWorkerManager | None = None,
+    ) -> None:
         self.supervisor_id = new_id("sup")
         self.events = EventLog(self.supervisor_id)
         self._kernel_factory = kernel_factory
         self._plugin_discovery = plugin_discovery
+        self._plugin_workers = plugin_workers
         self._lock = threading.RLock()
         self._current_kernel: KernelResource | None = None
         self._kernel_handle: KernelHandle | None = None
@@ -109,6 +116,26 @@ class Supervisor:
                 )
 
             operation = self._begin_operation("start_kernel", trace_id)
+            if self._current_runtime is not None and self._plugin_workers is not None:
+                worker_cleanup = self._plugin_workers.teardown_runtime(
+                    self._current_runtime.runtime_id, trace_id=trace_id, timeout=timeout,
+                )
+                failed_workers = [item for item in worker_cleanup if item["result"] == "failed"]
+                if failed_workers:
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="plugin_worker",
+                        operation="start_kernel",
+                        reason="cleanup_incomplete",
+                        message="Could not clean up workers from the previous notebook runtime",
+                        retryable=True,
+                        scope="plugin_worker",
+                        resource=ResourceRef("plugin_worker", failed_workers[0]["plugin_worker_id"]),
+                        details={"workers": worker_cleanup},
+                    )
+                    self._emit_failure(failure)
+                    self._complete_operation(operation, "failed", resource=failure.resource, failure=failure)
+                    raise SupervisorError(503, failure)
             self._current_runtime = None
             runtime_id = new_id("run")
             discovery_id = new_id("dsc")
@@ -169,6 +196,8 @@ class Supervisor:
                 plugin_catalog=discovery.catalog,
             )
             self._current_runtime = runtime
+            if self._plugin_workers is not None:
+                self._plugin_workers.activate_runtime(runtime)
             self.events.append(
                 trace_id=trace_id,
                 layer="kernel",
@@ -364,6 +393,11 @@ class Supervisor:
             kernel = self._current_kernel
             handle = self._kernel_handle
             assert handle is not None
+            worker_cleanup: list[dict[str, Any]] = []
+            if self._current_runtime is not None and self._plugin_workers is not None:
+                worker_cleanup = self._plugin_workers.teardown_runtime(
+                    self._current_runtime.runtime_id, trace_id=trace_id, timeout=timeout,
+                )
             try:
                 handle.stop(timeout=timeout)
             except KernelAdapterError as exc:
@@ -393,6 +427,24 @@ class Supervisor:
                 payload={"kernel_id": kernel_id, "previous_state": "on", "state": "off"},
             )
             cleanup = {"resource": ResourceRef("kernel", kernel_id).to_dict(), "result": "stopped"}
+            if worker_cleanup:
+                cleanup["plugin_workers"] = worker_cleanup
+            failed_workers = [item for item in worker_cleanup if item["result"] == "failed"]
+            if failed_workers:
+                failure = self._failure(
+                    trace_id=trace_id,
+                    layer="plugin_worker",
+                    operation="stop_kernel",
+                    reason="cleanup_incomplete",
+                    message="Kernel stopped, but plugin-worker cleanup was incomplete",
+                    retryable=True,
+                    scope="plugin_worker",
+                    resource=ResourceRef("plugin_worker", failed_workers[0]["plugin_worker_id"]),
+                    details={"kernel_state": "off", "workers": worker_cleanup},
+                )
+                self._emit_failure(failure)
+                self._complete_operation(operation, "failed", resource=failure.resource, failure=failure, cleanup=cleanup)
+                raise SupervisorError(503, failure)
             self._complete_operation(operation, "succeeded", resource=ResourceRef("kernel", kernel_id), cleanup=cleanup)
             return {"operation": operation.to_dict(), "kernel": kernel.to_dict(), "cleanup": cleanup}
 
@@ -448,6 +500,33 @@ class Supervisor:
                 trace_id,
                 resource=ResourceRef("notebook_runtime", runtime_id),
             )
+            worker_cleanup: list[dict[str, Any]] = []
+            if self._plugin_workers is not None:
+                worker_cleanup = self._plugin_workers.teardown_runtime(
+                    runtime_id, trace_id=trace_id, timeout=timeout,
+                )
+                failed_workers = [item for item in worker_cleanup if item["result"] == "failed"]
+                if failed_workers:
+                    cleanup = {
+                        "resource": ResourceRef("notebook_runtime", runtime_id).to_dict(),
+                        "kernel_id": kernel_id,
+                        "result": "failed",
+                        "plugin_workers": worker_cleanup,
+                    }
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="plugin_worker",
+                        operation="restart_notebook",
+                        reason="cleanup_incomplete",
+                        message="Full restart stopped because plugin-worker cleanup was incomplete",
+                        retryable=True,
+                        scope="plugin_worker",
+                        resource=ResourceRef("plugin_worker", failed_workers[0]["plugin_worker_id"]),
+                        details={"teardown_completed": False, "workers": worker_cleanup},
+                    )
+                    self._emit_failure(failure)
+                    self._complete_operation(operation, "failed", resource=failure.resource, failure=failure, cleanup=cleanup)
+                    raise SupervisorError(503, failure)
             cleanup_result = "already_absent"
             if kernel.state == "on":
                 handle = self._kernel_handle
@@ -492,6 +571,8 @@ class Supervisor:
                 "kernel_id": kernel_id,
                 "result": cleanup_result,
             }
+            if worker_cleanup:
+                cleanup["plugin_workers"] = worker_cleanup
             self._current_runtime = None
 
             next_runtime_id = new_id("run")
@@ -562,6 +643,8 @@ class Supervisor:
             self._current_kernel = next_kernel
             self._kernel_handle = next_handle
             self._current_runtime = next_runtime
+            if self._plugin_workers is not None:
+                self._plugin_workers.activate_runtime(next_runtime)
             self.events.append(
                 trace_id=trace_id,
                 layer="kernel",

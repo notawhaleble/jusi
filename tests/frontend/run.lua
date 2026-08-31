@@ -60,6 +60,16 @@ local short_identity_catalog = read_json("protocol/fixtures/v1/invalid/plugin-ca
 local short_identity_catalog_ok = protocol.validate_plugin_catalog(short_identity_catalog)
 assert(not short_identity_catalog_ok, "catalog schema string bounds must be enforced")
 
+local worker_request = read_json("protocol/fixtures/v1/valid/plugin-worker-request.json")
+local worker_request_ok, worker_request_error = protocol.validate_plugin_worker_message(worker_request)
+assert(worker_request_ok, worker_request_error)
+local worker_result = read_json("protocol/fixtures/v1/valid/plugin-worker-result.json")
+local worker_result_ok, worker_result_error = protocol.validate_plugin_worker_message(worker_result)
+assert(worker_result_ok, worker_result_error)
+local invalid_worker = read_json("protocol/fixtures/v1/invalid/plugin-worker-identity-missing.json")
+local invalid_worker_ok = protocol.validate_plugin_worker_message(invalid_worker)
+assert(not invalid_worker_ok, "worker identity is required")
+
 local specs = vim.fn.glob("tests/frontend/*_spec.lua", false, true)
 table.sort(specs)
 for _, path in ipairs(specs) do

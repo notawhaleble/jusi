@@ -80,3 +80,52 @@ class PluginCatalogDiscoveryError(RuntimeError):
 
 class PluginCatalogDiscovery(Protocol):
     def discover(self, *, discovery_id: str, timeout: float) -> PluginCatalogDiscoveryResult: ...
+
+
+@dataclass(frozen=True)
+class PluginWorkerSpec:
+    plugin_worker_id: str
+    runtime_id: str
+    plugin_id: str
+    family_id: str
+    client_id: str
+    execution_id: str
+    entry_point: str
+
+
+class PluginWorkerError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        retryable: bool,
+        diagnostics: ProcessDiagnostics | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.layer = "plugin_worker"
+        self.reason = reason
+        self.retryable = retryable
+        self.diagnostics = diagnostics
+        self.details = details or {}
+
+
+class PluginWorkerHandle(Protocol):
+    @property
+    def pid(self) -> int | None: ...
+
+    def request(
+        self,
+        operation: str,
+        payload: dict[str, Any],
+        *,
+        trace_id: str,
+        timeout: float,
+    ) -> dict[str, Any]: ...
+
+    def stop(self, *, trace_id: str, timeout: float) -> str: ...
+
+
+class PluginWorkerFactory(Protocol):
+    def start(self, spec: PluginWorkerSpec, *, timeout: float) -> PluginWorkerHandle: ...

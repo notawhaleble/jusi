@@ -107,8 +107,24 @@ A Neovim terminal buffer is a frontend projection of a client, not the client id
 An isolated plugin-owned runtime when plugin behavior needs a separate process or failure boundary.
 
 - identity: `plugin_worker_id`
-- owner: one client or execution
-- lifetime: never silently promoted to kernel or supervisor lifetime
+- owner: one `client_id` and originating `execution_id` within one
+  `runtime_id`, exact `plugin_id`, and `family_id`
+- selection: the import reference comes only from the current immutable catalog;
+  clients never submit an arbitrary worker entry point
+- lifetime: explicitly fenced and stopped; never silently promoted to kernel or
+  supervisor lifetime
+
+The initial worker control path serializes bounded `execute`, `followup`,
+`complete`, and `editor_action` requests. Payloads and results are opaque
+JSON-compatible objects; core validates identity and declared capability.
+Concurrent interrupt and terminal interaction are deferred to transports that
+can operate independently of an in-flight request.
+
+Full restart cleans every worker before stopping the old kernel or publishing a
+replacement runtime. Incomplete worker cleanup aborts replacement with the old
+kernel still authoritative. Kernel stop attempts worker cleanup first but still
+turns a successfully stopped kernel `off`, reporting any remaining worker
+cleanup failure explicitly.
 
 ### Frontend Transport
 

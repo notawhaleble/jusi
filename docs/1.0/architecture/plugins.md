@@ -74,6 +74,28 @@ notebook restart. Its validated catalog is owned by the resulting notebook
 runtime and is present in authoritative health/start/restart snapshots. Plugin
 runtime execution and kernel-extension loading remain deferred.
 
+## Worker Control
+
+The exact worker host and runtime-owned registry are now implemented behind an
+internal application boundary. Core allocates `plugin_worker_id`, selects the
+entry point from the current catalog, validates the exact family and operation
+capability, and starts a fresh child. The provider factory receives an immutable
+`WorkerContext`; its object handles one bounded request at a time.
+
+Control uses private duplicated descriptors and length-prefixed JSON. Ordinary
+plugin stdin is null and stdout is redirected into bounded stderr diagnostics,
+so output noise and ANSI bytes cannot become control frames. Worker exceptions,
+timeouts, channel loss, invalid frames, exits, and signals fence that worker.
+Isolation contains reliability failures but does not sandbox the user's
+filesystem or environment permissions.
+
+There is intentionally no HTTP or Neovim worker command yet. The next slice must
+define the versioned kernel-adapter handoff that authoritatively chooses the
+exact plugin, family, client, and originating execution before exposing generic
+plugin operations. Before requests become externally reachable, supervisor
+locking must also be narrowed so worker I/O cannot hold the global authoritative
+state lock.
+
 ## Failure And Verification
 
 - discovery import/schema failure: internal `plugin_discovery/plugin_error`,
@@ -85,9 +107,12 @@ runtime execution and kernel-extension loading remain deferred.
 - kernel extension exception: `execution/execution_error`; a process crash is
   separately `kernel/kernel_died`
 
-Discovery tests now cover a fresh process after package changes, one broken
+Discovery tests cover a fresh process after package changes, one broken
 plugin beside one healthy plugin, atomic repair on the next attempt, timeout and
 process-group cleanup, bounded stderr, exit/signal distinction, malformed
-entries, and provider-family conflicts. Future runtime tests still need worker
-death containment, idempotent worker cleanup, handoff validation, and full
-restart producing fresh catalog/worker/kernel identities.
+entries, and provider-family conflicts. Worker tests cover fresh process/import
+identity, stdout isolation, request/result correlation, handler failure,
+timeout, non-JSON and oversized results, exit/signal distinction, bounded
+stderr, catalog-only selection, capability rejection, idempotent cleanup, and
+restart teardown fencing. End-to-end exact-provider handoff and two-worker
+failure containment remain for the kernel-adapter slice.

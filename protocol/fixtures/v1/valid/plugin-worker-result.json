@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "kind": "worker.result",
+  "plugin_worker_id": "pwrk_fixture_1",
+  "request_id": "wreq_fixture_1",
+  "trace_id": "trace_fixture_1",
+  "operation": "complete",
+  "result": {"items": ["select"]}
+}

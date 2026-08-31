@@ -170,3 +170,31 @@ class ExecutionResource:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
         }
+
+
+@dataclass
+class PluginWorkerResource:
+    plugin_worker_id: str
+    runtime_id: str
+    plugin_id: str
+    plugin_version: str
+    family_id: str
+    client_id: str
+    execution_id: str
+    capabilities: tuple[str, ...]
+    pid: int | None = None
+    started_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plugin_worker_id": self.plugin_worker_id,
+            "runtime_id": self.runtime_id,
+            "plugin_id": self.plugin_id,
+            "plugin_version": self.plugin_version,
+            "family_id": self.family_id,
+            "client_id": self.client_id,
+            "execution_id": self.execution_id,
+            "capabilities": list(self.capabilities),
+            "pid": self.pid,
+            "started_at": self.started_at,
+        }

@@ -8,7 +8,10 @@ from jusi.application.ports import (
     KernelOutput,
     PluginCatalogDiscoveryError,
     PluginCatalogDiscoveryResult,
+    PluginWorkerError,
+    PluginWorkerSpec,
 )
+from jusi.application.plugin_workers import PluginWorkerManager
 from jusi.application.supervisor import Supervisor, SupervisorError
 from jusi.domain.models import ProcessDiagnostics
 from jusi.protocol import validate_event
@@ -71,9 +74,10 @@ class SequenceFactory(FakeFactory):
 
 
 class FakeDiscovery:
-    def __init__(self, *, fail_on_call: int | None = None) -> None:
+    def __init__(self, *, fail_on_call: int | None = None, plugins: list[dict] | None = None) -> None:
         self.calls: list[str] = []
         self.fail_on_call = fail_on_call
+        self.plugins = plugins or []
 
     def discover(self, *, discovery_id: str, timeout: float) -> PluginCatalogDiscoveryResult:
         assert timeout > 0
@@ -91,7 +95,7 @@ class FakeDiscovery:
                 "protocol_version": 1,
                 "catalog_version": 1,
                 "discovery_id": discovery_id,
-                "plugins": [],
+                "plugins": self.plugins,
             },
             process=ProcessDiagnostics(pid=9000 + len(self.calls), exit_code=0),
         )
@@ -99,6 +103,53 @@ class FakeDiscovery:
 
 def make_supervisor(factory: FakeFactory, discovery: FakeDiscovery | None = None) -> Supervisor:
     return Supervisor(factory, discovery or FakeDiscovery())
+
+
+class FakePluginWorkerHandle:
+    pid = 8765
+
+    def __init__(self, stop_error: PluginWorkerError | None = None) -> None:
+        self.stop_error = stop_error
+        self.stop_count = 0
+
+    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float) -> dict:
+        return {"operation": operation, "payload": payload}
+
+    def stop(self, *, trace_id: str, timeout: float) -> str:
+        self.stop_count += 1
+        if self.stop_error is not None:
+            raise self.stop_error
+        return "stopped"
+
+
+class FakePluginWorkerFactory:
+    def __init__(self, stop_error: PluginWorkerError | None = None) -> None:
+        self.stop_error = stop_error
+        self.specs: list[PluginWorkerSpec] = []
+        self.handles: list[FakePluginWorkerHandle] = []
+
+    def start(self, spec: PluginWorkerSpec, *, timeout: float) -> FakePluginWorkerHandle:
+        self.specs.append(spec)
+        handle = FakePluginWorkerHandle(self.stop_error)
+        self.handles.append(handle)
+        return handle
+
+
+def plugin_entry() -> dict:
+    return {
+        "plugin_id": "exact_sql",
+        "plugin_version": "1.0.0",
+        "distribution": "jusi-exact-sql",
+        "families": [{
+            "family_id": "sql",
+            "magic_name": "sql",
+            "capabilities": ["execute", "complete"],
+        }],
+        "kernel_extensions": [],
+        "worker_entry_point": "fixture.worker:create_worker",
+        "media_types": ["text/plain"],
+        "interaction": "request_response",
+    }
 
 
 def test_walking_skeleton_event_order_and_idempotent_stop() -> None:
@@ -160,6 +211,95 @@ def test_health_is_an_authoritative_snapshot_with_replay_window() -> None:
     assert current["earliest_event_sequence"] == 1
     assert current["event_sequence"] == 4
     assert current["kernel"] == started["kernel"]
+
+
+def test_kernel_stop_cleans_runtime_owned_plugin_workers() -> None:
+    kernel = FakeKernel()
+    worker_factory = FakePluginWorkerFactory()
+    workers = PluginWorkerManager(worker_factory)
+    supervisor = Supervisor(FakeFactory(kernel), FakeDiscovery(plugins=[plugin_entry()]), workers)
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    worker = workers.start(
+        runtime_id=started["runtime"]["runtime_id"],
+        plugin_id="exact_sql",
+        family_id="sql",
+        client_id="client_one",
+        execution_id="execution_one",
+        timeout=2,
+    )
+
+    stopped = supervisor.stop_kernel(
+        kernel_id=started["kernel"]["kernel_id"], trace_id="trace_stop", timeout=2,
+    )
+
+    assert stopped["kernel"]["state"] == "off"
+    assert stopped["cleanup"]["plugin_workers"] == [
+        {"plugin_worker_id": worker.plugin_worker_id, "result": "stopped"},
+    ]
+    assert worker_factory.handles[0].stop_count == 1
+
+
+def test_full_restart_cleans_old_workers_before_publishing_fresh_runtime() -> None:
+    kernels = [FakeKernel(), FakeKernel()]
+    worker_factory = FakePluginWorkerFactory()
+    workers = PluginWorkerManager(worker_factory)
+    supervisor = Supervisor(SequenceFactory(kernels), FakeDiscovery(plugins=[plugin_entry()]), workers)
+    started = supervisor.start_kernel(notebook_id="nb_old", kernel_name="python3", trace_id="trace_start")
+    old_worker = workers.start(
+        runtime_id=started["runtime"]["runtime_id"], plugin_id="exact_sql", family_id="sql",
+        client_id="client_old", execution_id="execution_old", timeout=2,
+    )
+
+    restarted = supervisor.restart_notebook(
+        runtime_id=started["runtime"]["runtime_id"],
+        kernel_id=started["kernel"]["kernel_id"],
+        notebook_id="nb_old",
+        next_notebook_id="nb_new",
+        kernel_name="python3",
+        trace_id="trace_restart",
+        timeout=2,
+    )
+    new_worker = workers.start(
+        runtime_id=restarted["runtime"]["runtime_id"], plugin_id="exact_sql", family_id="sql",
+        client_id="client_new", execution_id="execution_new", timeout=2,
+    )
+
+    assert restarted["runtime"]["runtime_id"] != started["runtime"]["runtime_id"]
+    assert restarted["cleanup"]["plugin_workers"] == [
+        {"plugin_worker_id": old_worker.plugin_worker_id, "result": "stopped"},
+    ]
+    assert new_worker.plugin_worker_id != old_worker.plugin_worker_id
+    assert worker_factory.handles[0].stop_count == 1
+
+
+def test_incomplete_worker_cleanup_prevents_restart_without_stopping_kernel() -> None:
+    kernel_factory = FakeFactory()
+    cleanup_error = PluginWorkerError(
+        "worker would not stop", reason="cleanup_incomplete", retryable=True,
+        diagnostics=ProcessDiagnostics(pid=8765),
+    )
+    worker_factory = FakePluginWorkerFactory(cleanup_error)
+    workers = PluginWorkerManager(worker_factory)
+    supervisor = Supervisor(kernel_factory, FakeDiscovery(plugins=[plugin_entry()]), workers)
+    started = supervisor.start_kernel(notebook_id="nb_old", kernel_name="python3", trace_id="trace_start")
+    worker = workers.start(
+        runtime_id=started["runtime"]["runtime_id"], plugin_id="exact_sql", family_id="sql",
+        client_id="client_old", execution_id="execution_old", timeout=2,
+    )
+
+    with pytest.raises(SupervisorError) as raised:
+        supervisor.restart_notebook(
+            runtime_id=started["runtime"]["runtime_id"], kernel_id=started["kernel"]["kernel_id"],
+            notebook_id="nb_old", next_notebook_id="nb_new", kernel_name="python3",
+            trace_id="trace_restart", timeout=2,
+        )
+
+    assert raised.value.failure.layer == "plugin_worker"
+    assert raised.value.failure.reason == "cleanup_incomplete"
+    assert raised.value.failure.resource.resource_id == worker.plugin_worker_id
+    assert raised.value.failure.details["teardown_completed"] is False
+    assert supervisor.health()["kernel"]["state"] == "on"
+    assert kernel_factory.start_count == 1
 
 
 def test_execution_error_is_local_and_kernel_remains_on() -> None:

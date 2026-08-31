@@ -32,3 +32,11 @@ The initial workflow fixture is `fixtures/v1/scenarios/walking-skeleton.json`; `
 from ADR 0010. The valid fixture deliberately contains two exact providers
 claiming the same `sql` family; provider coexistence is not itself a conflict.
 Duplicate exact `plugin_id` values are rejected by both Python and Lua.
+
+## Plugin Worker Control
+
+`schema/v1/plugin-worker.schema.json` defines the generic private control
+envelope from ADR 0011. It is not an HTTP/SSE or terminal transport. Python and
+Lua consume the same identity, operation, result, and failure fixtures even
+though only the Python supervisor/worker boundary currently carries these
+messages. Plugin-owned payload and result objects remain opaque to core.

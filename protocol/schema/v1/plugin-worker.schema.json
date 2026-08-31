@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/plugin-worker.schema.json",
+  "title": "Jusi Plugin Worker Control v1",
+  "oneOf": [
+    {"$ref": "#/$defs/ready"},
+    {"$ref": "#/$defs/request"},
+    {"$ref": "#/$defs/result"},
+    {"$ref": "#/$defs/failure"},
+    {"$ref": "#/$defs/shutdown"},
+    {"$ref": "#/$defs/stopped"}
+  ],
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "plugin_worker_id"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"type": "string"},
+        "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128}
+      }
+    },
+    "ready": {
+      "allOf": [
+        {"$ref": "#/$defs/identity"},
+        {
+          "type": "object",
+          "required": ["protocol_version", "kind", "plugin_worker_id", "runtime_id", "plugin_id", "family_id", "client_id", "execution_id", "pid"],
+          "properties": {
+            "protocol_version": {"const": 1},
+            "kind": {"const": "worker.ready"},
+            "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "runtime_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "plugin_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "family_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "client_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "execution_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "pid": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "request": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "payload"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "worker.request"},
+        "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "operation": {"enum": ["execute", "followup", "complete", "editor_action"]},
+        "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"enum": ["worker.result", "worker.failure"]},
+        "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "operation": {"enum": ["execute", "followup", "complete", "editor_action"]}
+      }
+    },
+    "result": {
+      "allOf": [
+        {"$ref": "#/$defs/response"},
+        {
+          "type": "object",
+          "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "result"],
+          "properties": {
+            "protocol_version": {"const": 1},
+            "kind": {"const": "worker.result"},
+            "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "operation": {"enum": ["execute", "followup", "complete", "editor_action"]},
+            "result": {"type": "object"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "failure": {
+      "allOf": [
+        {"$ref": "#/$defs/response"},
+        {
+          "type": "object",
+          "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "failure"],
+          "properties": {
+            "protocol_version": {"const": 1},
+            "kind": {"const": "worker.failure"},
+            "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "operation": {"enum": ["execute", "followup", "complete", "editor_action"]},
+            "failure": {
+              "type": "object",
+              "required": ["reason", "message", "retryable"],
+              "properties": {
+                "reason": {"enum": ["invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error"]},
+                "message": {"type": "string", "minLength": 1, "maxLength": 1000},
+                "retryable": {"type": "boolean"},
+                "details": {"type": "object"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "shutdown": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "worker.shutdown"},
+        "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "trace_id": {"type": "string", "minLength": 3, "maxLength": 128}
+      },
+      "additionalProperties": false
+    },
+    "stopped": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "worker.stopped"},
+        "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "trace_id": {"type": "string", "minLength": 3, "maxLength": 128}
+      },
+      "additionalProperties": false
+    }
+  }
+}
