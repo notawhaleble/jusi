@@ -27,8 +27,9 @@ syntax/indent hints, and common capability semantics. It does not own kernel
 liveness, frontend windows, or terminal selection.
 
 An exact plugin owns its configuration validation, kernel magic adapter, worker
-entry point, provider protocol, credentials, and exact regression fixtures. It
-cannot widen its failure scope by assertion.
+entry point, provider protocol, credentials, backend presentation content, and
+exact regression fixtures. It cannot widen its failure scope by assertion or
+require plugin-specific frontend code.
 
 The frontend owns cell parsing, generic action execution, media rendering, and
 interactive surfaces. It never chooses an exact provider by parsing a header
@@ -102,8 +103,8 @@ filesystem or environment permissions.
 There is intentionally no HTTP or Neovim worker command yet. Kernel handoff now
 authoritatively identifies the exact plugin and family, and supervisor locking
 keeps worker I/O outside the authoritative-state lock. The remaining boundary
-is a generic operation-result envelope that carries media/presentation without
-letting ordinary results create an implicit client lifecycle.
+is a generic client-surface resource and transport; private worker results are
+not a frontend plugin API.
 
 ## Kernel Adapter And Handoff
 
@@ -123,6 +124,22 @@ are added only by core.
 Supervisor operations are serialized separately from authoritative state
 inspection. Worker startup, requests, and cleanup may occupy the operation
 lane, but never the short-lived state lock used by health and inspection.
+
+## Client Surfaces
+
+Durable backend-owned clients expose generic `terminal` or `web` surfaces.
+Terminal bytes and web content remain opaque to core and are interpreted by the
+native terminal emulator or browser. Surface identity, transport, geometry,
+input capabilities, and lifecycle are shared protocol facts.
+
+SQL/VisiData owns database state, datasets, application errors, and terminal
+content. Shell plugins own their shell/PTY behavior. Text plugins emit terminal
+bytes. Rich plugins own the content behind a web surface. The frontend only
+routes supported controls and manages native Neovim surfaces.
+
+Recoverable application errors stay in plugin presentation. Fatal factory,
+worker, channel, or required-surface loss uses the core failure envelope so it
+remains observable when plugin presentation is unavailable.
 
 ## Failure And Verification
 

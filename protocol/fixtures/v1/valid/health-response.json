@@ -22,5 +22,6 @@
       "discovery_id": "discovery_fixture_health_1",
       "plugins": []
     }
-  }
+  },
+  "clients": []
 }

@@ -1,0 +1,19 @@
+{
+  "protocol_version": 1,
+  "event_id": "evt_client_closed_1",
+  "supervisor_id": "sup_fixture",
+  "sequence": 10,
+  "occurred_at": "2026-09-01T08:01:00Z",
+  "trace_id": "trace_client_close",
+  "layer": "client",
+  "operation": "execute",
+  "kind": "client.closed",
+  "resource": {"kind": "client", "id": "cli_fixture"},
+  "payload": {
+    "client_id": "cli_fixture",
+    "plugin_worker_id": "pwrk_fixture",
+    "reason": "fatal_failure",
+    "failure_id": "fail_fixture",
+    "closed_at": "2026-09-01T08:01:00Z"
+  }
+}

@@ -89,6 +89,7 @@ class PluginWorkerManager:
                 client_id=client_id,
                 execution_id=execution_id,
                 capabilities=tuple(family["capabilities"]),
+                interaction=plugin["interaction"],
                 pid=handle.pid,
             )
             self._workers[plugin_worker_id] = _OwnedWorker(resource, handle)

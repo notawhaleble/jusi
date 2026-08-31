@@ -29,6 +29,7 @@ Owns:
 - localized parsing and reconciliation
 - extmark anchoring
 - mappings, commands, rendering, terminal surfaces, focus, and layout
+- generic terminal/web surface attachment, input, and geometry reporting
 - frontend transport connection and event-cursor persistence
 
 Does not own:
@@ -44,6 +45,7 @@ A family such as SQL, shell, or VisiData owns:
 
 - family configuration schema and discovery
 - shared presentation metadata
+- backend interpretation of follow-up/completion controls
 - handoff validation beyond core envelope validation
 - family-level completion/follow-up semantics
 - common worker adapter where applicable
@@ -56,13 +58,17 @@ An exact provider/plugin owns:
 - provider-specific kernel integration
 - concrete runtime behavior
 - provider-specific config and credentials
-- exact presentation overrides
+- backend-produced terminal bytes or web content
+- owned application sessions, transactions, datasets, and terminal/web runtimes
 - minimized provider regression fixtures
 - exact worker and kernel-adapter entry points, imported only in isolated worker/discovery or kernel processes
 
 ## Shared Protocol
 
-Owns cross-language shapes only. It must not encode Neovim buffer identifiers, Python object topology, framework request objects, or plugin-specific opaque payload internals beyond their declared envelope.
+Owns cross-language resource, surface, transport, control, action, and failure
+shapes only. It must not encode Neovim buffer identifiers, Python object
+topology, framework request objects, SQL datasets, shell state, web application
+models, or plugin-specific payload internals.
 
 ## Verification Matrix
 

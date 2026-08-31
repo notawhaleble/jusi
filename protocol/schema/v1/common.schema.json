@@ -24,6 +24,7 @@
         "service_start",
         "start_kernel",
         "stop_kernel",
+        "close_client",
         "restart_notebook",
         "execute",
         "interrupt",

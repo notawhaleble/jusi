@@ -2,6 +2,28 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://jusi.dev/protocol/v1/responses.schema.json",
   "title": "Jusi Protocol v1 HTTP Responses",
+  "$defs": {
+    "client": {
+      "type": "object",
+      "required": ["client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "capabilities", "interaction", "created_at"],
+      "properties": {
+        "client_id": {"type": "string", "minLength": 3},
+        "runtime_id": {"type": "string", "minLength": 3},
+        "kernel_id": {"type": "string", "minLength": 3},
+        "notebook_id": {"type": "string", "minLength": 1},
+        "cell_id": {"type": "string", "minLength": 1},
+        "execution_id": {"type": "string", "minLength": 3},
+        "plugin_worker_id": {"type": "string", "minLength": 3},
+        "plugin_id": {"type": "string", "minLength": 3},
+        "plugin_version": {"type": "string", "minLength": 1},
+        "family_id": {"type": "string", "minLength": 1},
+        "capabilities": {"type": "array", "uniqueItems": true, "items": {"enum": ["execute", "followup", "complete", "interrupt", "editor_actions"]}},
+        "interaction": {"enum": ["noninteractive", "request_response", "terminal_interactive"]},
+        "created_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    }
+  },
   "allOf": [
     {
       "if": {
@@ -9,7 +31,7 @@
         "properties": {"status": {"const": "ready"}}
       },
       "then": {
-        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel", "runtime"]
+        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel", "runtime", "clients"]
       }
     }
   ],
@@ -33,6 +55,7 @@
           "required": ["runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog"],
           "additionalProperties": false
         },
+        "clients": {"type": "array", "items": {"$ref": "#/$defs/client"}},
         "execution": {"type": "object"},
         "cleanup": {"type": "object"},
         "status": {"type": "string"},

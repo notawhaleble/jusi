@@ -16,6 +16,10 @@ local restart_scenario = read_json("protocol/fixtures/v1/scenarios/restart-noteb
 local restart_ok, restart_error = protocol.validate_command(restart_scenario.command, "restart_notebook")
 assert(restart_ok, restart_error)
 
+local close_client = read_json("protocol/fixtures/v1/valid/close-client.json")
+local close_ok, close_error = protocol.validate_command(close_client, "close_client")
+assert(close_ok, close_error)
+
 local invalid = read_json("protocol/fixtures/v1/invalid/command-missing-trace-id.json")
 local ok = protocol.validate_command(invalid, invalid.kind)
 assert(not ok, "invalid fixture must be rejected")
@@ -36,6 +40,9 @@ end
 local malformed_output = read_json("protocol/fixtures/v1/invalid/event-output-missing-data.json")
 local malformed_output_ok = protocol.validate_event(malformed_output)
 assert(not malformed_output_ok, "malformed output payload must be rejected")
+local invalid_client = read_json("protocol/fixtures/v1/invalid/client-created-missing-worker.json")
+local invalid_client_ok = protocol.validate_event(invalid_client)
+assert(not invalid_client_ok, "client identity must include its exact worker")
 
 local health = read_json("protocol/fixtures/v1/valid/health-response.json")
 local health_ok, health_error = protocol.validate_health_response(health)

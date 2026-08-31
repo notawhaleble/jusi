@@ -71,6 +71,10 @@ function Controller:_accept_health_snapshot(response)
   if resynchronized then
     self.event_sequence = response.event_sequence
     self.executions = {}
+    self.clients = {}
+    for _, client in ipairs(response.clients) do
+      self.clients[client.client_id] = client
+    end
     if kernel then
       self.kernel_id = kernel.kernel_id
       self.kernel_state = kernel.state
@@ -268,9 +272,21 @@ function Controller:_on_event(event)
     local execution = self.executions[event.payload.execution_id]
     if execution then
       execution.outcome = event.payload.outcome
+      execution.client_id = event.payload.client_id
       if self.on_execution_completed then
         self.on_execution_completed(execution.cell_id, execution, event)
       end
+    end
+  elseif event.kind == "client.created" then
+    self.clients[event.payload.client_id] = event.payload
+    if self.on_client_created then
+      self.on_client_created(event.payload, event)
+    end
+  elseif event.kind == "client.closed" then
+    local client = self.clients[event.payload.client_id]
+    self.clients[event.payload.client_id] = nil
+    if self.on_client_closed then
+      self.on_client_closed(client, event.payload, event)
     end
   elseif event.kind == "failure.occurred" and self.on_failure then
     self.on_failure(event.payload)
@@ -332,12 +348,14 @@ function Controller:restart_notebook(next_notebook_id, callback)
       self.kernel_id = response.kernel.kernel_id
       self.kernel_state = response.kernel.state
       self.executions = {}
+      self.clients = {}
     elseif failure and failure.details and failure.details.teardown_completed then
       self.runtime_id = nil
       self.discovery_id = nil
       self.plugin_catalog = nil
       self.kernel_state = "off"
       self.executions = {}
+      self.clients = {}
     end
     if callback then
       callback(response, failure)
@@ -417,6 +435,29 @@ function Controller:stop_kernel(callback)
   end)
 end
 
+function Controller:close_client(client_id, callback)
+  if not self.clients[client_id] then
+    if callback then
+      callback(nil, {
+        trace_id = "",
+        layer = "frontend_model",
+        operation = "close_client",
+        reason = "not_found",
+        message = "no authoritative client resource is selected",
+        retryable = false,
+        scope = "request",
+        resource = { kind = "client", id = client_id },
+      })
+    end
+    return nil
+  end
+  local command = self:_command("close_client", {
+    client_id = client_id,
+    idempotency_key = new_id("close"),
+  })
+  return self:_request("DELETE", "/v1/clients/" .. client_id, command, callback)
+end
+
 function Controller:close()
   self._connect_generation = self._connect_generation + 1
   if self.inspect_request and self.transport_state == "connecting" then
@@ -447,10 +488,13 @@ function M.new(options)
     event_sequence = opts.event_sequence or 0,
     transport_state = "disconnected",
     executions = {},
+    clients = {},
     on_event = opts.on_event,
     on_execution_started = opts.on_execution_started,
     on_execution_completed = opts.on_execution_completed,
     on_output = opts.on_output,
+    on_client_created = opts.on_client_created,
+    on_client_closed = opts.on_client_closed,
     on_failure = opts.on_failure,
     on_resynchronized = opts.on_resynchronized,
     last_transport_failure = nil,

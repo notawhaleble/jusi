@@ -12,15 +12,18 @@ from jusi.application.ports import (
     KernelHandle,
     PluginCatalogDiscovery,
     PluginCatalogDiscoveryError,
+    PluginWorkerError,
 )
-from jusi.application.plugin_workers import PluginWorkerManager
+from jusi.application.plugin_workers import PluginWorkerManager, PluginWorkerSelectionError
 from jusi.domain.models import (
+    ClientResource,
     ExecutionResource,
     Failure,
     KernelResource,
     NotebookRuntime,
     Operation,
     ResourceRef,
+    utc_now,
 )
 
 
@@ -54,6 +57,8 @@ class Supervisor:
         self._known_kernel_ids: set[str] = set()
         self._current_runtime: NotebookRuntime | None = None
         self._known_runtime_ids: set[str] = set()
+        self._clients: dict[str, ClientResource] = {}
+        self._known_client_ids: set[str] = set()
         self.events.append(
             trace_id=new_id("trace"),
             layer="service",
@@ -72,6 +77,7 @@ class Supervisor:
                 "event_sequence": self.events.latest_sequence,
                 "kernel": self._current_kernel.to_dict() if self._current_kernel is not None else None,
                 "runtime": self._current_runtime.to_dict() if self._current_runtime is not None else None,
+                "clients": [client.to_dict() for client in self._clients.values()],
             }
 
     def record_failure(self, failure: Failure) -> None:
@@ -121,6 +127,9 @@ class Supervisor:
             if self._current_runtime is not None and self._plugin_workers is not None:
                 worker_cleanup = self._plugin_workers.teardown_runtime(
                     self._current_runtime.runtime_id, trace_id=trace_id, timeout=timeout,
+                )
+                self._retire_cleaned_clients(
+                    worker_cleanup, trace_id=trace_id, operation="start_kernel",
                 )
                 failed_workers = [item for item in worker_cleanup if item["result"] == "failed"]
                 if failed_workers:
@@ -253,7 +262,6 @@ class Supervisor:
                 kernel_id=kernel_id,
                 notebook_id=notebook_id,
                 cell_id=cell_id,
-                client_id=new_id("cli"),
             )
             execution_ref = ResourceRef("execution", execution.execution_id)
             self.events.append(
@@ -301,6 +309,17 @@ class Supervisor:
                         # observed. Cleanup diagnostics remain attached to the
                         # originating kernel failure for this initial slice.
                         pass
+                    if self._current_runtime is not None and self._plugin_workers is not None:
+                        worker_cleanup = self._plugin_workers.teardown_runtime(
+                            self._current_runtime.runtime_id,
+                            trace_id=trace_id,
+                            timeout=1.0,
+                        )
+                        self._retire_cleaned_clients(
+                            worker_cleanup,
+                            trace_id=trace_id,
+                            operation="execute",
+                        )
                     with self._state_lock:
                         kernel.state = "off"
                         self._kernel_handle = None
@@ -358,6 +377,153 @@ class Supervisor:
                     self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
                     raise SupervisorError(409, failure)
 
+                if result.outcome != "succeeded":
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="protocol",
+                        operation="execute",
+                        reason="protocol_violation",
+                        message="Kernel emitted a plugin handoff for a failed execution",
+                        retryable=False,
+                        scope="execution",
+                        resource=execution_ref,
+                        details=execution_details,
+                    )
+                    self._emit_failure(failure)
+                    execution.complete("failed")
+                    self.events.append(
+                        trace_id=trace_id,
+                        layer="execution",
+                        operation="execute",
+                        kind="execution.completed",
+                        resource=execution_ref,
+                        payload=execution.to_dict(),
+                    )
+                    self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                    raise SupervisorError(502, failure)
+
+                if self._plugin_workers is None:
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="supervisor",
+                        operation="execute",
+                        reason="unsupported",
+                        message="Exact plugin handoff requires a configured plugin-worker supervisor",
+                        retryable=False,
+                        scope="execution",
+                        resource=execution_ref,
+                        details=execution_details,
+                    )
+                    self._emit_failure(failure)
+                    execution.complete("failed")
+                    self.events.append(
+                        trace_id=trace_id,
+                        layer="execution",
+                        operation="execute",
+                        kind="execution.completed",
+                        resource=execution_ref,
+                        payload=execution.to_dict(),
+                    )
+                    self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                    raise SupervisorError(503, failure)
+
+                client_id = new_id("cli")
+                try:
+                    worker = self._plugin_workers.start(
+                        runtime_id=runtime.runtime_id,
+                        plugin_id=handoff.plugin_id,
+                        family_id=handoff.family_id,
+                        client_id=client_id,
+                        execution_id=execution.execution_id,
+                        timeout=timeout,
+                    )
+                except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+                    failure = self._plugin_worker_failure(
+                        exc,
+                        trace_id=trace_id,
+                        operation="execute",
+                        execution=execution,
+                        client_id=client_id,
+                        worker_id="",
+                        details=execution_details,
+                    )
+                    self._emit_failure(failure)
+                    execution.complete("failed")
+                    self.events.append(
+                        trace_id=trace_id,
+                        layer="execution",
+                        operation="execute",
+                        kind="execution.completed",
+                        resource=execution_ref,
+                        payload=execution.to_dict(),
+                    )
+                    self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                    raise SupervisorError(503, failure) from exc
+
+                execution.client_id = client_id
+                client = ClientResource(
+                    client_id=client_id,
+                    runtime_id=runtime.runtime_id,
+                    kernel_id=kernel_id,
+                    notebook_id=notebook_id,
+                    cell_id=cell_id,
+                    execution_id=execution.execution_id,
+                    plugin_worker_id=worker.plugin_worker_id,
+                    plugin_id=worker.plugin_id,
+                    plugin_version=worker.plugin_version,
+                    family_id=worker.family_id,
+                    capabilities=worker.capabilities,
+                    interaction=worker.interaction,
+                )
+                with self._state_lock:
+                    self._clients[client_id] = client
+                    self._known_client_ids.add(client_id)
+                self.events.append(
+                    trace_id=trace_id,
+                    layer="client",
+                    operation="execute",
+                    kind="client.created",
+                    resource=ResourceRef("client", client_id),
+                    payload=client.to_dict(),
+                )
+                try:
+                    self._plugin_workers.request(
+                        worker.plugin_worker_id,
+                        "execute",
+                        handoff.payload,
+                        trace_id=trace_id,
+                        timeout=timeout,
+                    )
+                except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+                    failure = self._plugin_worker_failure(
+                        exc,
+                        trace_id=trace_id,
+                        operation="execute",
+                        execution=execution,
+                        client_id=client_id,
+                        worker_id=worker.plugin_worker_id,
+                        details=execution_details,
+                    )
+                    self._emit_failure(failure)
+                    self._retire_client(
+                        client_id,
+                        trace_id=trace_id,
+                        operation="execute",
+                        reason="fatal_failure",
+                        failure_id=failure.failure_id,
+                    )
+                    execution.complete("failed")
+                    self.events.append(
+                        trace_id=trace_id,
+                        layer="execution",
+                        operation="execute",
+                        kind="execution.completed",
+                        resource=execution_ref,
+                        payload=execution.to_dict(),
+                    )
+                    self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                    raise SupervisorError(503, failure) from exc
+
             for output in result.outputs:
                 self.events.append(
                     trace_id=trace_id,
@@ -412,6 +578,84 @@ class Supervisor:
                 response["failure"] = failure.to_dict()
             return response
 
+    def close_client(self, *, client_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
+        with self._operation_lock:
+            client_ref = ResourceRef("client", client_id)
+            operation = self._begin_operation("close_client", trace_id, resource=client_ref)
+            with self._state_lock:
+                client = self._clients.get(client_id)
+                known = client_id in self._known_client_ids
+            if client is None:
+                if not known:
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="supervisor",
+                        operation="close_client",
+                        reason="not_found",
+                        message=f"Unknown client {client_id}",
+                        retryable=False,
+                        scope="request",
+                        resource=client_ref,
+                    )
+                    self._emit_failure(failure)
+                    self._complete_operation(operation, "failed", resource=client_ref, failure=failure)
+                    raise SupervisorError(404, failure)
+                cleanup = {"resource": client_ref.to_dict(), "result": "already_absent"}
+                self._complete_operation(operation, "succeeded", resource=client_ref, cleanup=cleanup)
+                return {"operation": operation.to_dict(), "client": {"client_id": client_id}, "cleanup": cleanup}
+            if self._plugin_workers is None:
+                failure = self._failure(
+                    trace_id=trace_id,
+                    layer="supervisor",
+                    operation="close_client",
+                    reason="internal_error",
+                    message="Client has no configured plugin-worker supervisor",
+                    retryable=False,
+                    scope="client",
+                    resource=client_ref,
+                )
+                self._emit_failure(failure)
+                self._complete_operation(operation, "failed", resource=client_ref, failure=failure)
+                raise SupervisorError(503, failure)
+            try:
+                worker_cleanup = self._plugin_workers.stop(
+                    client.plugin_worker_id,
+                    trace_id=trace_id,
+                    timeout=timeout,
+                )
+            except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+                diagnostics = exc.diagnostics if isinstance(exc, PluginWorkerError) else None
+                retryable = exc.retryable if isinstance(exc, PluginWorkerError) else False
+                details = exc.details if isinstance(exc, PluginWorkerError) else {}
+                failure = self._failure(
+                    trace_id=trace_id,
+                    layer="plugin_worker",
+                    operation="close_client",
+                    reason=exc.reason,
+                    message=str(exc),
+                    retryable=retryable,
+                    scope="client",
+                    resource=client_ref,
+                    process=diagnostics,
+                    details={**details, "plugin_worker_id": client.plugin_worker_id},
+                )
+                self._emit_failure(failure)
+                self._complete_operation(operation, "failed", resource=client_ref, failure=failure)
+                raise SupervisorError(503, failure) from exc
+            self._retire_client(
+                client_id,
+                trace_id=trace_id,
+                operation="close_client",
+                reason="explicit_close",
+            )
+            cleanup = {
+                "resource": client_ref.to_dict(),
+                "result": worker_cleanup["result"],
+                "plugin_worker_id": client.plugin_worker_id,
+            }
+            self._complete_operation(operation, "succeeded", resource=client_ref, cleanup=cleanup)
+            return {"operation": operation.to_dict(), "client": {"client_id": client_id}, "cleanup": cleanup}
+
     def stop_kernel(self, *, kernel_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
         with self._operation_lock:
             operation = self._begin_operation("stop_kernel", trace_id, resource=ResourceRef("kernel", kernel_id))
@@ -441,6 +685,9 @@ class Supervisor:
             if self._current_runtime is not None and self._plugin_workers is not None:
                 worker_cleanup = self._plugin_workers.teardown_runtime(
                     self._current_runtime.runtime_id, trace_id=trace_id, timeout=timeout,
+                )
+                self._retire_cleaned_clients(
+                    worker_cleanup, trace_id=trace_id, operation="stop_kernel",
                 )
             try:
                 handle.stop(timeout=timeout)
@@ -549,6 +796,9 @@ class Supervisor:
             if self._plugin_workers is not None:
                 worker_cleanup = self._plugin_workers.teardown_runtime(
                     runtime_id, trace_id=trace_id, timeout=timeout,
+                )
+                self._retire_cleaned_clients(
+                    worker_cleanup, trace_id=trace_id, operation="restart_notebook",
                 )
                 failed_workers = [item for item in worker_cleanup if item["result"] == "failed"]
                 if failed_workers:
@@ -886,6 +1136,95 @@ class Supervisor:
             and family["magic_name"] == handoff.magic_name
             for family in plugin["families"]
         )
+
+    def _plugin_worker_failure(
+        self,
+        exc: PluginWorkerSelectionError | PluginWorkerError,
+        *,
+        trace_id: str,
+        operation: str,
+        execution: ExecutionResource,
+        client_id: str,
+        worker_id: str,
+        details: dict[str, Any],
+    ) -> Failure:
+        diagnostics = exc.diagnostics if isinstance(exc, PluginWorkerError) else None
+        retryable = exc.retryable if isinstance(exc, PluginWorkerError) else False
+        extra = exc.details if isinstance(exc, PluginWorkerError) else {}
+        resource = ResourceRef("plugin_worker", worker_id) if worker_id else ResourceRef("client", client_id)
+        return self._failure(
+            trace_id=trace_id,
+            layer="plugin_worker",
+            operation=operation,
+            reason=exc.reason,
+            message=str(exc),
+            retryable=retryable,
+            scope="client",
+            resource=resource,
+            process=diagnostics,
+            details={
+                **details,
+                **extra,
+                "client_id": client_id,
+                "execution_id": execution.execution_id,
+            },
+        )
+
+    def _retire_client(
+        self,
+        client_id: str,
+        *,
+        trace_id: str,
+        operation: str,
+        reason: str,
+        failure_id: str = "",
+    ) -> None:
+        with self._state_lock:
+            client = self._clients.pop(client_id, None)
+        if client is None:
+            return
+        payload: dict[str, Any] = {
+            "client_id": client.client_id,
+            "plugin_worker_id": client.plugin_worker_id,
+            "reason": reason,
+            "closed_at": utc_now(),
+        }
+        if failure_id:
+            payload["failure_id"] = failure_id
+        self.events.append(
+            trace_id=trace_id,
+            layer="client",
+            operation=operation,
+            kind="client.closed",
+            resource=ResourceRef("client", client_id),
+            payload=payload,
+        )
+
+    def _retire_cleaned_clients(
+        self,
+        cleanup: list[dict[str, Any]],
+        *,
+        trace_id: str,
+        operation: str,
+    ) -> None:
+        retired_worker_ids = {
+            item["plugin_worker_id"]
+            for item in cleanup
+            if item["result"] in {"stopped", "already_absent"}
+        }
+        with self._state_lock:
+            client_ids = [
+                client.client_id
+                for client in self._clients.values()
+                if client.plugin_worker_id in retired_worker_ids
+            ]
+        for client_id in client_ids:
+            self._retire_client(
+                client_id,
+                trace_id=trace_id,
+                operation=operation,
+                reason="runtime_cleanup",
+            )
 
     def _emit_failure(self, failure: Failure) -> None:
         self.events.append(

@@ -51,3 +51,16 @@ envelope from ADR 0011. It is not an HTTP/SSE or terminal transport. Python and
 Lua consume the same identity, operation, result, and failure fixtures even
 though only the Python supervisor/worker boundary currently carries these
 messages. Plugin-owned payload and result objects remain opaque to core.
+They are private backend control data and are never forwarded as an implicit
+frontend plugin API. Frontend-visible plugin behavior uses versioned generic
+client/surface, control, action, and failure contracts from ADR 0015.
+
+## Plugin Client Lifecycle
+
+A successful exact-plugin handoff creates a durable `client` resource and an
+exact target-side worker. `client.created` announces that identity; ordinary
+plugin application errors remain plugin-rendered, while fatal worker/control
+failures use `failure.occurred` and retire only that client. The explicit,
+idempotent `close_client` command stops the exact worker and emits
+`client.closed`. Kernel stop and full notebook restart retire remaining clients
+as runtime cleanup.

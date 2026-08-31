@@ -1,0 +1,27 @@
+{
+  "protocol_version": 1,
+  "event_id": "evt_client_created_1",
+  "supervisor_id": "sup_fixture",
+  "sequence": 9,
+  "occurred_at": "2026-09-01T08:00:00Z",
+  "trace_id": "trace_client_create",
+  "layer": "client",
+  "operation": "execute",
+  "kind": "client.created",
+  "resource": {"kind": "client", "id": "cli_fixture"},
+  "payload": {
+    "client_id": "cli_fixture",
+    "runtime_id": "run_fixture",
+    "kernel_id": "krn_fixture",
+    "notebook_id": "nb_fixture",
+    "cell_id": "cell_fixture",
+    "execution_id": "exe_fixture",
+    "plugin_worker_id": "pwrk_fixture",
+    "plugin_id": "sqlite_provider",
+    "plugin_version": "1.0.0",
+    "family_id": "sql",
+    "capabilities": ["execute", "followup", "complete"],
+    "interaction": "terminal_interactive",
+    "created_at": "2026-09-01T08:00:00Z"
+  }
+}

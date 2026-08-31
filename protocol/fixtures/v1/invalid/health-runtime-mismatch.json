@@ -22,5 +22,6 @@
       "discovery_id": "discovery_fixture_mismatch_1",
       "plugins": []
     }
-  }
+  },
+  "clients": []
 }

@@ -6,6 +6,7 @@
     {"$ref": "#/$defs/start_kernel"},
     {"$ref": "#/$defs/execute"},
     {"$ref": "#/$defs/stop_kernel"},
+    {"$ref": "#/$defs/close_client"},
     {"$ref": "#/$defs/restart_notebook"}
   ],
   "$defs": {
@@ -61,6 +62,20 @@
           "properties": {
             "kind": {"const": "stop_kernel"},
             "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128}
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "close_client": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {
+          "type": "object",
+          "required": ["kind", "client_id"],
+          "properties": {
+            "kind": {"const": "close_client"},
+            "client_id": {"type": "string", "minLength": 3, "maxLength": 128}
           },
           "unevaluatedProperties": false
         }

@@ -56,6 +56,20 @@
       "operation": "execute", "kind": "failure.occurred",
       "resource": {"kind": "execution", "id": "exe_fixture"},
       "payload": {"failure_id": "fail_fixture", "trace_id": "trace_execute", "layer": "execution", "operation": "execute", "reason": "execution_error", "message": "bad value", "retryable": false, "scope": "execution", "resource": {"kind": "execution", "id": "exe_fixture"}, "occurred_at": "2026-08-31T12:00:07Z"}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_009", "supervisor_id": "sup_fixture", "sequence": 9,
+      "occurred_at": "2026-09-01T08:00:00Z", "trace_id": "trace_client", "layer": "client",
+      "operation": "execute", "kind": "client.created",
+      "resource": {"kind": "client", "id": "cli_plugin"},
+      "payload": {"client_id": "cli_plugin", "runtime_id": "run_fixture", "kernel_id": "krn_fixture", "notebook_id": "nb_fixture", "cell_id": "cell_plugin", "execution_id": "exe_plugin", "plugin_worker_id": "pwrk_plugin", "plugin_id": "sqlite_provider", "plugin_version": "1.0.0", "family_id": "sql", "capabilities": ["execute", "followup"], "interaction": "terminal_interactive", "created_at": "2026-09-01T08:00:00Z"}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_010", "supervisor_id": "sup_fixture", "sequence": 10,
+      "occurred_at": "2026-09-01T08:01:00Z", "trace_id": "trace_client", "layer": "client",
+      "operation": "execute", "kind": "client.closed",
+      "resource": {"kind": "client", "id": "cli_plugin"},
+      "payload": {"client_id": "cli_plugin", "plugin_worker_id": "pwrk_plugin", "reason": "runtime_cleanup", "closed_at": "2026-09-01T08:01:00Z"}
     }
   ]
 }

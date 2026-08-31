@@ -3,6 +3,7 @@ local notebook = require("jusi.notebook")
 local sse = require("jusi.transport.sse")
 
 local M = {}
+local FakeTransport
 
 local function equal(actual, expected, message)
   if not vim.deep_equal(actual, expected) then
@@ -19,6 +20,9 @@ local function event(sequence, kind, payload)
   elseif kind == "kernel.state_changed" then
     resource_kind = "kernel"
     resource_id = payload.kernel_id
+  elseif kind == "client.created" or kind == "client.closed" then
+    resource_kind = "client"
+    resource_id = payload.client_id
   end
   return {
     protocol_version = 1,
@@ -27,7 +31,7 @@ local function event(sequence, kind, payload)
     sequence = sequence,
     occurred_at = "2026-08-31T12:00:00Z",
     trace_id = "trace_test",
-    layer = kind == "kernel.state_changed" and "kernel" or "execution",
+    layer = kind == "kernel.state_changed" and "kernel" or ((kind == "client.created" or kind == "client.closed") and "client" or "execution"),
     operation = kind == "service.ready" and "service_start" or (kind == "kernel.state_changed" and "start_kernel" or "execute"),
     kind = kind,
     resource = { kind = resource_kind, id = resource_id },
@@ -35,7 +39,58 @@ local function event(sequence, kind, payload)
   }
 end
 
-local FakeTransport = {}
+local function test_controller_tracks_durable_client_lifecycle()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "╭──", "%%sql", "╰──" })
+  local model = notebook.attach(buf)
+  local transport = FakeTransport.new()
+  local created
+  local closed
+  local controller = controller_module.new({
+    notebook = model,
+    transport = transport,
+    on_client_created = function(client) created = client end,
+    on_client_closed = function(client, close) closed = { client = client, close = close } end,
+  })
+  controller:connect()
+  local client = {
+    client_id = "cli_plugin",
+    runtime_id = "run_plugin",
+    kernel_id = "krn_plugin",
+    notebook_id = model.notebook_id,
+    cell_id = model:ordered_cells()[1].id,
+    execution_id = "exe_plugin",
+    plugin_worker_id = "pwrk_plugin",
+    plugin_id = "sqlite_provider",
+    plugin_version = "1.0.0",
+    family_id = "sql",
+    capabilities = { "execute", "followup" },
+    interaction = "terminal_interactive",
+    created_at = "2026-09-01T08:00:00Z",
+  }
+  transport.event_callbacks.on_event(event(1, "client.created", client))
+  equal(controller.clients.cli_plugin.plugin_id, "sqlite_provider")
+  equal(created.client_id, "cli_plugin")
+  controller:close_client("cli_plugin")
+  equal(transport.requests[2].method, "DELETE")
+  equal(transport.requests[2].path, "/v1/clients/cli_plugin")
+  equal(transport.requests[2].payload.kind, "close_client")
+  equal(transport.requests[2].payload.client_id, "cli_plugin")
+  transport.event_callbacks.on_event(event(2, "client.closed", {
+    client_id = "cli_plugin",
+    plugin_worker_id = "pwrk_plugin",
+    reason = "fatal_failure",
+    failure_id = "fail_plugin",
+    closed_at = "2026-09-01T08:01:00Z",
+  }))
+  equal(controller.clients, {})
+  equal(closed.client.client_id, "cli_plugin")
+  equal(closed.close.reason, "fatal_failure")
+  controller:close()
+  model:detach()
+end
+
+FakeTransport = {}
 FakeTransport.__index = FakeTransport
 
 function FakeTransport.new(health)
@@ -45,6 +100,7 @@ function FakeTransport.new(health)
     health = health or {
       ok = true,
       status = "ready",
+      clients = {},
       supervisor_id = "sup_test",
       earliest_event_sequence = 1,
       event_sequence = 0,
@@ -83,6 +139,8 @@ function FakeTransport:request(method, path, payload, _, callback)
     callback({ ok = true, execution = { execution_id = "exe_test", outcome = "succeeded" } }, nil)
   elseif payload.kind == "stop_kernel" then
     callback({ ok = true, kernel = { kernel_id = "krn_test", state = "off" }, cleanup = { result = "stopped" } }, nil)
+  elseif payload.kind == "close_client" then
+    callback({ ok = true, client = { client_id = payload.client_id }, cleanup = { result = "stopped" } }, nil)
   end
   return { wait = function() end }
 end
@@ -232,6 +290,7 @@ local function test_supervisor_replacement_resynchronizes_from_authoritative_sna
   local transport = FakeTransport.new({
     ok = true,
     status = "ready",
+    clients = {},
     supervisor_id = "sup_new",
     earliest_event_sequence = 1,
     event_sequence = 1,
@@ -272,6 +331,7 @@ local function test_expired_cursor_resynchronizes_but_replayable_cursor_does_not
   local health = {
     ok = true,
     status = "ready",
+    clients = {},
     supervisor_id = "sup_test",
     earliest_event_sequence = 10,
     event_sequence = 12,
@@ -313,6 +373,7 @@ end
 
 function M.run()
   test_fragmented_sse_parser()
+  test_controller_tracks_durable_client_lifecycle()
   test_controller_routes_identity_and_preserves_kernel_truth_on_gap()
   test_invalid_cell_is_rejected_before_transport()
   test_malformed_event_disconnects_without_changing_kernel_truth()

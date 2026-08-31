@@ -174,6 +174,16 @@ async def run_http_sse_scenario(socket_path: str) -> None:
         ]
         assert events[6]["payload"]["data"] == "2"
 
+        status, missing_client = await request_json(
+            socket_path,
+            "DELETE",
+            "/v1/clients/client_missing",
+            make_command("close_client", "trace_close_missing", client_id="client_missing"),
+        )
+        assert status == 404
+        assert missing_client["failure"]["operation"] == "close_client"
+        assert missing_client["failure"]["reason"] == "not_found"
+
         status, repeated = await request_json(
             socket_path,
             "DELETE",

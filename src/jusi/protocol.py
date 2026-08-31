@@ -22,11 +22,12 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
     "start_kernel": ("notebook_id", "kernel_name"),
     "execute": ("kernel_id", "notebook_id", "cell_id", "code"),
     "stop_kernel": ("kernel_id",),
+    "close_client": ("client_id",),
     "restart_notebook": ("runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"),
 }
 LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
-OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"}
-EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "failure.occurred"}
+OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"}
+EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "failure.occurred"}
 RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
@@ -61,6 +62,34 @@ def _validate_resource(resource: object, context: str = "resource") -> dict[str,
         raise ProtocolValidationError(f"{context}.kind is unsupported")
     _required_strings(resource, ("id",), context)
     return resource
+
+
+def _validate_client(client: object, context: str = "client") -> dict[str, Any]:
+    fields = {
+        "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id",
+        "execution_id", "plugin_worker_id", "plugin_id", "plugin_version",
+        "family_id", "capabilities", "interaction", "created_at",
+    }
+    if not isinstance(client, dict) or set(client) != fields:
+        raise ProtocolValidationError(f"{context} has invalid fields")
+    _required_strings(
+        client,
+        (
+            "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id",
+            "execution_id", "plugin_worker_id", "plugin_id", "plugin_version",
+            "family_id", "created_at",
+        ),
+        context,
+    )
+    capabilities = client["capabilities"]
+    allowed_capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions"}
+    if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) or any(
+        capability not in allowed_capabilities for capability in capabilities
+    ):
+        raise ProtocolValidationError(f"{context}.capabilities are invalid")
+    if client["interaction"] not in {"noninteractive", "request_response", "terminal_interactive"}:
+        raise ProtocolValidationError(f"{context}.interaction is invalid")
+    return client
 
 
 def _validate_event_payload(data: dict[str, Any]) -> None:
@@ -99,7 +128,9 @@ def _validate_event_payload(data: dict[str, Any]) -> None:
     elif kind in {"execution.started", "execution.completed"}:
         fields = {"execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at"}
         _exact_fields(payload, fields, set(), "payload")
-        _required_strings(payload, ("execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "started_at"), "payload")
+        _required_strings(payload, ("execution_id", "kernel_id", "notebook_id", "cell_id", "started_at"), "payload")
+        if payload["client_id"] is not None and not _bounded_string(payload["client_id"], 3, 128):
+            raise ProtocolValidationError("execution client identity is invalid")
         if payload["outcome"] not in OUTCOMES:
             raise ProtocolValidationError("execution outcome is invalid")
         if kind == "execution.started" and (payload["outcome"] != "running" or payload["completed_at"] is not None):
@@ -111,11 +142,27 @@ def _validate_event_payload(data: dict[str, Any]) -> None:
     elif kind == "execution.output":
         fields = {"execution_id", "client_id", "output_kind", "media_type", "data"}
         _exact_fields(payload, fields, set(), "payload")
-        _required_strings(payload, ("execution_id", "client_id", "media_type"), "payload")
+        _required_strings(payload, ("execution_id", "media_type"), "payload")
+        if payload["client_id"] is not None and not _bounded_string(payload["client_id"], 3, 128):
+            raise ProtocolValidationError("execution output client identity is invalid")
         if payload["output_kind"] not in {"stdout", "stderr", "result", "display"} or not isinstance(payload["data"], str):
             raise ProtocolValidationError("execution output shape is invalid")
         if data["resource"] != {"kind": "execution", "id": payload["execution_id"]}:
             raise ProtocolValidationError("execution output resource mismatch")
+    elif kind == "client.created":
+        _validate_client(payload, "payload")
+        if data["resource"] != {"kind": "client", "id": payload["client_id"]}:
+            raise ProtocolValidationError("client event resource mismatch")
+    elif kind == "client.closed":
+        required = {"client_id", "plugin_worker_id", "reason", "closed_at"}
+        _exact_fields(payload, required, {"failure_id"}, "payload")
+        _required_strings(payload, ("client_id", "plugin_worker_id", "reason", "closed_at"), "payload")
+        if payload["reason"] not in {"explicit_close", "fatal_failure", "runtime_cleanup"}:
+            raise ProtocolValidationError("client close reason is invalid")
+        if "failure_id" in payload and not _bounded_string(payload["failure_id"], 3, 128):
+            raise ProtocolValidationError("client close failure identity is invalid")
+        if data["resource"] != {"kind": "client", "id": payload["client_id"]}:
+            raise ProtocolValidationError("client event resource mismatch")
     elif kind == "failure.occurred":
         required = {"failure_id", "trace_id", "layer", "operation", "reason", "message", "retryable", "scope", "resource", "occurred_at"}
         optional = {"process", "caused_by_failure_id", "details"}
@@ -227,6 +274,34 @@ def validate_health_response(data: object) -> dict[str, Any]:
             raise ProtocolValidationError("runtime kernel ownership mismatch")
     elif kernel is not None and kernel.get("state") == "on":
         raise ProtocolValidationError("an on kernel requires an authoritative runtime")
+    clients = data.get("clients")
+    if not isinstance(clients, list):
+        raise ProtocolValidationError("clients must be present as an array")
+    client_ids: set[str] = set()
+    worker_ids: set[str] = set()
+    for index, candidate in enumerate(clients):
+        client = _validate_client(candidate, f"clients[{index}]")
+        if client["client_id"] in client_ids or client["plugin_worker_id"] in worker_ids:
+            raise ProtocolValidationError("client or plugin worker identity is duplicated")
+        client_ids.add(client["client_id"])
+        worker_ids.add(client["plugin_worker_id"])
+        if runtime is None or client["runtime_id"] != runtime["runtime_id"] or client["kernel_id"] != runtime["kernel_id"] or client["notebook_id"] != runtime["notebook_id"]:
+            raise ProtocolValidationError("client runtime ownership mismatch")
+        plugin = next(
+            (
+                item for item in runtime["plugin_catalog"]["plugins"]
+                if item["plugin_id"] == client["plugin_id"]
+            ),
+            None,
+        )
+        if plugin is None or plugin["plugin_version"] != client["plugin_version"] or plugin["interaction"] != client["interaction"]:
+            raise ProtocolValidationError("client exact plugin identity mismatch")
+        family = next(
+            (item for item in plugin["families"] if item["family_id"] == client["family_id"]),
+            None,
+        )
+        if family is None or set(family["capabilities"]) != set(client["capabilities"]):
+            raise ProtocolValidationError("client family capabilities mismatch")
     return dict(data)
 
 

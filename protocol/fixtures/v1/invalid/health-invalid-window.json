@@ -5,5 +5,6 @@
   "earliest_event_sequence": 8,
   "event_sequence": 4,
   "kernel": null,
-  "runtime": null
+  "runtime": null,
+  "clients": []
 }

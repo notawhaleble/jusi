@@ -150,7 +150,7 @@ class ExecutionResource:
     kernel_id: str
     notebook_id: str
     cell_id: str
-    client_id: str
+    client_id: str | None = None
     outcome: ExecutionOutcome = "running"
     started_at: str = field(default_factory=utc_now)
     completed_at: str | None = None
@@ -182,6 +182,7 @@ class PluginWorkerResource:
     client_id: str
     execution_id: str
     capabilities: tuple[str, ...]
+    interaction: str
     pid: int | None = None
     started_at: str = field(default_factory=utc_now)
 
@@ -195,6 +196,41 @@ class PluginWorkerResource:
             "client_id": self.client_id,
             "execution_id": self.execution_id,
             "capabilities": list(self.capabilities),
+            "interaction": self.interaction,
             "pid": self.pid,
             "started_at": self.started_at,
+        }
+
+
+@dataclass(frozen=True)
+class ClientResource:
+    client_id: str
+    runtime_id: str
+    kernel_id: str
+    notebook_id: str
+    cell_id: str
+    execution_id: str
+    plugin_worker_id: str
+    plugin_id: str
+    plugin_version: str
+    family_id: str
+    capabilities: tuple[str, ...]
+    interaction: str
+    created_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "client_id": self.client_id,
+            "runtime_id": self.runtime_id,
+            "kernel_id": self.kernel_id,
+            "notebook_id": self.notebook_id,
+            "cell_id": self.cell_id,
+            "execution_id": self.execution_id,
+            "plugin_worker_id": self.plugin_worker_id,
+            "plugin_id": self.plugin_id,
+            "plugin_version": self.plugin_version,
+            "family_id": self.family_id,
+            "capabilities": list(self.capabilities),
+            "interaction": self.interaction,
+            "created_at": self.created_at,
         }

@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0014 are active.
+- The foundation review is accepted; ADRs 0001-0015 are active.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -33,6 +33,9 @@ Updated: 2026-09-01
 - Fresh kernels import catalog-declared adapter modules and require exact plugin-version/family attestation before becoming `on`. Execution captures one versioned exact-provider handoff MIME record, excludes it from presentation, and validates it against the current runtime catalog while leaving the kernel on for local mismatches.
 - Lifecycle and execution use a serialized operation lane distinct from the short-lived authoritative-state lock, so health and inspection remain responsive during bounded discovery, kernel, cleanup, and future worker I/O.
 - Exact-plugin clients are durable within their notebook runtime. Ordinary operation results never decide client lifetime; only explicit close, fatal client/worker loss, or owning-runtime cleanup ends one.
+- A validated exact-plugin handoff now starts the catalog-selected worker, creates a protocol-visible client identity, delivers the private payload only to that worker, and leaves the client active after the initiating execution. Health and ordered events expose client lifecycle without exposing plugin application data.
+- `close_client` is an explicit idempotent HTTP/controller operation. It stops only the exact worker, emits `client.closed`, reports `already_absent` on a repeated close, and leaves the kernel on. Fatal worker startup/control failures use typed core failures scoped to the client.
+- Backend-only plugins expose generic terminal or web surfaces. SQL/VisiData, shell, terminal text, and browser content remain plugin-owned; frontend core manages native surfaces, input/geometry, and versioned generic actions. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
@@ -60,6 +63,6 @@ Deferred:
 
 ## Next Boundary
 
-1. review revised proposed ADR 0015: keep plugin payloads opaque inside a core-owned presentation/media result envelope with no per-result lifetime disposition
-2. activate an exact worker only after a validated kernel handoff
-3. expose generic plugin operations only after worker identity, containment, and conformance tests pass
+1. design the target-side terminal surface resource and transport for render-only and interactive clients
+2. prove worker-owned terminal bytes, input, and geometry without routing the stream through the request/response control channel
+3. design the remote-safe web-surface contract after the terminal boundary is established

@@ -149,6 +149,38 @@ class ExecutionsHandler(BaseHandler):
         self.write_json(200, {"ok": True, **result})
 
 
+class ClientHandler(BaseHandler):
+    async def delete(self, client_id: str) -> None:
+        command = self.parse_command("close_client")
+        if command is None:
+            return
+        if command["client_id"] != client_id:
+            failure = Failure(
+                failure_id=new_id("fail"),
+                trace_id=command["trace_id"],
+                layer="protocol",
+                operation="close_client",
+                reason="invalid_request",
+                message="client_id in the body must match the URL",
+                retryable=False,
+                scope="request",
+                resource=ResourceRef("client", client_id),
+            )
+            self.supervisor.record_failure(failure)
+            self.write_json(400, {"ok": False, "failure": failure.to_dict()})
+            return
+        try:
+            result = await asyncio.to_thread(
+                self.supervisor.close_client,
+                client_id=client_id,
+                trace_id=command["trace_id"],
+            )
+        except SupervisorError as exc:
+            self.write_supervisor_error(exc)
+            return
+        self.write_json(200, {"ok": True, **result})
+
+
 class NotebookRuntimeRestartHandler(BaseHandler):
     async def post(self, runtime_id: str) -> None:
         command = self.parse_command("restart_notebook")
@@ -242,6 +274,7 @@ def make_application(supervisor: Supervisor) -> tornado.web.Application:
             (r"/v1/kernels", KernelsHandler, handler_args),
             (r"/v1/kernels/([^/]+)", KernelHandler, handler_args),
             (r"/v1/kernels/([^/]+)/executions", ExecutionsHandler, handler_args),
+            (r"/v1/clients/([^/]+)", ClientHandler, handler_args),
             (r"/v1/notebook-runtimes/([^/]+)/restart", NotebookRuntimeRestartHandler, handler_args),
         ],
         compress_response=False,

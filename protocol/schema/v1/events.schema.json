@@ -27,7 +27,7 @@
       "enum": ["protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"]
     },
     "operation": {
-      "enum": ["service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]
+      "enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]
     },
     "kind": {
       "enum": [
@@ -38,6 +38,8 @@
         "execution.started",
         "execution.output",
         "execution.completed",
+        "client.created",
+        "client.closed",
         "failure.occurred"
       ]
     },
@@ -76,7 +78,7 @@
             "properties": {
               "operation_id": {"type": "string", "minLength": 3},
               "trace_id": {"type": "string", "minLength": 3},
-              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
               "outcome": {"const": "running"},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "null"}
@@ -96,7 +98,7 @@
             "properties": {
               "operation_id": {"type": "string", "minLength": 3},
               "trace_id": {"type": "string", "minLength": 3},
-              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
               "outcome": {"enum": ["succeeded", "failed", "cancelled"]},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "string", "format": "date-time"},
@@ -137,7 +139,7 @@
               "kernel_id": {"type": "string", "minLength": 3},
               "notebook_id": {"type": "string", "minLength": 1},
               "cell_id": {"type": "string", "minLength": 1},
-              "client_id": {"type": "string", "minLength": 3},
+              "client_id": {"type": ["string", "null"], "minLength": 3},
               "outcome": {"const": "running"},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "null"}
@@ -159,7 +161,7 @@
               "kernel_id": {"type": "string", "minLength": 3},
               "notebook_id": {"type": "string", "minLength": 1},
               "cell_id": {"type": "string", "minLength": 1},
-              "client_id": {"type": "string", "minLength": 3},
+              "client_id": {"type": ["string", "null"], "minLength": 3},
               "outcome": {"enum": ["succeeded", "failed", "interrupted", "cancelled"]},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "string", "format": "date-time"}
@@ -178,10 +180,37 @@
             "required": ["execution_id", "client_id", "output_kind", "media_type", "data"],
             "properties": {
               "execution_id": {"type": "string"},
-              "client_id": {"type": "string"},
+              "client_id": {"type": ["string", "null"]},
               "output_kind": {"enum": ["stdout", "stderr", "result", "display"]},
               "media_type": {"type": "string", "minLength": 1},
               "data": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "client.created"}}},
+      "then": {
+        "properties": {
+          "payload": {"$ref": "responses.schema.json#/$defs/client"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "client.closed"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["client_id", "plugin_worker_id", "reason", "closed_at"],
+            "properties": {
+              "client_id": {"type": "string", "minLength": 3},
+              "plugin_worker_id": {"type": "string", "minLength": 3},
+              "reason": {"enum": ["explicit_close", "fatal_failure", "runtime_cleanup"]},
+              "closed_at": {"type": "string", "format": "date-time"},
+              "failure_id": {"type": "string", "minLength": 3}
             },
             "additionalProperties": false
           }

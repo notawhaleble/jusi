@@ -1,0 +1,8 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_close_client_1",
+  "trace_id": "trace_close_client_1",
+  "kind": "close_client",
+  "idempotency_key": "close-client-1",
+  "client_id": "client_123"
+}

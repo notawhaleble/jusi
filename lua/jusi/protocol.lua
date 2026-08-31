@@ -20,11 +20,12 @@ local command_fields = {
   start_kernel = { "notebook_id", "kernel_name" },
   execute = { "kernel_id", "notebook_id", "cell_id", "code" },
   stop_kernel = { "kernel_id" },
+  close_client = { "client_id" },
   restart_notebook = { "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name" },
 }
 local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
-local operations = set({ "service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events" })
-local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "failure.occurred" })
+local operations = set({ "service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events" })
+local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "failure.occurred" })
 local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
@@ -54,6 +55,24 @@ local function null(value)
   return value == nil or value == vim.NIL
 end
 
+local function validate_client(client)
+  local fields = { "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "capabilities", "interaction", "created_at" }
+  local ok, err = exact_fields(client, fields)
+  if not ok then return false, err end
+  for _, field in ipairs({ "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "created_at" }) do
+    if not nonempty_string(client[field]) then return false, "invalid client identity" end
+  end
+  local allowed_capabilities = set({ "execute", "followup", "complete", "interrupt", "editor_actions" })
+  if type(client.capabilities) ~= "table" then return false, "invalid client capabilities" end
+  local seen = {}
+  for _, capability in ipairs(client.capabilities) do
+    if not allowed_capabilities[capability] or seen[capability] then return false, "invalid client capabilities" end
+    seen[capability] = true
+  end
+  if not ({ noninteractive = true, request_response = true, terminal_interactive = true })[client.interaction] then return false, "invalid client interaction" end
+  return true
+end
+
 local function validate_event_payload(event)
   local payload = event.payload
   local kind = event.kind
@@ -80,7 +99,8 @@ local function validate_event_payload(event)
   elseif kind == "execution.started" or kind == "execution.completed" then
     ok, err = exact_fields(payload, { "execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at" })
     if not ok then return false, err end
-    for _, field in ipairs({ "execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "started_at" }) do if not nonempty_string(payload[field]) then return false, "invalid execution payload" end end
+    for _, field in ipairs({ "execution_id", "kernel_id", "notebook_id", "cell_id", "started_at" }) do if not nonempty_string(payload[field]) then return false, "invalid execution payload" end end
+    if not null(payload.client_id) and not bounded_string(payload.client_id, 3, 128) then return false, "invalid execution client identity" end
     local outcomes = { pending = true, running = true, succeeded = true, failed = true, interrupted = true, cancelled = true }
     if not outcomes[payload.outcome] then return false, "invalid execution outcome" end
     if kind == "execution.started" and (payload.outcome ~= "running" or not null(payload.completed_at)) then return false, "execution.started must be running and incomplete" end
@@ -89,8 +109,17 @@ local function validate_event_payload(event)
   elseif kind == "execution.output" then
     ok, err = exact_fields(payload, { "execution_id", "client_id", "output_kind", "media_type", "data" })
     if not ok then return false, err end
-    if not nonempty_string(payload.execution_id) or not nonempty_string(payload.client_id) or not nonempty_string(payload.media_type) or type(payload.data) ~= "string" or not ({ stdout = true, stderr = true, result = true, display = true })[payload.output_kind] then return false, "invalid execution output payload" end
+    if not nonempty_string(payload.execution_id) or (not null(payload.client_id) and not bounded_string(payload.client_id, 3, 128)) or not nonempty_string(payload.media_type) or type(payload.data) ~= "string" or not ({ stdout = true, stderr = true, result = true, display = true })[payload.output_kind] then return false, "invalid execution output payload" end
     if event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "execution output resource mismatch" end
+  elseif kind == "client.created" then
+    ok, err = validate_client(payload)
+    if not ok then return false, err end
+    if event.resource.kind ~= "client" or event.resource.id ~= payload.client_id then return false, "client event resource mismatch" end
+  elseif kind == "client.closed" then
+    ok, err = exact_fields(payload, { "client_id", "plugin_worker_id", "reason", "closed_at" }, { "failure_id" })
+    if not ok then return false, err end
+    if not nonempty_string(payload.client_id) or not nonempty_string(payload.plugin_worker_id) or not ({ explicit_close = true, fatal_failure = true, runtime_cleanup = true })[payload.reason] or not nonempty_string(payload.closed_at) or (payload.failure_id ~= nil and not bounded_string(payload.failure_id, 3, 128)) then return false, "invalid client close payload" end
+    if event.resource.kind ~= "client" or event.resource.id ~= payload.client_id then return false, "client event resource mismatch" end
   elseif kind == "failure.occurred" then
     ok, err = exact_fields(payload, { "failure_id", "trace_id", "layer", "operation", "reason", "message", "retryable", "scope", "resource", "occurred_at" }, { "process", "caused_by_failure_id", "details" })
     if not ok then return false, err end
@@ -229,6 +258,31 @@ function M.validate_health_response(response)
     if kernel == nil or kernel == vim.NIL or runtime.kernel_id ~= kernel.kernel_id or runtime.notebook_id ~= kernel.notebook_id then return false, "runtime kernel ownership mismatch" end
   elseif kernel ~= nil and kernel ~= vim.NIL and kernel.state == "on" then
     return false, "an on kernel requires an authoritative runtime"
+  end
+  if type(response.clients) ~= "table" then return false, "clients must be present as an array" end
+  local client_ids = {}
+  local worker_ids = {}
+  for _, client in ipairs(response.clients) do
+    local client_ok, client_error = validate_client(client)
+    if not client_ok then return false, client_error end
+    if client_ids[client.client_id] or worker_ids[client.plugin_worker_id] then return false, "duplicate client or worker identity" end
+    client_ids[client.client_id] = true
+    worker_ids[client.plugin_worker_id] = true
+    if runtime == vim.NIL or client.runtime_id ~= runtime.runtime_id or client.kernel_id ~= runtime.kernel_id or client.notebook_id ~= runtime.notebook_id then return false, "client runtime ownership mismatch" end
+    local plugin
+    for _, candidate in ipairs(runtime.plugin_catalog.plugins) do
+      if candidate.plugin_id == client.plugin_id then plugin = candidate break end
+    end
+    if plugin == nil or plugin.plugin_version ~= client.plugin_version or plugin.interaction ~= client.interaction then return false, "client exact plugin identity mismatch" end
+    local family
+    for _, candidate in ipairs(plugin.families) do
+      if candidate.family_id == client.family_id then family = candidate break end
+    end
+    if family == nil then return false, "client family identity mismatch" end
+    local expected_capabilities = set(family.capabilities)
+    local actual_capabilities = set(client.capabilities)
+    for capability, _ in pairs(expected_capabilities) do if not actual_capabilities[capability] then return false, "client family capabilities mismatch" end end
+    for capability, _ in pairs(actual_capabilities) do if not expected_capabilities[capability] then return false, "client family capabilities mismatch" end end
   end
   return true
 end

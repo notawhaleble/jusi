@@ -83,3 +83,5 @@ These invariants constrain implementation and protocol design. A change that vio
 50. A successful exact-plugin handoff creates a durable client; ordinary execute, follow-up, completion, or action results never decide its lifetime.
 51. A plugin client ends only through explicit close, demonstrated fatal client/worker loss, or cleanup of its owning notebook runtime.
 52. An operation-level plugin error does not close an otherwise usable client or widen failure to the kernel.
+53. Plugin application semantics and presentation content remain backend-owned; frontend core supports only versioned generic terminal/web surfaces, controls, and actions.
+54. Recoverable plugin application errors use plugin-owned presentation, while fatal factory, worker, channel, or required-surface failures always produce a typed core failure event.

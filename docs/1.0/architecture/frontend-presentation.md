@@ -30,3 +30,19 @@ No renderer is yet registered for non-text media. Such output produces a local,
 cell-scoped `frontend_presentation/unsupported` failure without changing kernel
 or transport state. Rich renderers will be added by media type rather than by
 cell or plugin identity.
+
+## Durable Plugin Client Surfaces
+
+Execution-output projection is distinct from a durable plugin client surface.
+Backend plugins expose generic terminal or web surface resources; they do not
+send provider-specific presentation models to Lua.
+
+- A render-only terminal surface sends bytes to `nvim_open_term()`.
+- An interactive terminal surface additionally binds a dedicated target-side
+  PTY/byte stream, input, and geometry updates.
+- A web surface opens backend-owned content in a supported WebBuffer/browser.
+
+The frontend owns buffer/window placement, focus, current geometry, input
+routing, and explicit close. The backend owns application state and rendered
+content. Fatal surface/client failures arrive through generic core failure
+events; recoverable application errors remain content on the plugin surface.

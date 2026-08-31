@@ -115,6 +115,22 @@ errors do not implicitly close it.
 
 A Neovim terminal buffer is a frontend projection of a client, not the client identity.
 
+### Client Surface
+
+A generic frontend projection requested by one durable backend client.
+
+- identity: `surface_id`, owned by one `client_id`
+- kind: `terminal` or `web`
+- transport: explicit and target-safe; never inferred from plugin identity
+- capabilities: generic input, resize, signal, focus, or browser controls
+- content: backend-produced and opaque to core; interpreted by the terminal
+  emulator or browser
+- lifetime: explicitly closed or retired with its owning client/runtime
+
+A client may produce recoverable application errors on its own surface. Loss of
+a required surface is instead a typed core `client` failure because plugin
+presentation may no longer be available.
+
 ### Plugin Worker
 
 An isolated plugin-owned runtime when plugin behavior needs a separate process or failure boundary.

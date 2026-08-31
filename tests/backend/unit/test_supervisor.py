@@ -17,7 +17,7 @@ from jusi.application.ports import (
 from jusi.application.plugin_workers import PluginWorkerManager
 from jusi.application.supervisor import Supervisor, SupervisorError
 from jusi.domain.models import ProcessDiagnostics
-from jusi.protocol import validate_event
+from jusi.protocol import validate_event, validate_health_response
 
 
 class FakeKernel:
@@ -113,11 +113,18 @@ def make_supervisor(factory: FakeFactory, discovery: FakeDiscovery | None = None
 class FakePluginWorkerHandle:
     pid = 8765
 
-    def __init__(self, stop_error: PluginWorkerError | None = None) -> None:
+    def __init__(
+        self,
+        stop_error: PluginWorkerError | None = None,
+        request_error: PluginWorkerError | None = None,
+    ) -> None:
         self.stop_error = stop_error
+        self.request_error = request_error
         self.stop_count = 0
 
     def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float) -> dict:
+        if self.request_error is not None:
+            raise self.request_error
         return {"operation": operation, "payload": payload}
 
     def stop(self, *, trace_id: str, timeout: float) -> str:
@@ -128,14 +135,23 @@ class FakePluginWorkerHandle:
 
 
 class FakePluginWorkerFactory:
-    def __init__(self, stop_error: PluginWorkerError | None = None) -> None:
+    def __init__(
+        self,
+        stop_error: PluginWorkerError | None = None,
+        request_error: PluginWorkerError | None = None,
+        start_error: PluginWorkerError | None = None,
+    ) -> None:
         self.stop_error = stop_error
+        self.request_error = request_error
+        self.start_error = start_error
         self.specs: list[PluginWorkerSpec] = []
         self.handles: list[FakePluginWorkerHandle] = []
 
     def start(self, spec: PluginWorkerSpec, *, timeout: float) -> FakePluginWorkerHandle:
         self.specs.append(spec)
-        handle = FakePluginWorkerHandle(self.stop_error)
+        if self.start_error is not None:
+            raise self.start_error
+        handle = FakePluginWorkerHandle(self.stop_error, self.request_error)
         self.handles.append(handle)
         return handle
 
@@ -377,13 +393,23 @@ def test_plugin_handoff_must_match_the_current_runtime_catalog() -> None:
         family_id="sql", magic_name="sql", payload={"query": "select 1"},
     )
     valid_kernel = FakeKernel(KernelExecutionResult("succeeded", handoffs=(valid_handoff,)))
-    supervisor = Supervisor(FakeFactory(valid_kernel), FakeDiscovery(plugins=[plugin_entry()]))
+    worker_factory = FakePluginWorkerFactory()
+    supervisor = Supervisor(
+        FakeFactory(valid_kernel),
+        FakeDiscovery(plugins=[plugin_entry()]),
+        PluginWorkerManager(worker_factory),
+    )
     started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
     result = supervisor.execute(
         kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
         code="%%sql", trace_id="trace_execute",
     )
     assert result["execution"]["outcome"] == "succeeded"
+    assert result["execution"]["client_id"].startswith("cli_")
+    assert worker_factory.specs[0].client_id == result["execution"]["client_id"]
+    assert worker_factory.handles[0].stop_count == 0
+    assert supervisor.health()["clients"][0]["plugin_id"] == "exact_sql"
+    validate_health_response({"ok": True, **supervisor.health()})
 
     mismatched = PluginHandoff(
         plugin_id="other_sql", plugin_version="1.0.0",
@@ -416,6 +442,149 @@ def test_start_passes_catalog_declared_kernel_adapters_to_the_factory() -> None:
     assert adapter.plugin_version == "1.0.0"
     assert adapter.module == "fixture_sql.kernel"
     assert adapter.families == (("sql", "sql"),)
+
+
+def test_fatal_plugin_worker_failure_closes_only_its_client() -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={"query": "secret query"},
+    )
+    worker_error = PluginWorkerError(
+        "provider process died",
+        reason="process_exited",
+        retryable=False,
+        diagnostics=ProcessDiagnostics(pid=8765, exit_code=23, stderr_excerpt="fatal adapter error"),
+    )
+    worker_factory = FakePluginWorkerFactory(request_error=worker_error)
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin_entry()]),
+        PluginWorkerManager(worker_factory),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+
+    with pytest.raises(SupervisorError) as raised:
+        supervisor.execute(
+            kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+            code="%%sql", trace_id="trace_execute",
+        )
+
+    failure = raised.value.failure
+    assert failure.layer == "plugin_worker"
+    assert failure.reason == "process_exited"
+    assert failure.scope == "client"
+    assert failure.process is not None and failure.process.exit_code == 23
+    assert supervisor.health()["kernel"]["state"] == "on"
+    assert supervisor.health()["clients"] == []
+    events = supervisor.events.events_after(0)
+    kinds = [event["kind"] for event in events]
+    assert kinds.index("client.created") < kinds.index("failure.occurred") < kinds.index("client.closed")
+    assert "secret query" not in str(failure.to_dict())
+
+
+def test_plugin_factory_failure_is_observable_without_creating_a_client() -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    start_error = PluginWorkerError(
+        "could not import exact worker",
+        reason="spawn_failed",
+        retryable=True,
+        diagnostics=ProcessDiagnostics(pid=9911, exit_code=20, stderr_excerpt="ImportError: broken plugin"),
+    )
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin_entry()]),
+        PluginWorkerManager(FakePluginWorkerFactory(start_error=start_error)),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+
+    with pytest.raises(SupervisorError) as raised:
+        supervisor.execute(
+            kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+            code="%%sql", trace_id="trace_execute",
+        )
+
+    assert raised.value.failure.layer == "plugin_worker"
+    assert raised.value.failure.reason == "spawn_failed"
+    assert raised.value.failure.scope == "client"
+    assert raised.value.failure.process is not None
+    assert raised.value.failure.process.stderr_excerpt == "ImportError: broken plugin"
+    assert supervisor.health()["kernel"]["state"] == "on"
+    assert supervisor.health()["clients"] == []
+    assert "client.created" not in [event["kind"] for event in supervisor.events.events_after(0)]
+
+
+def test_kernel_stop_retires_durable_plugin_client_after_worker_cleanup() -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    worker_factory = FakePluginWorkerFactory()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin_entry()]),
+        PluginWorkerManager(worker_factory),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    supervisor.execute(
+        kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+        code="%%sql", trace_id="trace_execute",
+    )
+    client_id = supervisor.health()["clients"][0]["client_id"]
+
+    supervisor.stop_kernel(
+        kernel_id=started["kernel"]["kernel_id"], trace_id="trace_stop",
+    )
+
+    assert worker_factory.handles[0].stop_count == 1
+    assert supervisor.health()["clients"] == []
+    closed = next(
+        event for event in supervisor.events.events_after(0)
+        if event["kind"] == "client.closed" and event["payload"]["client_id"] == client_id
+    )
+    assert closed["payload"]["reason"] == "runtime_cleanup"
+
+
+def test_explicit_client_close_is_scoped_and_idempotent() -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    worker_factory = FakePluginWorkerFactory()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin_entry()]),
+        PluginWorkerManager(worker_factory),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    supervisor.execute(
+        kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+        code="%%sql", trace_id="trace_execute",
+    )
+    client_id = supervisor.health()["clients"][0]["client_id"]
+
+    closed = supervisor.close_client(client_id=client_id, trace_id="trace_close")
+    repeated = supervisor.close_client(client_id=client_id, trace_id="trace_close_again")
+
+    assert closed["cleanup"] == {
+        "resource": {"kind": "client", "id": client_id},
+        "result": "stopped",
+        "plugin_worker_id": worker_factory.specs[0].plugin_worker_id,
+    }
+    assert repeated["cleanup"]["result"] == "already_absent"
+    assert worker_factory.handles[0].stop_count == 1
+    assert supervisor.health()["clients"] == []
+    assert supervisor.health()["kernel"]["state"] == "on"
+    close_events = [event for event in supervisor.events.events_after(0) if event["trace_id"].startswith("trace_close")]
+    for event in close_events:
+        validate_event(event)
+    assert [event["kind"] for event in close_events] == [
+        "operation.started", "client.closed", "operation.completed",
+        "operation.started", "operation.completed",
+    ]
+    assert close_events[1]["payload"]["reason"] == "explicit_close"
 
 
 def test_start_failure_stays_off_and_is_typed() -> None:

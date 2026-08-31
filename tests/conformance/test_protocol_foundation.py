@@ -7,6 +7,7 @@ import pytest
 
 from jusi.protocol import (
     ProtocolValidationError,
+    validate_command,
     validate_event,
     validate_health_response,
     validate_plugin_catalog,
@@ -71,12 +72,25 @@ def test_python_consumes_shared_event_fixtures() -> None:
         "execution.started",
         "execution.output",
         "execution.completed",
+        "client.created",
+        "client.closed",
         "failure.occurred",
     }
 
     malformed_payload = load_json(fixture_root / "invalid" / "event-output-missing-data.json")
     with pytest.raises(ProtocolValidationError, match="data"):
         validate_event(malformed_payload)
+
+    assert validate_event(load_json(fixture_root / "valid" / "client-created.json"))["kind"] == "client.created"
+    assert validate_event(load_json(fixture_root / "valid" / "client-closed.json"))["kind"] == "client.closed"
+    invalid_client = load_json(fixture_root / "invalid" / "client-created-missing-worker.json")
+    with pytest.raises(ProtocolValidationError, match="fields"):
+        validate_event(invalid_client)
+
+
+def test_python_consumes_shared_close_client_command() -> None:
+    command = load_json(ROOT / "protocol" / "fixtures" / "v1" / "valid" / "close-client.json")
+    assert validate_command(command, "close_client")["client_id"] == "client_123"
 
 
 def test_python_consumes_shared_health_fixtures() -> None:

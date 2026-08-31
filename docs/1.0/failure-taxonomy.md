@@ -110,6 +110,9 @@ completed so the frontend can retire only the identities that actually ended.
 
 - Python exception from executed code: `execution / execution_error / execution`.
 - Plugin process exits unexpectedly: `plugin_worker / process_exited / plugin_worker`; owning client may close, kernel stays `on`.
+- Recoverable SQL, shell, or other application error: rendered by the healthy plugin on its chosen surface; it is not reclassified as core infrastructure failure.
+- Fatal plugin factory/worker/control failure: `plugin_worker / spawn_failed|plugin_error|process_exited|process_signalled|channel_closed|protocol_violation / client|plugin_worker`; the client is retired through a typed event and the kernel remains `on` absent separate kernel-failure evidence.
+- Required terminal/web surface is lost: `client / channel_closed|unreachable / client`; plugin presentation may be unavailable, so the core failure event remains authoritative.
 - Kernel adapter import or attestation mismatch during start: `kernel / readiness_failed|protocol_violation|conflict / kernel`; kernel remains `off` with module identities and bounded diagnostics.
 - Execution handoff not present in the authoritative runtime catalog: `protocol / invalid_request / execution`; the owning execution fails and the kernel remains `on`.
 - SSE connection drops: `frontend_transport / channel_closed / transport`; kernel state is unchanged.
