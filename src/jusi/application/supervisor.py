@@ -47,7 +47,8 @@ class Supervisor:
         self._kernel_factory = kernel_factory
         self._plugin_discovery = plugin_discovery
         self._plugin_workers = plugin_workers
-        self._lock = threading.RLock()
+        self._operation_lock = threading.RLock()
+        self._state_lock = threading.RLock()
         self._current_kernel: KernelResource | None = None
         self._kernel_handle: KernelHandle | None = None
         self._known_kernel_ids: set[str] = set()
@@ -63,7 +64,7 @@ class Supervisor:
         )
 
     def health(self) -> dict[str, Any]:
-        with self._lock:
+        with self._state_lock:
             return {
                 "status": "ready",
                 "supervisor_id": self.supervisor_id,
@@ -77,7 +78,7 @@ class Supervisor:
         self._emit_failure(failure)
 
     def inspect_kernel(self, kernel_id: str) -> dict[str, Any]:
-        with self._lock:
+        with self._state_lock:
             if self._current_kernel is not None and self._current_kernel.kernel_id == kernel_id:
                 return self._current_kernel.to_dict()
             if kernel_id in self._known_kernel_ids:
@@ -102,7 +103,7 @@ class Supervisor:
         trace_id: str,
         timeout: float = 10.0,
     ) -> dict[str, Any]:
-        with self._lock:
+        with self._operation_lock:
             if self._current_kernel is not None and self._current_kernel.state == "on":
                 raise self._request_failure(
                     status_code=409,
@@ -137,10 +138,12 @@ class Supervisor:
                     self._emit_failure(failure)
                     self._complete_operation(operation, "failed", resource=failure.resource, failure=failure)
                     raise SupervisorError(503, failure)
-            self._current_runtime = None
+            with self._state_lock:
+                self._current_runtime = None
             runtime_id = new_id("run")
             discovery_id = new_id("dsc")
-            self._known_runtime_ids.add(runtime_id)
+            with self._state_lock:
+                self._known_runtime_ids.add(runtime_id)
             try:
                 discovery = self._plugin_discovery.discover(discovery_id=discovery_id, timeout=timeout)
             except PluginCatalogDiscoveryError as exc:
@@ -161,7 +164,8 @@ class Supervisor:
                 raise SupervisorError(503, failure) from exc
             kernel_id = new_id("krn")
             kernel_ref = ResourceRef("kernel", kernel_id)
-            self._known_kernel_ids.add(kernel_id)
+            with self._state_lock:
+                self._known_kernel_ids.add(kernel_id)
             try:
                 handle = self._kernel_factory.start(
                     kernel_name, timeout=timeout, adapters=self._kernel_adapter_specs(discovery.catalog),
@@ -190,8 +194,6 @@ class Supervisor:
                 state="on",
                 pid=handle.pid,
             )
-            self._current_kernel = kernel
-            self._kernel_handle = handle
             runtime = NotebookRuntime(
                 runtime_id=runtime_id,
                 notebook_id=notebook_id,
@@ -199,9 +201,12 @@ class Supervisor:
                 kernel_id=kernel_id,
                 plugin_catalog=discovery.catalog,
             )
-            self._current_runtime = runtime
             if self._plugin_workers is not None:
                 self._plugin_workers.activate_runtime(runtime)
+            with self._state_lock:
+                self._current_kernel = kernel
+                self._kernel_handle = handle
+                self._current_runtime = runtime
             self.events.append(
                 trace_id=trace_id,
                 layer="kernel",
@@ -223,7 +228,7 @@ class Supervisor:
         trace_id: str,
         timeout: float = 10.0,
     ) -> dict[str, Any]:
-        with self._lock:
+        with self._operation_lock:
             execution_details = {
                 "code_bytes": len(code.encode("utf-8")),
                 "code_line_count": code.count("\n") + 1 if code else 0,
@@ -296,8 +301,9 @@ class Supervisor:
                         # observed. Cleanup diagnostics remain attached to the
                         # originating kernel failure for this initial slice.
                         pass
-                    kernel.state = "off"
-                    self._kernel_handle = None
+                    with self._state_lock:
+                        kernel.state = "off"
+                        self._kernel_handle = None
                     self.events.append(
                         trace_id=trace_id,
                         layer="kernel",
@@ -407,7 +413,7 @@ class Supervisor:
             return response
 
     def stop_kernel(self, *, kernel_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
-        with self._lock:
+        with self._operation_lock:
             operation = self._begin_operation("stop_kernel", trace_id, resource=ResourceRef("kernel", kernel_id))
             if self._current_kernel is None or self._current_kernel.kernel_id != kernel_id or self._current_kernel.state == "off":
                 if kernel_id not in self._known_kernel_ids:
@@ -454,8 +460,9 @@ class Supervisor:
                 self._complete_operation(operation, "failed", resource=ResourceRef("kernel", kernel_id), failure=failure)
                 raise SupervisorError(503, failure) from exc
 
-            kernel.state = "off"
-            self._kernel_handle = None
+            with self._state_lock:
+                kernel.state = "off"
+                self._kernel_handle = None
             self.events.append(
                 trace_id=trace_id,
                 layer="kernel",
@@ -497,7 +504,7 @@ class Supervisor:
         trace_id: str,
         timeout: float = 10.0,
     ) -> dict[str, Any]:
-        with self._lock:
+        with self._operation_lock:
             runtime = self._current_runtime
             kernel = self._current_kernel
             if (
@@ -592,8 +599,9 @@ class Supervisor:
                         failure=failure,
                     )
                     raise SupervisorError(503, failure) from exc
-                kernel.state = "off"
-                self._kernel_handle = None
+                with self._state_lock:
+                    kernel.state = "off"
+                    self._kernel_handle = None
                 cleanup_result = "stopped"
                 self.events.append(
                     trace_id=trace_id,
@@ -611,13 +619,15 @@ class Supervisor:
             }
             if worker_cleanup:
                 cleanup["plugin_workers"] = worker_cleanup
-            self._current_runtime = None
+            with self._state_lock:
+                self._current_runtime = None
 
             next_runtime_id = new_id("run")
             discovery_id = new_id("dsc")
             next_kernel_id = new_id("krn")
-            self._known_runtime_ids.add(next_runtime_id)
-            self._known_kernel_ids.add(next_kernel_id)
+            with self._state_lock:
+                self._known_runtime_ids.add(next_runtime_id)
+                self._known_kernel_ids.add(next_kernel_id)
             try:
                 discovery = self._plugin_discovery.discover(discovery_id=discovery_id, timeout=timeout)
             except PluginCatalogDiscoveryError as exc:
@@ -684,11 +694,12 @@ class Supervisor:
                 kernel_id=next_kernel_id,
                 plugin_catalog=discovery.catalog,
             )
-            self._current_kernel = next_kernel
-            self._kernel_handle = next_handle
-            self._current_runtime = next_runtime
             if self._plugin_workers is not None:
                 self._plugin_workers.activate_runtime(next_runtime)
+            with self._state_lock:
+                self._current_kernel = next_kernel
+                self._kernel_handle = next_handle
+                self._current_runtime = next_runtime
             self.events.append(
                 trace_id=trace_id,
                 layer="kernel",
@@ -711,7 +722,7 @@ class Supervisor:
             }
 
     def close(self) -> None:
-        with self._lock:
+        with self._state_lock:
             kernel = self._current_kernel
         if kernel is not None and kernel.state == "on":
             try:

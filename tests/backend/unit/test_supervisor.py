@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from jusi.application.ports import (
@@ -214,6 +216,45 @@ def test_health_is_an_authoritative_snapshot_with_replay_window() -> None:
     assert current["earliest_event_sequence"] == 1
     assert current["event_sequence"] == 4
     assert current["kernel"] == started["kernel"]
+
+
+def test_health_does_not_wait_for_slow_kernel_start_io() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingFactory(FakeFactory):
+        def start(self, kernel_name: str, *, timeout: float, adapters=()) -> FakeKernel:
+            entered.set()
+            assert release.wait(timeout=2)
+            return super().start(kernel_name, timeout=timeout, adapters=adapters)
+
+    supervisor = make_supervisor(BlockingFactory())
+    start_errors: list[BaseException] = []
+
+    def start() -> None:
+        try:
+            supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+        except BaseException as exc:  # pragma: no cover - asserted below
+            start_errors.append(exc)
+
+    start_thread = threading.Thread(target=start)
+    start_thread.start()
+    assert entered.wait(timeout=1)
+
+    health_result: list[dict] = []
+    health_thread = threading.Thread(target=lambda: health_result.append(supervisor.health()))
+    health_thread.start()
+    health_thread.join(timeout=0.5)
+    try:
+        assert not health_thread.is_alive()
+        assert health_result[0]["kernel"] is None
+        assert health_result[0]["runtime"] is None
+    finally:
+        release.set()
+        start_thread.join(timeout=2)
+        health_thread.join(timeout=2)
+    assert not start_thread.is_alive()
+    assert start_errors == []
 
 
 def test_kernel_stop_cleans_runtime_owned_plugin_workers() -> None:

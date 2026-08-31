@@ -116,6 +116,10 @@ runtime catalog. Its payload remains opaque and bounded by the Jupyter command
 path's 1 MiB control-record limit. Backend execution/client/worker identities
 are added only by core.
 
+Supervisor operations are serialized separately from authoritative state
+inspection. Worker startup, requests, and cleanup may occupy the operation
+lane, but never the short-lived state lock used by health and inspection.
+
 ## Failure And Verification
 
 - discovery import/schema failure: internal `plugin_discovery/plugin_error`,

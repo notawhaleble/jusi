@@ -4,7 +4,7 @@ Updated: 2026-08-31
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0013 are active.
+- The foundation review is accepted; ADRs 0001-0014 are active.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -31,6 +31,7 @@ Updated: 2026-08-31
 - Notebook-runtime stop/restart owns worker cleanup. Incomplete cleanup prevents full replacement before the old kernel is stopped; ordinary kernel stop still establishes authoritative `off` and reports any worker cleanup failure.
 - Service placement is explicit: the authoritative service runs at the kernel target. `JusiServiceStart` is only a notebook-local convenience for local targets; remote targets connect directly to their remote service over HTTP/SSE without a mandatory local proxy or editor-wide singleton.
 - Fresh kernels import catalog-declared adapter modules and require exact plugin-version/family attestation before becoming `on`. Execution captures one versioned exact-provider handoff MIME record, excludes it from presentation, and validates it against the current runtime catalog while leaving the kernel on for local mismatches.
+- Lifecycle and execution use a serialized operation lane distinct from the short-lived authoritative-state lock, so health and inspection remain responsive during bounded discovery, kernel, cleanup, and future worker I/O.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
@@ -58,6 +59,6 @@ Deferred:
 
 ## Next Boundary
 
-1. narrow supervisor locking so plugin-worker I/O never holds the global state lock
+1. define how opaque exact-worker results become generic client resources and media without importing provider semantics into core
 2. activate an exact worker only after a validated kernel handoff
 3. expose generic plugin operations only after worker identity, containment, and conformance tests pass
