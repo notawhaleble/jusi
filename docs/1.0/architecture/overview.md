@@ -40,6 +40,8 @@ The implemented parser, linked reconciliation model, and edit paths are specifie
 
 The initial cell-attached native terminal projection is specified in [frontend-presentation.md](frontend-presentation.md).
 
+The explicit buffer session and first user commands are specified in [frontend-runtime.md](frontend-runtime.md).
+
 ## Failure Boundaries
 
 The supervisor treats kernel, execution, client, plugin worker, service, protocol, and frontend transport as separate failure layers. Events and failures retain the originating layer and trace.

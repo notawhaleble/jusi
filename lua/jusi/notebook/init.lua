@@ -397,6 +397,19 @@ function Notebook:cell_by_id(cell_id)
   return self._cell_by_id[cell_id]
 end
 
+function Notebook:cell_at_row(row)
+  vim.validate("row", row, "number")
+  local cell = self:_nearest_open_before(row)
+  if not cell then
+    return nil
+  end
+  local snapshot = self:cell_snapshot(cell)
+  if snapshot and row >= snapshot.open_row and row <= snapshot.close_row then
+    return cell
+  end
+  return nil
+end
+
 function Notebook:ordered_cells()
   local result = {}
   local cell = self._head

@@ -183,6 +183,23 @@ local function test_model_extracts_active_body_and_history()
   model:detach()
 end
 
+local function test_cell_lookup_uses_current_extmark_ranges()
+  local buf = buffer_with({ "outside", "╭──", "body", "╰──", "between", "╭──", "next", "╰──" })
+  local model = notebook.attach(buf)
+  local first = cells(model)[1]
+  local second = cells(model)[2]
+  equal(model:cell_at_row(0), nil)
+  equal(model:cell_at_row(1).id, first.id)
+  equal(model:cell_at_row(3).id, first.id)
+  equal(model:cell_at_row(4), nil)
+  equal(model:cell_at_row(6).id, second.id)
+
+  vim.api.nvim_buf_set_lines(buf, 0, 0, false, { "inserted" })
+  equal(model:cell_at_row(3).id, first.id)
+  equal(model:cell_at_row(7).id, second.id)
+  model:detach()
+end
+
 function M.run()
   test_parser_valid_cell_and_history()
   test_parser_exact_lines_and_local_recovery()
@@ -192,6 +209,7 @@ function M.run()
   test_broken_cell_recovers_at_next_opener()
   test_partial_delimiter_edit_reparses_structure()
   test_model_extracts_active_body_and_history()
+  test_cell_lookup_uses_current_extmark_ranges()
 end
 
 return M
