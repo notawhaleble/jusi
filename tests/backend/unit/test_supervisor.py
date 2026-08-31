@@ -8,6 +8,7 @@ from jusi.application.ports import (
     KernelOutput,
 )
 from jusi.application.supervisor import Supervisor, SupervisorError
+from jusi.domain.models import ProcessDiagnostics
 from jusi.protocol import validate_event
 
 
@@ -110,16 +111,23 @@ def test_execution_error_is_local_and_kernel_remains_on() -> None:
     supervisor = Supervisor(FakeFactory(kernel))
     started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
 
+    code = "raise ValueError('bad value')"
     result = supervisor.execute(
         kernel_id=started["kernel"]["kernel_id"],
         notebook_id="nb",
         cell_id="cell",
-        code="raise ValueError('bad value')",
+        code=code,
         trace_id="trace_execute",
     )
 
     assert result["execution"]["outcome"] == "failed"
     assert result["failure"]["layer"] == "execution"
+    assert result["failure"]["details"] == {
+        "code_bytes": len(code.encode("utf-8")),
+        "code_line_count": 1,
+        "error_name": "ValueError",
+        "error_value": "bad value",
+    }
     assert supervisor.health()["kernel"]["state"] == "on"
 
 
@@ -151,21 +159,44 @@ def test_observed_kernel_death_turns_kernel_off_and_attempts_cleanup() -> None:
                 layer="kernel",
                 reason="kernel_died",
                 retryable=True,
+                diagnostics=ProcessDiagnostics(pid=4321, signal=9, stderr_excerpt="fatal\n"),
             )
 
     kernel = DeadKernel()
     supervisor = Supervisor(FakeFactory(kernel))
     started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
 
+    code = "α\n" + "body" * 100
     with pytest.raises(SupervisorError) as captured:
         supervisor.execute(
             kernel_id=started["kernel"]["kernel_id"],
             notebook_id="nb",
             cell_id="cell",
-            code="1 + 1",
+            code=code,
             trace_id="trace_execute",
         )
 
     assert captured.value.failure.reason == "kernel_died"
+    assert captured.value.failure.process == ProcessDiagnostics(pid=4321, signal=9, stderr_excerpt="fatal\n")
+    assert captured.value.failure.details == {
+        "code_bytes": len(code.encode("utf-8")),
+        "code_line_count": 2,
+    }
     assert supervisor.health()["kernel"]["state"] == "off"
     assert kernel.stopped
+    death_events = supervisor.events.events_after(0)
+    for event in death_events:
+        validate_event(event)
+    failures = [event for event in death_events if event["kind"] == "failure.occurred"]
+    assert [event["payload"]["layer"] for event in failures] == ["kernel", "execution"]
+    assert failures[1]["payload"]["caused_by_failure_id"] == failures[0]["payload"]["failure_id"]
+    failure_index = death_events.index(failures[0])
+    execution_failure_index = death_events.index(failures[1])
+    off_index = next(
+        index
+        for index, event in enumerate(death_events)
+        if event["kind"] == "kernel.state_changed" and event["payload"]["state"] == "off"
+    )
+    assert failure_index < execution_failure_index < off_index
+    assert death_events[failure_index]["payload"]["process"]["signal"] == 9
+    assert death_events[failure_index]["payload"]["details"]["code_bytes"] == len(code.encode("utf-8"))

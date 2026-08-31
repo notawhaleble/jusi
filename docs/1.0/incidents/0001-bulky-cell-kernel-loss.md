@@ -33,3 +33,11 @@ No cause may be assigned until evidence supports it.
 ## Regression Exit Criterion
 
 A minimized fixture must either execute successfully or fail with a structured, correctly scoped explanation that identifies the originating layer and preserves process diagnostics.
+
+## 1.0 Capture Progress
+
+The walking skeleton now captures bounded kernel stderr, PID, exit code/signal,
+execution payload byte/line counts, trace/resource identities, and ordered
+kernel-to-execution causal failures. Cleanup tests verify that diagnostic files
+and channels are still released after shutdown failure. The original input has
+not been recovered or minimized, so the incident remains open and cause unknown.

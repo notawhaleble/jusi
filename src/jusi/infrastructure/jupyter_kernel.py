@@ -148,20 +148,25 @@ class ManagedJupyterKernel:
             if self._closed:
                 return
             self._manager.shutdown_wait_time = max(timeout, 0.1)
+            failure: KernelAdapterError | None = None
+            failure_cause: Exception | None = None
             try:
                 self._manager.shutdown_kernel(now=False, restart=False)
             except Exception as exc:
                 try:
                     self._manager.shutdown_kernel(now=True, restart=False)
                 except Exception as force_exc:
-                    raise KernelAdapterError(
+                    failure_cause = force_exc
+                    failure = KernelAdapterError(
                         f"Graceful and forced kernel shutdown failed: {exc}; {force_exc}",
                         layer="kernel",
                         reason="cleanup_incomplete",
                         retryable=True,
                         diagnostics=_diagnostics(self._manager, self._stderr_path),
-                    ) from force_exc
+                    )
             self._close_resources()
+            if failure is not None:
+                raise failure from failure_cause
 
     def _is_alive(self) -> bool:
         try:

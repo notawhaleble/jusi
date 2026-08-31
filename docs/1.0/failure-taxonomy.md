@@ -109,3 +109,5 @@ Scope describes demonstrated impact, not guessed severity. Propagating to a wide
 ## Redaction
 
 Diagnostics must not include credentials, complete environment mappings, arbitrary cell bodies, or unbounded output. Stderr excerpts are bounded and marked when truncated. Trace correlation must not depend on logging sensitive payloads.
+
+Execution diagnostics currently record only UTF-8 code byte count and line count. They do not retain the submitted body.

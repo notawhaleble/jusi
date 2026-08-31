@@ -46,6 +46,8 @@ The explicit buffer session and first user commands are specified in [frontend-r
 
 The supervisor treats kernel, execution, client, plugin worker, service, protocol, and frontend transport as separate failure layers. Events and failures retain the originating layer and trace.
 
+Kernel process capture and caused execution-failure chronology are specified in [observability.md](observability.md).
+
 ## Implemented Walking-Skeleton Boundary
 
 The active production slice contains only:

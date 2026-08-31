@@ -150,6 +150,10 @@ class Supervisor:
         timeout: float = 10.0,
     ) -> dict[str, Any]:
         with self._lock:
+            execution_details = {
+                "code_bytes": len(code.encode("utf-8")),
+                "code_line_count": code.count("\n") + 1 if code else 0,
+            }
             kernel, handle = self._require_live_kernel(kernel_id, trace_id, "execute")
             if kernel.notebook_id != notebook_id:
                 raise self._request_failure(
@@ -194,9 +198,23 @@ class Supervisor:
                     scope="kernel" if exc.layer == "kernel" else "execution",
                     resource=ResourceRef("kernel", kernel_id) if exc.layer == "kernel" else execution_ref,
                     process=exc.diagnostics,
+                    details=execution_details,
                 )
                 self._emit_failure(kernel_failure)
                 if exc.layer == "kernel":
+                    execution_failure = self._failure(
+                        trace_id=trace_id,
+                        layer="execution",
+                        operation="execute",
+                        reason="cancelled",
+                        message="Execution ended because its kernel died",
+                        retryable=True,
+                        scope="execution",
+                        resource=execution_ref,
+                        details=execution_details,
+                        caused_by_failure_id=kernel_failure.failure_id,
+                    )
+                    self._emit_failure(execution_failure)
                     try:
                         handle.stop(timeout=1.0)
                     except KernelAdapterError:
@@ -257,7 +275,11 @@ class Supervisor:
                     retryable=False,
                     scope="execution",
                     resource=execution_ref,
-                    details={"error_name": result.error_name, "error_value": result.error_value},
+                    details={
+                        **execution_details,
+                        "error_name": result.error_name,
+                        "error_value": result.error_value,
+                    },
                 )
                 self._emit_failure(failure)
                 operation_outcome = "failed"
@@ -416,6 +438,7 @@ class Supervisor:
         resource: ResourceRef,
         process=None,
         details: dict[str, Any] | None = None,
+        caused_by_failure_id: str = "",
     ) -> Failure:
         return Failure(
             failure_id=new_id("fail"),
@@ -429,6 +452,7 @@ class Supervisor:
             resource=resource,
             process=process,
             details=details or {},
+            caused_by_failure_id=caused_by_failure_id,
         )
 
     def _emit_failure(self, failure: Failure) -> None:
