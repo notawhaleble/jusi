@@ -80,6 +80,8 @@ local function test_explicit_command_workflow()
     jusi.setup({ output_height = 5 })
     equal(vim.fn.exists(":JusiConnect"), 2)
     equal(vim.fn.exists(":JusiExecute"), 2)
+    equal(vim.fn.exists(":JusiServiceStart"), 2)
+    equal(vim.fn.exists(":JusiServiceStop"), 2)
 
     local notebook_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(notebook_buf, 0, -1, false, { "╭──", "1 + 1", "╰──" })

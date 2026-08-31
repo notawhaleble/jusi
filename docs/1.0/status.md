@@ -14,7 +14,7 @@ Updated: 2026-08-31
 - Textual output now projects unchanged through `nvim_open_term()` into a hidden, cell-attached terminal buffer. Renderer choice is media-driven.
 - Repository-root Neovim runtime loading exposes explicit connect, kernel start/stop, execute, output-open, and disconnect commands. Output opens in a predictable bottom split.
 - Frontend disconnect now closes only transport; the live buffer model, cell identities, kernel view, and output surfaces survive an inspect-before-replay reconnect.
-- Managed local service launch is specified as a future explicit, notebook-scoped process operation; transport connect never spawns or owns a service implicitly.
+- Explicit `JusiServiceStart`/`JusiServiceStop` now own one notebook-local service process, validate readiness, retain bounded stderr, distinguish process/supervisor/transport identities, and clean up on buffer destruction. Transport connect still never spawns implicitly.
 - Event-stream connection now inspects authoritative supervisor/kernel state and the retained replay window first. Supervisor replacement and expired cursors replace stale frontend state; replayable cursors consume only missing ordered events.
 - Every initial event kind now has a closed payload contract shared by JSON Schema, Python, Lua, and valid/invalid fixtures. Runtime supervisor events are validated in backend tests before frontend dispatch relies on them.
 - Kernel death and cleanup failures preserve bounded stderr plus PID/exit/signal diagnostics, and execution failures record non-secret payload size. Kernel death emits a caused execution failure before the authoritative `off` transition.
@@ -41,10 +41,10 @@ Deferred:
 - full notebook restart command
 - plugin discovery and workers
 - remote supervisors and `checking`
-- automatic local-service ownership, richer window/focus policy, and interactive PTY clients
+- richer window/focus policy and interactive PTY clients
 - input, interrupt, completion, rich media, PTY clients, and durable event storage
 
 ## Next Boundary
 
-1. implement the explicit local-service launcher with bounded readiness, stderr, and cleanup tests
-2. define full notebook restart as an atomic protocol and runtime operation after plugin discovery boundaries exist
+1. define plugin discovery/worker isolation boundaries required by full restart
+2. define full notebook restart as an atomic protocol and runtime operation after those boundaries exist

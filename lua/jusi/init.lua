@@ -1,6 +1,7 @@
 local controller_module = require("jusi.controller")
 local notebook = require("jusi.notebook")
 local presentation_module = require("jusi.presentation")
+local local_service = require("jusi.service.local")
 local transport_module = require("jusi.transport.http_sse")
 
 local M = {}
@@ -9,8 +10,11 @@ local config = {
   base_url = "http://127.0.0.1:8765",
   kernel_name = "python3",
   output_height = 12,
+  service_command = { "jusi", "serve" },
+  service_timeout_ms = 8000,
 }
 local sessions = {}
+local pending_services = {}
 local commands_created = false
 
 local function notify(message, level)
@@ -100,6 +104,84 @@ function M.connect(options)
     end
   end)
   return session
+end
+
+function M.start_service(options)
+  local opts = options or {}
+  local buf = opts.buf or vim.api.nvim_get_current_buf()
+  if sessions[buf] or pending_services[buf] then
+    notify("buffer already has a frontend session or pending service", vim.log.levels.ERROR)
+    return nil
+  end
+  local service
+  service = local_service.start({
+    command = opts.command or config.service_command,
+    timeout_ms = opts.timeout_ms or config.service_timeout_ms,
+    on_failure = function(failure)
+      notify(failure_text(failure), vim.log.levels.ERROR)
+    end,
+  }, function(started, failure)
+    pending_services[buf] = nil
+    if failure then
+      notify(failure_text(failure), vim.log.levels.ERROR)
+      return
+    end
+    if not vim.api.nvim_buf_is_valid(buf) then
+      started:stop()
+      return
+    end
+    local session = M.connect({ buf = buf, base_url = started.base_url })
+    session.service = started
+    notify("local service ready: " .. started.supervisor_id)
+  end)
+  if service.state ~= "stopped" then
+    pending_services[buf] = service
+    vim.api.nvim_create_autocmd("BufWipeout", {
+      buffer = buf,
+      once = true,
+      callback = function()
+        local pending = pending_services[buf]
+        pending_services[buf] = nil
+        if pending then
+          pending:stop()
+        end
+      end,
+    })
+  end
+  return service
+end
+
+function M.stop_service(buf)
+  local session = current_session(buf)
+  if not session or not session.service then
+    notify("current buffer has no owned local service", vim.log.levels.ERROR)
+    return nil
+  end
+  local service = session.service
+  local function stop_process()
+    session.controller:close()
+    service:stop(function(result, failure)
+      if failure then
+        notify(failure_text(failure), vim.log.levels.ERROR)
+      else
+        session.service = nil
+        notify("local service stopped: " .. result.result)
+      end
+    end)
+  end
+  if session.controller.kernel_state == "on" and session.controller.kernel_id then
+    return session.controller:stop_kernel(function(response, failure)
+      if failure then
+        notify(failure_text(failure), vim.log.levels.ERROR)
+        return
+      end
+      if response then
+        stop_process()
+      end
+    end)
+  end
+  stop_process()
+  return service
 end
 
 function M.start_kernel(buf)
@@ -192,6 +274,13 @@ function M._destroy_session(buf)
   end
   sessions[session.buf] = nil
   session.controller:close()
+  if session.service then
+    session.service:stop(function(_, failure)
+      if failure then
+        notify(failure_text(failure), vim.log.levels.ERROR)
+      end
+    end)
+  end
   session.presentation:close()
   session.model:detach()
   return true
@@ -205,6 +294,12 @@ local function create_commands()
   vim.api.nvim_create_user_command("JusiConnect", function(command)
     M.connect({ base_url = command.args ~= "" and command.args or nil })
   end, { nargs = "?" })
+  vim.api.nvim_create_user_command("JusiServiceStart", function()
+    M.start_service()
+  end, {})
+  vim.api.nvim_create_user_command("JusiServiceStop", function()
+    M.stop_service()
+  end, {})
   vim.api.nvim_create_user_command("JusiStartKernel", function()
     M.start_kernel()
   end, {})
@@ -236,6 +331,16 @@ function M.setup(options)
     vim.validate("output_height", opts.output_height, "number")
     assert(opts.output_height >= 1 and opts.output_height % 1 == 0, "output_height must be a positive integer")
     config.output_height = opts.output_height
+  end
+  if opts.service_command ~= nil then
+    vim.validate("service_command", opts.service_command, "table")
+    assert(#opts.service_command > 0, "service_command must not be empty")
+    config.service_command = vim.deepcopy(opts.service_command)
+  end
+  if opts.service_timeout_ms ~= nil then
+    vim.validate("service_timeout_ms", opts.service_timeout_ms, "number")
+    assert(opts.service_timeout_ms >= 1, "service_timeout_ms must be positive")
+    config.service_timeout_ms = opts.service_timeout_ms
   end
   create_commands()
 end

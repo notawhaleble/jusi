@@ -20,7 +20,7 @@ disconnect, kernel stop, and service stop are distinct operations.
 
 - `:JusiConnect` only inspects and connects to a supplied/configured URL. It
   never spawns a process.
-- A future `:JusiServiceStart` operation will launch the configured executable on
+- `:JusiServiceStart` launches the configured executable on
   an ephemeral loopback port, capture readiness JSON and bounded stderr, and
   record a frontend-owned service-process identity separately from
   `supervisor_id` and `transport_id`.
@@ -39,9 +39,9 @@ disconnect, kernel stop, and service stop are distinct operations.
   rather than an accidentally global service that rejects a second notebook.
 - Notebook-local services cost more processes but improve failure and plugin
   isolation. Evidence may justify a multi-notebook supervisor in a later ADR.
-- Launcher implementation is deferred until executable configuration, readiness
-  timeout, stderr retention, orphan prevention, and shutdown tests land
-  together.
+- Executable configuration, readiness timeout, stderr retention, buffer-owned
+  orphan prevention, and shutdown behavior are verified together by the
+  headless-Neovim end-to-end suite.
 - Full notebook restart may retain the control-plane service while replacing its
   kernel, workers, discovery state, and frontend runtime, provided fresh process
   boundaries prevent stale plugin imports as required by ADR 0005.

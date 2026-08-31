@@ -18,6 +18,7 @@ A failure must answer:
 - `frontend_transport`: HTTP/SSE reachability, cursor, or stream failure
 - `frontend_model`: local notebook structure, cell identity, or controller precondition failure; this layer is currently local-only and is not emitted by the backend SSE stream
 - `frontend_presentation`: local renderer selection or output-surface failure; this layer is currently local-only and is not emitted by the backend SSE stream
+- `frontend_service`: local service spawn, readiness, exit, or owned-process cleanup failure; this layer is local-only and is not emitted by backend SSE
 - `service`: request routing, persistence, configuration, or internal service failure
 - `supervisor`: ownership, orchestration, cleanup, and child supervision
 - `kernel`: kernel process, readiness, channels, or kernel protocol

@@ -51,3 +51,8 @@ cell delimiters and use:
 Connecting and disconnecting affect only the frontend transport. Disconnect
 preserves the current notebook model and output surfaces for later transport
 resumption. Neither command implicitly starts or stops a kernel.
+
+Alternatively, when `jusi` is on `PATH`, `:JusiServiceStart` explicitly launches
+and connects a notebook-local service; `:JusiServiceStop` stops its kernel and
+owned service. Configure another executable through
+`require("jusi").setup({ service_command = { ... } })`.

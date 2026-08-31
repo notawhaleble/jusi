@@ -12,13 +12,16 @@ preserves the notebook model, cell identities, and output projections and does
 not claim that the supervisor or kernel stopped. A later `:JusiConnect` on the
 same buffer inspects and resumes through ADR 0008.
 
-Wiping the notebook buffer destroys its frontend model and projections. That
-editor-local cleanup still does not stop a kernel; kernel stop remains an
-explicit service operation.
+Wiping the notebook buffer destroys its frontend model and projections. For an
+external service that editor-local cleanup does not stop a kernel. If the buffer
+explicitly launched and owns a local service process, destroying the owner also
+performs best-effort cleanup of that process and its kernel.
 
 The first commands are:
 
 - `:JusiConnect [base_url]`
+- `:JusiServiceStart`
+- `:JusiServiceStop`
 - `:JusiStartKernel`
 - `:JusiExecute`
 - `:JusiOpenOutput`
@@ -36,14 +39,22 @@ an edit callback.
 - `base_url` (default `http://127.0.0.1:8765`)
 - `kernel_name` (default `python3`)
 - `output_height` (default `12`)
+- `service_command` (default `{ "jusi", "serve" }`)
+- `service_timeout_ms` (default `8000`)
 
 The repository-root `plugin/jusi.lua` calls `setup()` with defaults so ordinary
 Neovim plugin managers expose commands immediately. Calling `setup()` in user
 configuration updates defaults without duplicating commands.
 
-## Deliberate Deferral
+## Owned Local Service
 
-This slice does not yet spawn or own the Python service process. The user starts
-a local service explicitly or supplies a supervisor URL. ADR 0009 fixes the
-future launcher boundary: explicit notebook-scoped ownership, captured readiness
-and stderr, and no hidden spawn in the transport-connect command.
+The user may start a service in a regular terminal and connect to its URL, or use
+`:JusiServiceStart` for an explicitly owned notebook-local process. The launcher
+uses an ephemeral loopback port, validates readiness JSON, retains the final
+16 KiB of stderr, and reports spawn/readiness/exit/cleanup failures with a
+distinct `service_process_id`.
+
+`:JusiServiceStop` first stops an authoritatively `on` kernel, then disconnects
+transport and terminates the owned service. A kernel-stop failure prevents the
+service from being silently killed. Wiping the owning notebook buffer performs
+best-effort owned-process cleanup; external URLs are never terminated.

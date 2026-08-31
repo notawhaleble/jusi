@@ -2,6 +2,18 @@
 
 ## Resources
 
+### Local Service Process
+
+An optional frontend-owned Python service process for one notebook runtime.
+
+- identity: `service_process_id`, distinct from the service's `supervisor_id`
+- lifetime: explicit service start/stop or owning notebook-buffer destruction
+- diagnostics: PID, bounded stderr, exit code/signal, and readiness failure
+- transport disconnect and kernel stop do not by themselves destroy this process
+
+Externally configured and remote service URLs have no frontend-owned service
+process resource and are never terminated by local cleanup.
+
 ### Supervisor
 
 The authoritative service instance managing kernels and their child resources.

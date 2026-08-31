@@ -1,6 +1,7 @@
 local controller_module = require("jusi.controller")
 local notebook = require("jusi.notebook")
 local presentation_module = require("jusi.presentation")
+local local_service = require("jusi.service.local")
 local transport_module = require("jusi.transport.http_sse")
 
 local M = {}
@@ -10,52 +11,31 @@ local function wait_for(timeout_ms, predicate, message)
 end
 
 local function start_service()
-  local state = { ready = nil, stdout = "", stderr = "" }
-  local process = vim.system({
-    ".venv/bin/python",
-    "-m",
-    "jusi",
-    "serve",
-    "--host",
-    "127.0.0.1",
-    "--port",
-    "0",
-  }, {
-    text = true,
-    stdout = function(_, data)
-      if not data then
-        return
-      end
-      state.stdout = state.stdout .. data
-      local newline = state.stdout:find("\n", 1, true)
-      if newline and not state.ready then
-        local line = state.stdout:sub(1, newline - 1)
-        vim.schedule(function()
-          state.ready = vim.json.decode(line)
-        end)
-      end
-    end,
-    stderr = function(_, data)
-      state.stderr = state.stderr .. (data or "")
-    end,
-  })
+  local started
+  local failure
+  local service = local_service.start({
+    command = { ".venv/bin/python", "-m", "jusi", "serve" },
+  }, function(value, start_failure)
+    started = value
+    failure = start_failure
+  end)
   if not vim.wait(8000, function()
-    return state.ready ~= nil
+    return started ~= nil or failure ~= nil
   end, 10) then
-    pcall(process.kill, process, 15)
-    process:wait(3000)
-    error("service did not become ready:\n" .. state.stderr)
+    service:stop()
+    error("service launcher did not complete")
   end
-  return process, state
+  assert(failure == nil, vim.inspect(failure))
+  return service
 end
 
 local function run_scenario()
-  local service, service_state = start_service()
+  local service = start_service()
   local model
   local controller
   local presentation
   local ok, result = xpcall(function()
-    local ready = service_state.ready
+    local ready = service.ready
     local buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "╭──", "1 + 1", "╰──" })
     model = notebook.attach(buf)
@@ -161,12 +141,20 @@ local function run_scenario()
   if model then
     model:detach()
   end
-  pcall(service.kill, service, 15)
-  local service_result = service:wait(5000)
+  local stop_result
+  local stop_failure
+  service:stop(function(result_value, failure_value)
+    stop_result = result_value
+    stop_failure = failure_value
+  end)
+  vim.wait(5000, function()
+    return stop_result ~= nil
+  end, 10)
   if not ok then
-    error(result .. "\nservice stderr:\n" .. service_state.stderr)
+    error(result .. "\nservice stderr:\n" .. service.stderr)
   end
-  assert(service_result.code == 0 or service_result.signal == 15, vim.inspect(service_result))
+  assert(stop_result ~= nil, "local service did not stop")
+  assert(stop_failure == nil, vim.inspect(stop_failure))
   return result
 end
 
