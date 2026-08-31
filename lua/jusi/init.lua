@@ -55,9 +55,24 @@ local function require_session(buf)
   return session
 end
 
+local function accepts_native_notebook(buf)
+  local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+  if notebook.parser.detect_format(lines) ~= "legacy_0_x" then
+    return true
+  end
+  notify(
+    "legacy 0.x `##` notebook detected; conversion is not implemented yet, so open it with jusivim 0.x",
+    vim.log.levels.ERROR
+  )
+  return false
+end
+
 function M.connect(options)
   local opts = options or {}
   local buf = opts.buf or vim.api.nvim_get_current_buf()
+  if not accepts_native_notebook(buf) then
+    return nil
+  end
   local existing = sessions[buf]
   if existing then
     existing.controller:connect()
@@ -109,6 +124,9 @@ end
 function M.start_service(options)
   local opts = options or {}
   local buf = opts.buf or vim.api.nvim_get_current_buf()
+  if not accepts_native_notebook(buf) then
+    return nil
+  end
   if sessions[buf] or pending_services[buf] then
     notify("buffer already has a frontend session or pending service", vim.log.levels.ERROR)
     return nil
@@ -319,6 +337,9 @@ end
 
 function M.setup(options)
   local opts = options or {}
+  -- `ftdetect/` covers normal plugin loading; this also covers explicit
+  -- `runtime plugin/jusi.lua` loading from a clean Neovim invocation.
+  vim.filetype.add({ extension = { vipynb = "jusi" } })
   if opts.base_url ~= nil then
     vim.validate("base_url", opts.base_url, "string")
     config.base_url = opts.base_url

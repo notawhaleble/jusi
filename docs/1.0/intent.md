@@ -31,6 +31,7 @@ The rewrite replaces confusing recovery rituals with small authoritative resourc
 ## Notebook Direction
 
 - The notebook remains plain text.
+- `.vipynb` remains the canonical notebook extension; Neovim assigns it the `jusi` filetype.
 - The notebook model owns stable cell identities.
 - Neovim extmarks anchor model identities to mutable buffer text.
 - Text, not syntax or extmarks, determines notebook structure and cell type.

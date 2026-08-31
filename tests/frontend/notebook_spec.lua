@@ -83,6 +83,12 @@ local function test_parser_exact_lines_and_local_recovery()
   truthy(result.cells[2].valid)
 end
 
+local function test_format_detection_distinguishes_native_and_legacy_notebooks()
+  equal(parser.detect_format({ "╭──", "##", "╰──" }), "native", "## is ordinary native cell text")
+  equal(parser.detect_format({ "##", "1 + 1", "##", "2 + 2" }), "legacy_0_x")
+  equal(parser.detect_format({ "plain text" }), "unstructured")
+end
+
 local function test_model_body_edit_is_local_and_preserves_identity()
   local buf = buffer_with({ "╭──", "one", "╰──", "╭──", "two", "╰──" })
   local model = notebook.attach(buf)
@@ -203,6 +209,7 @@ end
 function M.run()
   test_parser_valid_cell_and_history()
   test_parser_exact_lines_and_local_recovery()
+  test_format_detection_distinguishes_native_and_legacy_notebooks()
   test_model_body_edit_is_local_and_preserves_identity()
   test_structural_split_merge_and_deleted_identity_retirement()
   test_deleted_opener_never_reuses_identity()

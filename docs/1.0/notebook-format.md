@@ -4,6 +4,16 @@
 
 This is the accepted initial native 1.0 text format. It intentionally differs from the legacy `##` format used by `jusivim` 0.x.
 
+The canonical filename extension remains `.vipynb`. Jusi 1.0 assigns these
+buffers the Neovim filetype `jusi`; it does not reuse the behavioral meaning of
+the legacy `jusinb` filetype.
+
+The shared extension does not imply grammar compatibility. If a buffer has
+exact legacy `##` delimiters and no native structural lines, Jusi 1.0 identifies
+it as a 0.x notebook and refuses to attach or start a service. Explicit
+conversion behavior is still deferred. A `##` line inside a notebook containing
+native structure is ordinary cell or surrounding text, not a legacy delimiter.
+
 ## Cell Boundaries
 
 Cells use symmetric, symbol-only boundary lines:

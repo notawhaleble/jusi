@@ -18,6 +18,30 @@ function M.line_kind(line)
   return kinds[line]
 end
 
+---Classify a complete buffer conservatively before attaching the 1.0 model.
+---An exact legacy delimiter is significant only when no native structural
+---line is present; `##` remains valid ordinary text inside a native cell.
+---@param lines string[]
+---@return "native"|"legacy_0_x"|"unstructured"
+function M.detect_format(lines)
+  local has_native_structure = false
+  local has_legacy_opener = false
+  for _, line in ipairs(lines) do
+    if M.line_kind(line) then
+      has_native_structure = true
+    elseif line == "##" then
+      has_legacy_opener = true
+    end
+  end
+  if has_native_structure then
+    return "native"
+  end
+  if has_legacy_opener then
+    return "legacy_0_x"
+  end
+  return "unstructured"
+end
+
 local function diagnostic(code, row, cell_index, message)
   return {
     code = code,

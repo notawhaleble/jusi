@@ -139,8 +139,32 @@ local function test_explicit_command_workflow()
   end
 end
 
+local function test_vipynb_filetype_and_legacy_connection_guard()
+  vim.cmd("runtime ftdetect/jusi.lua")
+  equal(vim.filetype.match({ filename = "notebook.vipynb" }), "jusi")
+
+  local notifications = {}
+  local original_notify = vim.notify
+  vim.notify = function(message, level)
+    table.insert(notifications, { message = message, level = level })
+  end
+  local ok, failure = xpcall(function()
+    local legacy_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(legacy_buf, 0, -1, false, { "##", "1 + 1" })
+    equal(jusi.connect({ buf = legacy_buf, transport = FakeTransport.new() }), nil)
+    equal(jusi._sessions[legacy_buf], nil)
+    assert(notifications[1].message:find("legacy 0.x", 1, true))
+    vim.api.nvim_buf_delete(legacy_buf, { force = true })
+  end, debug.traceback)
+  vim.notify = original_notify
+  if not ok then
+    error(failure)
+  end
+end
+
 function M.run()
   test_explicit_command_workflow()
+  test_vipynb_filetype_and_legacy_connection_guard()
 end
 
 return M
