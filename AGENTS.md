@@ -43,6 +43,7 @@ Run the Python and headless Neovim suites with:
 ```sh
 .venv/bin/python -m pytest -q
 nvim --headless -u tests/frontend/minimal_init.lua -l tests/frontend/run.lua
+nvim --headless -u tests/frontend/minimal_init.lua -l tests/e2e/run.lua
 ```
 
 The black-box test requires an environment that permits loopback HTTP and Jupyter ZeroMQ sockets; it skips explicitly in restricted sandboxes.

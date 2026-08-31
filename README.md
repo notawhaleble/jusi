@@ -8,7 +8,7 @@ Jusi 1.0 is a unified Neovim notebook system containing:
 - backend, frontend, and end-to-end tests
 - durable architecture, incident, and continuity records
 
-The foundation and service walking skeleton are implemented. The Python package provides the authoritative supervisor, managed Jupyter adapter, HTTP commands, and ordered SSE events. The Neovim frontend now provides the symbolic notebook parser, model-owned cell identities, extmark anchoring, localized reconciliation, and a 10,000-line performance harness; commands, rendering, and backend binding remain deferred.
+The foundation and walking skeleton are implemented. The Python package provides the authoritative supervisor, managed Jupyter adapter, HTTP commands, and ordered SSE events. The Neovim frontend provides the symbolic notebook parser, model-owned cell identities, extmark anchoring, localized reconciliation, HTTP/SSE transport, and service controller. A headless test proves the full start, execute, ordered-result, and stop path without an interactive UI. Commands and rendering remain deferred.
 
 The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-compatible 0.x frontend. Its Vimscript is not being moved into this repository.
 
@@ -26,4 +26,4 @@ The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-co
 
 ## Current Boundary
 
-The implemented slice is deliberately narrow: service readiness, kernel start, `1 + 1`, ordered result event, idempotent kernel stop, and the backend-independent notebook model. Existing 0.x reconnect, healthcheck, prepared-client, stdio, and process-oriented terminal-attachment behavior is not part of 1.0.
+The implemented slice is deliberately narrow: service readiness, kernel start, `1 + 1`, ordered result event, idempotent kernel stop, the backend-independent notebook model, and a replaceable headless-Neovim transport/controller binding. Existing 0.x reconnect, healthcheck, prepared-client, stdio, and process-oriented terminal-attachment behavior is not part of 1.0.

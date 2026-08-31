@@ -174,6 +174,7 @@ class EventsHandler(BaseHandler):
         self.set_header("Content-Type", "text/event-stream; charset=utf-8")
         self.set_header("Cache-Control", "no-cache")
         self.set_header("X-Accel-Buffering", "no")
+        self.write(": connected\n\n")
         await self.flush()
 
         cursor = after

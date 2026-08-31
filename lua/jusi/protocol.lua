@@ -71,6 +71,25 @@ function M.validate_event(event)
       return false, "missing event field: " .. field
     end
   end
+  for _, field in ipairs({ "event_id", "supervisor_id", "occurred_at", "trace_id", "layer", "operation", "kind" }) do
+    if not nonempty_string(event[field]) then
+      return false, field .. " must be a non-empty string"
+    end
+  end
+  if type(event.sequence) ~= "number" or event.sequence < 1 or event.sequence % 1 ~= 0 then
+    return false, "sequence must be a positive integer"
+  end
+  if type(event.resource) ~= "table" or not nonempty_string(event.resource.kind) or not nonempty_string(event.resource.id) then
+    return false, "resource kind and id must be non-empty strings"
+  end
+  for field, _ in pairs(event.resource) do
+    if field ~= "kind" and field ~= "id" then
+      return false, "resource must contain exactly kind and id"
+    end
+  end
+  if type(event.payload) ~= "table" then
+    return false, "payload must be an object"
+  end
   return true
 end
 

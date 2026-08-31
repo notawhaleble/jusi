@@ -26,7 +26,11 @@ local invalid_event = read_json("protocol/fixtures/v1/invalid/event-missing-sequ
 local invalid_event_ok = protocol.validate_event(invalid_event)
 assert(not invalid_event_ok, "invalid event fixture must be rejected")
 
-dofile("tests/frontend/notebook_spec.lua").run()
+local specs = vim.fn.glob("tests/frontend/*_spec.lua", false, true)
+table.sort(specs)
+for _, path in ipairs(specs) do
+  dofile(path).run()
+end
 dofile("tests/frontend/benchmark.lua").run()
 
 print("Lua frontend tests passed")

@@ -36,7 +36,7 @@ Presentation does not alter kernel ownership or state.
 
 The Lua model parses visible plain text into stable cells. Extmarks preserve anchors as text moves. Localized edits update only the affected parse and projection regions. Backend event correlation uses model cell IDs, never line numbers.
 
-The implemented parser, linked reconciliation model, and edit paths are specified in [frontend-notebook-model.md](frontend-notebook-model.md).
+The implemented parser, linked reconciliation model, and edit paths are specified in [frontend-notebook-model.md](frontend-notebook-model.md). The service binding and its separation from rendering are specified in [frontend-controller.md](frontend-controller.md).
 
 ## Failure Boundaries
 
@@ -52,6 +52,7 @@ The active production slice contains only:
 - ordered SSE events with cursor
 - plain `text/plain` result event
 - structured failure and process diagnostics sufficient for startup/death
-- black-box real-kernel test
+- Python and headless-Neovim black-box real-kernel tests
+- replaceable Lua HTTP/SSE adapter and resource controller
 
-It excludes the Lua notebook UI, plugins, remote checking, attach, reconnect terminology, PTYs, completion, and rich media.
+It excludes user commands and rendering, plugins, remote checking, authoritative stream resynchronization, PTYs, completion, and rich media.

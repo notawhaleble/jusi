@@ -25,4 +25,5 @@ These become mandatory as their suites land:
 ```sh
 .venv/bin/python -m pytest tests/backend tests/conformance tests/e2e
 nvim --headless -u tests/frontend/minimal_init.lua -l tests/frontend/run.lua
+nvim --headless -u tests/frontend/minimal_init.lua -l tests/e2e/run.lua
 ```
