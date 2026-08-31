@@ -51,6 +51,22 @@ def test_python_consumes_shared_event_fixtures() -> None:
     with pytest.raises(ProtocolValidationError, match="sequence"):
         validate_event(invalid)
 
+    scenario = load_json(fixture_root / "scenarios" / "event-payloads.json")
+    assert {validate_event(item)["kind"] for item in scenario["events"]} == {
+        "service.ready",
+        "operation.started",
+        "operation.completed",
+        "kernel.state_changed",
+        "execution.started",
+        "execution.output",
+        "execution.completed",
+        "failure.occurred",
+    }
+
+    malformed_payload = load_json(fixture_root / "invalid" / "event-output-missing-data.json")
+    with pytest.raises(ProtocolValidationError, match="data"):
+        validate_event(malformed_payload)
+
 
 def test_python_consumes_shared_health_fixtures() -> None:
     fixture_root = ROOT / "protocol" / "fixtures" / "v1"

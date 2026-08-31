@@ -11,6 +11,15 @@ local function equal(actual, expected, message)
 end
 
 local function event(sequence, kind, payload)
+  local resource_kind = "execution"
+  local resource_id = payload and payload.execution_id or "exe_test"
+  if kind == "service.ready" then
+    resource_kind = "supervisor"
+    resource_id = "sup_test"
+  elseif kind == "kernel.state_changed" then
+    resource_kind = "kernel"
+    resource_id = payload.kernel_id
+  end
   return {
     protocol_version = 1,
     event_id = string.format("evt_%03d", sequence),
@@ -21,7 +30,7 @@ local function event(sequence, kind, payload)
     layer = kind == "kernel.state_changed" and "kernel" or "execution",
     operation = kind == "service.ready" and "service_start" or (kind == "kernel.state_changed" and "start_kernel" or "execute"),
     kind = kind,
-    resource = { kind = kind == "kernel.state_changed" and "kernel" or "execution", id = "resource_test" },
+    resource = { kind = resource_kind, id = resource_id },
     payload = payload or {},
   }
 end
@@ -130,6 +139,7 @@ local function test_controller_routes_identity_and_preserves_kernel_truth_on_gap
     client_id = "cli_test",
     outcome = "running",
     started_at = "2026-08-31T12:00:00Z",
+    completed_at = vim.NIL,
   }))
   transport.event_callbacks.on_event(event(4, "execution.output", {
     execution_id = "exe_test",
@@ -143,7 +153,13 @@ local function test_controller_routes_identity_and_preserves_kernel_truth_on_gap
 
   transport.event_callbacks.on_event(event(6, "execution.completed", {
     execution_id = "exe_test",
+    kernel_id = "krn_test",
+    notebook_id = model.notebook_id,
+    cell_id = cell_id,
+    client_id = "cli_test",
     outcome = "succeeded",
+    started_at = "2026-08-31T12:00:00Z",
+    completed_at = "2026-08-31T12:00:01Z",
   }))
   equal(controller.transport_state, "disconnected")
   equal(controller.kernel_state, "on", "a transport gap must not invent kernel death")

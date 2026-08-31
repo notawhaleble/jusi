@@ -8,6 +8,7 @@ from jusi.application.ports import (
     KernelOutput,
 )
 from jusi.application.supervisor import Supervisor, SupervisorError
+from jusi.protocol import validate_event
 
 
 class FakeKernel:
@@ -69,6 +70,8 @@ def test_walking_skeleton_event_order_and_idempotent_stop() -> None:
     assert kernel.stopped
 
     events = supervisor.events.events_after(0)
+    for event in events:
+        validate_event(event)
     assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
     assert [event["kind"] for event in events[:10]] == [
         "service.ready",

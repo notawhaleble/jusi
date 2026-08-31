@@ -25,6 +25,14 @@ assert(event.payload.data == "\27[31mred\27[0m", "ANSI output must remain unchan
 local invalid_event = read_json("protocol/fixtures/v1/invalid/event-missing-sequence.json")
 local invalid_event_ok = protocol.validate_event(invalid_event)
 assert(not invalid_event_ok, "invalid event fixture must be rejected")
+local event_scenario = read_json("protocol/fixtures/v1/scenarios/event-payloads.json")
+for _, fixture_event in ipairs(event_scenario.events) do
+  local fixture_ok, fixture_error = protocol.validate_event(fixture_event)
+  assert(fixture_ok, fixture_error)
+end
+local malformed_output = read_json("protocol/fixtures/v1/invalid/event-output-missing-data.json")
+local malformed_output_ok = protocol.validate_event(malformed_output)
+assert(not malformed_output_ok, "malformed output payload must be rejected")
 
 local health = read_json("protocol/fixtures/v1/valid/health-response.json")
 local health_ok, health_error = protocol.validate_health_response(health)

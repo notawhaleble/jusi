@@ -53,6 +53,8 @@ function FakeTransport:request(method, path, payload, _, callback)
 end
 
 local function event(sequence, kind, payload)
+  local resource_kind = kind == "service.ready" and "supervisor" or "execution"
+  local resource_id = kind == "service.ready" and "sup_runtime" or payload.execution_id
   return {
     protocol_version = 1,
     event_id = "evt_" .. sequence,
@@ -63,7 +65,7 @@ local function event(sequence, kind, payload)
     layer = kind == "service.ready" and "service" or "execution",
     operation = kind == "service.ready" and "service_start" or "execute",
     kind = kind,
-    resource = { kind = kind == "service.ready" and "supervisor" or "execution", id = "resource_runtime" },
+    resource = { kind = resource_kind, id = resource_id },
     payload = payload,
   }
 end
@@ -98,6 +100,8 @@ local function test_explicit_command_workflow()
       cell_id = cell_id,
       client_id = "cli_runtime",
       outcome = "running",
+      started_at = "2026-08-31T12:00:00Z",
+      completed_at = vim.NIL,
     }))
     transport.callbacks.on_event(event(3, "execution.output", {
       execution_id = "exe_runtime",

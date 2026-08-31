@@ -1,13 +1,99 @@
 local M = {}
 
+local function nonempty_string(value)
+  return type(value) == "string" and value ~= ""
+end
+
+local function set(values)
+  local result = {}
+  for _, value in ipairs(values) do
+    result[value] = true
+  end
+  return result
+end
+
 local command_fields = {
   start_kernel = { "notebook_id", "kernel_name" },
   execute = { "kernel_id", "notebook_id", "cell_id", "code" },
   stop_kernel = { "kernel_id" },
 }
+local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_worker" })
+local operations = set({ "service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events" })
+local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "failure.occurred" })
+local resource_kinds = set({ "supervisor", "kernel", "execution", "client", "plugin_worker", "transport", "notebook", "cell" })
+local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
+local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_worker", "kernel", "supervisor" })
 
-local function nonempty_string(value)
-  return type(value) == "string" and value ~= ""
+local function exact_fields(value, required, optional)
+  for _, field in ipairs(required) do
+    if value[field] == nil then return false, "payload missing field: " .. field end
+  end
+  local allowed = {}
+  for _, field in ipairs(required) do allowed[field] = true end
+  for _, field in ipairs(optional or {}) do allowed[field] = true end
+  for field, _ in pairs(value) do
+    if not allowed[field] then return false, "payload unknown field: " .. field end
+  end
+  return true
+end
+
+local function valid_resource(value)
+  if type(value) ~= "table" or not resource_kinds[value.kind] or not nonempty_string(value.id) then return false end
+  for field, _ in pairs(value) do if field ~= "kind" and field ~= "id" then return false end end
+  return true
+end
+
+local function null(value)
+  return value == nil or value == vim.NIL
+end
+
+local function validate_event_payload(event)
+  local payload = event.payload
+  local kind = event.kind
+  local ok, err
+  if kind == "service.ready" then
+    ok, err = exact_fields(payload, { "supervisor_id" })
+    if not ok then return false, err end
+    if not nonempty_string(payload.supervisor_id) or payload.supervisor_id ~= event.supervisor_id then return false, "service.ready supervisor identity mismatch" end
+    if event.resource.kind ~= "supervisor" or event.resource.id ~= event.supervisor_id then return false, "service.ready resource mismatch" end
+  elseif kind == "operation.started" or kind == "operation.completed" then
+    ok, err = exact_fields(payload, { "operation_id", "trace_id", "kind", "outcome", "started_at", "completed_at" }, kind == "operation.completed" and { "failure_id", "cleanup" } or {})
+    if not ok then return false, err end
+    for _, field in ipairs({ "operation_id", "trace_id", "kind", "started_at" }) do if not nonempty_string(payload[field]) then return false, "invalid operation payload" end end
+    if not operations[payload.kind] or payload.trace_id ~= event.trace_id then return false, "operation payload identity is invalid" end
+    if kind == "operation.started" and (payload.outcome ~= "running" or not null(payload.completed_at)) then return false, "operation.started must be running and incomplete" end
+    if kind == "operation.completed" and (not ({ succeeded = true, failed = true, cancelled = true })[payload.outcome] or not nonempty_string(payload.completed_at)) then return false, "operation.completed has invalid outcome or time" end
+    if payload.failure_id ~= nil and not nonempty_string(payload.failure_id) then return false, "invalid failure_id" end
+    if payload.cleanup ~= nil and type(payload.cleanup) ~= "table" then return false, "invalid cleanup" end
+  elseif kind == "kernel.state_changed" then
+    ok, err = exact_fields(payload, { "kernel_id", "previous_state", "state" })
+    if not ok then return false, err end
+    if not nonempty_string(payload.kernel_id) or not ({ off = true, on = true })[payload.previous_state] or not ({ off = true, on = true })[payload.state] then return false, "invalid kernel state payload" end
+    if event.resource.kind ~= "kernel" or event.resource.id ~= payload.kernel_id then return false, "kernel event resource mismatch" end
+  elseif kind == "execution.started" or kind == "execution.completed" then
+    ok, err = exact_fields(payload, { "execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at" })
+    if not ok then return false, err end
+    for _, field in ipairs({ "execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "started_at" }) do if not nonempty_string(payload[field]) then return false, "invalid execution payload" end end
+    local outcomes = { pending = true, running = true, succeeded = true, failed = true, interrupted = true, cancelled = true }
+    if not outcomes[payload.outcome] then return false, "invalid execution outcome" end
+    if kind == "execution.started" and (payload.outcome ~= "running" or not null(payload.completed_at)) then return false, "execution.started must be running and incomplete" end
+    if kind == "execution.completed" and ((payload.outcome == "pending" or payload.outcome == "running") or not nonempty_string(payload.completed_at)) then return false, "execution.completed has invalid outcome or time" end
+    if event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "execution event resource mismatch" end
+  elseif kind == "execution.output" then
+    ok, err = exact_fields(payload, { "execution_id", "client_id", "output_kind", "media_type", "data" })
+    if not ok then return false, err end
+    if not nonempty_string(payload.execution_id) or not nonempty_string(payload.client_id) or not nonempty_string(payload.media_type) or type(payload.data) ~= "string" or not ({ stdout = true, stderr = true, result = true, display = true })[payload.output_kind] then return false, "invalid execution output payload" end
+    if event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "execution output resource mismatch" end
+  elseif kind == "failure.occurred" then
+    ok, err = exact_fields(payload, { "failure_id", "trace_id", "layer", "operation", "reason", "message", "retryable", "scope", "resource", "occurred_at" }, { "process", "caused_by_failure_id", "details" })
+    if not ok then return false, err end
+    for _, field in ipairs({ "failure_id", "trace_id", "reason", "message", "scope", "occurred_at" }) do if not nonempty_string(payload[field]) then return false, "invalid failure payload" end end
+    if payload.trace_id ~= event.trace_id or not layers[payload.layer] or not operations[payload.operation] or not failure_reasons[payload.reason] or not failure_scopes[payload.scope] or type(payload.retryable) ~= "boolean" or not valid_resource(payload.resource) or not vim.deep_equal(payload.resource, event.resource) then return false, "invalid failure origin or resource" end
+    if payload.details ~= nil and type(payload.details) ~= "table" then return false, "invalid failure details" end
+    if payload.process ~= nil and type(payload.process) ~= "table" then return false, "invalid failure process" end
+    if payload.caused_by_failure_id ~= nil and not nonempty_string(payload.caused_by_failure_id) then return false, "invalid caused_by_failure_id" end
+  end
+  return true
 end
 
 function M.validate_command(command, expected_kind)
@@ -90,7 +176,10 @@ function M.validate_event(event)
   if type(event.payload) ~= "table" then
     return false, "payload must be an object"
   end
-  return true
+  if not layers[event.layer] or not operations[event.operation] or not event_kinds[event.kind] or not valid_resource(event.resource) then
+    return false, "unsupported event envelope value"
+  end
+  return validate_event_payload(event)
 end
 
 function M.validate_health_response(response)

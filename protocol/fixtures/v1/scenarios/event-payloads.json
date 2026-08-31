@@ -1,0 +1,61 @@
+{
+  "scenario": "all-initial-event-payloads",
+  "events": [
+    {
+      "protocol_version": 1, "event_id": "evt_001", "supervisor_id": "sup_fixture", "sequence": 1,
+      "occurred_at": "2026-08-31T12:00:00Z", "trace_id": "trace_service", "layer": "service",
+      "operation": "service_start", "kind": "service.ready",
+      "resource": {"kind": "supervisor", "id": "sup_fixture"},
+      "payload": {"supervisor_id": "sup_fixture"}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_002", "supervisor_id": "sup_fixture", "sequence": 2,
+      "occurred_at": "2026-08-31T12:00:01Z", "trace_id": "trace_start", "layer": "supervisor",
+      "operation": "start_kernel", "kind": "operation.started",
+      "resource": {"kind": "supervisor", "id": "sup_fixture"},
+      "payload": {"operation_id": "op_start", "trace_id": "trace_start", "kind": "start_kernel", "outcome": "running", "started_at": "2026-08-31T12:00:01Z", "completed_at": null}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_003", "supervisor_id": "sup_fixture", "sequence": 3,
+      "occurred_at": "2026-08-31T12:00:02Z", "trace_id": "trace_start", "layer": "kernel",
+      "operation": "start_kernel", "kind": "kernel.state_changed",
+      "resource": {"kind": "kernel", "id": "krn_fixture"},
+      "payload": {"kernel_id": "krn_fixture", "previous_state": "off", "state": "on"}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_004", "supervisor_id": "sup_fixture", "sequence": 4,
+      "occurred_at": "2026-08-31T12:00:03Z", "trace_id": "trace_start", "layer": "supervisor",
+      "operation": "start_kernel", "kind": "operation.completed",
+      "resource": {"kind": "kernel", "id": "krn_fixture"},
+      "payload": {"operation_id": "op_start", "trace_id": "trace_start", "kind": "start_kernel", "outcome": "succeeded", "started_at": "2026-08-31T12:00:01Z", "completed_at": "2026-08-31T12:00:03Z"}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_005", "supervisor_id": "sup_fixture", "sequence": 5,
+      "occurred_at": "2026-08-31T12:00:04Z", "trace_id": "trace_execute", "layer": "execution",
+      "operation": "execute", "kind": "execution.started",
+      "resource": {"kind": "execution", "id": "exe_fixture"},
+      "payload": {"execution_id": "exe_fixture", "kernel_id": "krn_fixture", "notebook_id": "nb_fixture", "cell_id": "cell_fixture", "client_id": "cli_fixture", "outcome": "running", "started_at": "2026-08-31T12:00:04Z", "completed_at": null}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_006", "supervisor_id": "sup_fixture", "sequence": 6,
+      "occurred_at": "2026-08-31T12:00:05Z", "trace_id": "trace_execute", "layer": "execution",
+      "operation": "execute", "kind": "execution.output",
+      "resource": {"kind": "execution", "id": "exe_fixture"},
+      "payload": {"execution_id": "exe_fixture", "client_id": "cli_fixture", "output_kind": "result", "media_type": "text/plain", "data": "2"}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_007", "supervisor_id": "sup_fixture", "sequence": 7,
+      "occurred_at": "2026-08-31T12:00:06Z", "trace_id": "trace_execute", "layer": "execution",
+      "operation": "execute", "kind": "execution.completed",
+      "resource": {"kind": "execution", "id": "exe_fixture"},
+      "payload": {"execution_id": "exe_fixture", "kernel_id": "krn_fixture", "notebook_id": "nb_fixture", "cell_id": "cell_fixture", "client_id": "cli_fixture", "outcome": "succeeded", "started_at": "2026-08-31T12:00:04Z", "completed_at": "2026-08-31T12:00:06Z"}
+    },
+    {
+      "protocol_version": 1, "event_id": "evt_008", "supervisor_id": "sup_fixture", "sequence": 8,
+      "occurred_at": "2026-08-31T12:00:07Z", "trace_id": "trace_execute", "layer": "execution",
+      "operation": "execute", "kind": "failure.occurred",
+      "resource": {"kind": "execution", "id": "exe_fixture"},
+      "payload": {"failure_id": "fail_fixture", "trace_id": "trace_execute", "layer": "execution", "operation": "execute", "reason": "execution_error", "message": "bad value", "retryable": false, "scope": "execution", "resource": {"kind": "execution", "id": "exe_fixture"}, "occurred_at": "2026-08-31T12:00:07Z"}
+    }
+  ]
+}

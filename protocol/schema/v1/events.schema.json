@@ -54,6 +54,61 @@
   },
   "allOf": [
     {
+      "if": {"properties": {"kind": {"const": "service.ready"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["supervisor_id"],
+            "properties": {"supervisor_id": {"type": "string", "minLength": 3}},
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "operation.started"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["operation_id", "trace_id", "kind", "outcome", "started_at", "completed_at"],
+            "properties": {
+              "operation_id": {"type": "string", "minLength": 3},
+              "trace_id": {"type": "string", "minLength": 3},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "outcome": {"const": "running"},
+              "started_at": {"type": "string", "format": "date-time"},
+              "completed_at": {"type": "null"}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "operation.completed"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["operation_id", "trace_id", "kind", "outcome", "started_at", "completed_at"],
+            "properties": {
+              "operation_id": {"type": "string", "minLength": 3},
+              "trace_id": {"type": "string", "minLength": 3},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "outcome": {"enum": ["succeeded", "failed", "cancelled"]},
+              "started_at": {"type": "string", "format": "date-time"},
+              "completed_at": {"type": "string", "format": "date-time"},
+              "failure_id": {"type": "string", "minLength": 3},
+              "cleanup": {"type": "object"}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
       "if": {"properties": {"kind": {"const": "kernel.state_changed"}}},
       "then": {
         "properties": {
@@ -64,6 +119,50 @@
               "kernel_id": {"type": "string"},
               "previous_state": {"enum": ["off", "on"]},
               "state": {"enum": ["off", "on"]}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "execution.started"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at"],
+            "properties": {
+              "execution_id": {"type": "string", "minLength": 3},
+              "kernel_id": {"type": "string", "minLength": 3},
+              "notebook_id": {"type": "string", "minLength": 1},
+              "cell_id": {"type": "string", "minLength": 1},
+              "client_id": {"type": "string", "minLength": 3},
+              "outcome": {"const": "running"},
+              "started_at": {"type": "string", "format": "date-time"},
+              "completed_at": {"type": "null"}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "execution.completed"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at"],
+            "properties": {
+              "execution_id": {"type": "string", "minLength": 3},
+              "kernel_id": {"type": "string", "minLength": 3},
+              "notebook_id": {"type": "string", "minLength": 1},
+              "cell_id": {"type": "string", "minLength": 1},
+              "client_id": {"type": "string", "minLength": 3},
+              "outcome": {"enum": ["succeeded", "failed", "interrupted", "cancelled"]},
+              "started_at": {"type": "string", "format": "date-time"},
+              "completed_at": {"type": "string", "format": "date-time"}
             },
             "additionalProperties": false
           }
