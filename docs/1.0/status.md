@@ -59,6 +59,6 @@ Deferred:
 
 ## Next Boundary
 
-1. define how opaque exact-worker results become generic client resources and media without importing provider semantics into core
+1. review proposed ADR 0015: keep plugin payloads opaque inside a core-owned client disposition/presentation/media result envelope
 2. activate an exact worker only after a validated kernel handoff
 3. expose generic plugin operations only after worker identity, containment, and conformance tests pass
