@@ -26,6 +26,13 @@ local invalid_event = read_json("protocol/fixtures/v1/invalid/event-missing-sequ
 local invalid_event_ok = protocol.validate_event(invalid_event)
 assert(not invalid_event_ok, "invalid event fixture must be rejected")
 
+local health = read_json("protocol/fixtures/v1/valid/health-response.json")
+local health_ok, health_error = protocol.validate_health_response(health)
+assert(health_ok, health_error)
+local invalid_health = read_json("protocol/fixtures/v1/invalid/health-invalid-window.json")
+local invalid_health_ok = protocol.validate_health_response(invalid_health)
+assert(not invalid_health_ok, "invalid health fixture must be rejected")
+
 local specs = vim.fn.glob("tests/frontend/*_spec.lua", false, true)
 table.sort(specs)
 for _, path in ipairs(specs) do

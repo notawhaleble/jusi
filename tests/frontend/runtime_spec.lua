@@ -29,7 +29,16 @@ end
 
 function FakeTransport:request(method, path, payload, _, callback)
   table.insert(self.requests, { method = method, path = path, payload = payload })
-  if payload.kind == "start_kernel" then
+  if path == "/v1/health" then
+    callback({
+      ok = true,
+      status = "ready",
+      supervisor_id = "sup_runtime",
+      earliest_event_sequence = 1,
+      event_sequence = 0,
+      kernel = nil,
+    }, nil)
+  elseif payload.kind == "start_kernel" then
     callback({ ok = true, kernel = { kernel_id = "krn_runtime", state = "on" } }, nil)
   elseif payload.kind == "execute" then
     callback({ ok = true, execution = { execution_id = "exe_runtime", outcome = "succeeded" } }, nil)
@@ -80,7 +89,7 @@ local function test_explicit_command_workflow()
     jusi.start_kernel(notebook_buf)
     equal(session.controller.kernel_state, "on")
     jusi.execute(notebook_buf, 1)
-    equal(transport.requests[2].payload.code, "1 + 1")
+    equal(transport.requests[3].payload.code, "1 + 1")
     local cell_id = session.model:cell_at_row(1).id
     transport.callbacks.on_event(event(2, "execution.started", {
       execution_id = "exe_runtime",

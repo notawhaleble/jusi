@@ -20,13 +20,17 @@ perform work from buffer edit callbacks.
 - Execution output is routed through the execution identity announced by
   `execution.started`, not through a current cursor or line number.
 
-## Event Ordering
+## Inspection And Event Ordering
 
-The controller retains the last accepted sequence in one supervisor epoch. It
-ignores duplicate events and closes the stream on a gap or invalid envelope.
-It never fabricates missing state. Resynchronization after a gap, expired cursor,
-or changed supervisor is intentionally deferred until the inspection contract
-can make that operation authoritative.
+The controller inspects health before opening SSE and retains the last accepted
+sequence in one supervisor epoch. First contact, supervisor replacement, or an
+unavailable cursor applies the authoritative snapshot and resumes after its
+latest sequence. A cursor still inside the retained window replays from its
+current position without first applying newer snapshot state.
+
+The controller ignores duplicate events and closes the stream on a gap or
+invalid envelope. It never fabricates missing state. The exact resynchronization
+rules are recorded in ADR 0008.
 
 ## Transport Adapter
 

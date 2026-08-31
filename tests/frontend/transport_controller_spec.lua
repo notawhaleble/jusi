@@ -29,11 +29,23 @@ end
 local FakeTransport = {}
 FakeTransport.__index = FakeTransport
 
-function FakeTransport.new()
-  return setmetatable({ transport_id = "trn_test", requests = {} }, FakeTransport)
+function FakeTransport.new(health)
+  return setmetatable({
+    transport_id = "trn_test",
+    requests = {},
+    health = health or {
+      ok = true,
+      status = "ready",
+      supervisor_id = "sup_test",
+      earliest_event_sequence = 1,
+      event_sequence = 0,
+      kernel = nil,
+    },
+  }, FakeTransport)
 end
 
-function FakeTransport:connect_events(_, callbacks)
+function FakeTransport:connect_events(after, callbacks)
+  self.connected_after = after
   self.event_callbacks = callbacks
   return {
     closed = false,
@@ -45,7 +57,9 @@ end
 
 function FakeTransport:request(method, path, payload, _, callback)
   table.insert(self.requests, { method = method, path = path, payload = payload })
-  if payload.kind == "start_kernel" then
+  if path == "/v1/health" then
+    callback(vim.deepcopy(self.health), nil)
+  elseif payload.kind == "start_kernel" then
     callback({ ok = true, kernel = { kernel_id = "krn_test", state = "on" } }, nil)
   elseif payload.kind == "execute" then
     callback({ ok = true, execution = { execution_id = "exe_test", outcome = "succeeded" } }, nil)
@@ -97,7 +111,7 @@ local function test_controller_routes_identity_and_preserves_kernel_truth_on_gap
   transport.event_callbacks.on_event(event(1, "service.ready", { supervisor_id = "sup_test" }))
   controller:start_kernel()
   equal(controller.kernel_state, "on")
-  equal(transport.requests[1].payload.notebook_id, model.notebook_id)
+  equal(transport.requests[2].payload.notebook_id, model.notebook_id)
 
   transport.event_callbacks.on_event(event(2, "kernel.state_changed", {
     kernel_id = "krn_test",
@@ -105,8 +119,8 @@ local function test_controller_routes_identity_and_preserves_kernel_truth_on_gap
     state = "on",
   }))
   controller:execute(cell_id)
-  equal(transport.requests[2].payload.cell_id, cell_id)
-  equal(transport.requests[2].payload.code, "1 + 1")
+  equal(transport.requests[3].payload.cell_id, cell_id)
+  equal(transport.requests[3].payload.code, "1 + 1")
 
   transport.event_callbacks.on_event(event(3, "execution.started", {
     execution_id = "exe_test",
@@ -175,6 +189,8 @@ local function test_malformed_event_disconnects_without_changing_kernel_truth()
   controller.kernel_state = "on"
   controller.kernel_id = "krn_test"
   controller:connect()
+  controller.kernel_state = "on"
+  controller.kernel_id = "krn_test"
   local malformed = event(1, "service.ready", { supervisor_id = "sup_test" })
   malformed.sequence = 1.5
   transport.event_callbacks.on_event(malformed)
@@ -184,11 +200,88 @@ local function test_malformed_event_disconnects_without_changing_kernel_truth()
   model:detach()
 end
 
+local function test_supervisor_replacement_resynchronizes_from_authoritative_snapshot()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "╭──", "1", "╰──" })
+  local model = notebook.attach(buf)
+  local transport = FakeTransport.new({
+    ok = true,
+    status = "ready",
+    supervisor_id = "sup_new",
+    earliest_event_sequence = 1,
+    event_sequence = 1,
+    kernel = nil,
+  })
+  local resynchronized
+  local controller = controller_module.new({
+    notebook = model,
+    transport = transport,
+    event_sequence = 8,
+    on_resynchronized = function(value)
+      resynchronized = value
+    end,
+  })
+  controller.supervisor_id = "sup_old"
+  controller.kernel_id = "krn_old"
+  controller.kernel_state = "on"
+  controller.executions.exe_old = { execution_id = "exe_old" }
+
+  controller:connect()
+  equal(resynchronized.reason, "supervisor_replaced")
+  equal(controller.supervisor_id, "sup_new")
+  equal(controller.event_sequence, 1)
+  equal(controller.kernel_state, "off")
+  equal(controller.kernel_id, nil)
+  equal(controller.executions, {})
+  equal(transport.connected_after, 1)
+  controller:close()
+  model:detach()
+end
+
+local function test_expired_cursor_resynchronizes_but_replayable_cursor_does_not_jump()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "╭──", "1", "╰──" })
+  local model = notebook.attach(buf)
+  local health = {
+    ok = true,
+    status = "ready",
+    supervisor_id = "sup_test",
+    earliest_event_sequence = 10,
+    event_sequence = 12,
+    kernel = { kernel_id = "krn_snapshot", state = "on" },
+  }
+
+  local expired_transport = FakeTransport.new(health)
+  local expired = controller_module.new({ notebook = model, transport = expired_transport, event_sequence = 2 })
+  expired.supervisor_id = "sup_test"
+  expired:connect()
+  equal(expired.event_sequence, 12)
+  equal(expired.kernel_id, "krn_snapshot")
+  equal(expired.kernel_state, "on")
+  equal(expired_transport.connected_after, 12)
+  expired:close()
+
+  local replay_transport = FakeTransport.new(health)
+  local replayable = controller_module.new({ notebook = model, transport = replay_transport, event_sequence = 10 })
+  replayable.supervisor_id = "sup_test"
+  replayable.kernel_id = "krn_before_replay"
+  replayable.kernel_state = "off"
+  replayable:connect()
+  equal(replayable.event_sequence, 10)
+  equal(replayable.kernel_id, "krn_before_replay")
+  equal(replayable.kernel_state, "off")
+  equal(replay_transport.connected_after, 10)
+  replayable:close()
+  model:detach()
+end
+
 function M.run()
   test_fragmented_sse_parser()
   test_controller_routes_identity_and_preserves_kernel_truth_on_gap()
   test_invalid_cell_is_rejected_before_transport()
   test_malformed_event_disconnects_without_changing_kernel_truth()
+  test_supervisor_replacement_resynchronizes_from_authoritative_snapshot()
+  test_expired_cursor_resynchronizes_but_replayable_cursor_does_not_jump()
 end
 
 return M

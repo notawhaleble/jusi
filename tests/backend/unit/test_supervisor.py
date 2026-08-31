@@ -87,6 +87,21 @@ def test_walking_skeleton_event_order_and_idempotent_stop() -> None:
     assert output["payload"]["media_type"] == "text/plain"
 
 
+def test_health_is_an_authoritative_snapshot_with_replay_window() -> None:
+    supervisor = Supervisor(FakeFactory())
+    initial = supervisor.health()
+    assert initial["supervisor_id"] == supervisor.supervisor_id
+    assert initial["earliest_event_sequence"] == 1
+    assert initial["event_sequence"] == 1
+    assert initial["kernel"] is None
+
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    current = supervisor.health()
+    assert current["earliest_event_sequence"] == 1
+    assert current["event_sequence"] == 4
+    assert current["kernel"] == started["kernel"]
+
+
 def test_execution_error_is_local_and_kernel_remains_on() -> None:
     kernel = FakeKernel(KernelExecutionResult("failed", error_name="ValueError", error_value="bad value"))
     supervisor = Supervisor(FakeFactory(kernel))

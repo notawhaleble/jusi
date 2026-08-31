@@ -95,6 +95,13 @@ async def run_http_sse_scenario(socket_path: str) -> None:
     assert b"text/event-stream" in sse_header
 
     try:
+        status, health = await request_json(socket_path, "GET", "/v1/health")
+        assert status == 200
+        assert health["supervisor_id"] == supervisor.supervisor_id
+        assert health["earliest_event_sequence"] == 1
+        assert health["event_sequence"] == 1
+        assert health["kernel"] is None
+
         status, started = await request_json(
             socket_path,
             "POST",

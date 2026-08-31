@@ -35,6 +35,58 @@ function Controller:_request(method, path, command, callback)
   }, on_complete)
 end
 
+function Controller:_transport_failure(reason, message)
+  return {
+    trace_id = "",
+    layer = "frontend_transport",
+    operation = "connect_events",
+    reason = reason,
+    message = message,
+    retryable = reason ~= "protocol_violation",
+    scope = "transport",
+    resource = { kind = "transport", id = self.transport.transport_id },
+  }
+end
+
+function Controller:_accept_health_snapshot(response)
+  local valid, validation_error = protocol.validate_health_response(response)
+  if not valid then
+    return nil, self:_transport_failure("protocol_violation", validation_error)
+  end
+  local kernel = response.kernel
+  if kernel == vim.NIL then
+    kernel = nil
+  end
+
+  local changed_supervisor = self.supervisor_id ~= nil and self.supervisor_id ~= response.supervisor_id
+  local first_connection = self.supervisor_id == nil
+  local cursor_unavailable = self.event_sequence < response.earliest_event_sequence - 1
+    or self.event_sequence > response.event_sequence
+  local resynchronized = first_connection or changed_supervisor or cursor_unavailable
+  self.supervisor_id = response.supervisor_id
+  if resynchronized then
+    self.event_sequence = response.event_sequence
+    self.executions = {}
+    if kernel then
+      self.kernel_id = kernel.kernel_id
+      self.kernel_state = kernel.state
+    else
+      self.kernel_id = nil
+      self.kernel_state = "off"
+    end
+    if self.on_resynchronized then
+      self.on_resynchronized({
+        reason = first_connection and "initial_snapshot" or (changed_supervisor and "supervisor_replaced" or "cursor_expired"),
+        supervisor_id = self.supervisor_id,
+        event_sequence = self.event_sequence,
+        kernel_id = self.kernel_id,
+        kernel_state = self.kernel_state,
+      })
+    end
+  end
+  return true
+end
+
 function Controller:connect(callback)
   if self.event_connection and not self.event_connection.closed then
     if callback then
@@ -43,40 +95,75 @@ function Controller:connect(callback)
     return self.event_connection
   end
   self.transport_state = "connecting"
-  self.event_connection = self.transport:connect_events(self.event_sequence, {
-    on_open = function()
-      self.transport_state = "connected"
-      if callback then
-        local ready_callback = callback
-        callback = nil
-        ready_callback(true)
-      end
-    end,
-    on_event = function(event)
-      self:_on_event(event)
-      if callback and self.transport_state == "connected" then
-        local ready_callback = callback
-        callback = nil
-        ready_callback(true)
-      end
-    end,
-    on_error = function(failure)
+  self._connect_generation = self._connect_generation + 1
+  local generation = self._connect_generation
+  self.inspect_request = self.transport:request("GET", "/v1/health", nil, {
+    operation = "inspect",
+    trace_id = "",
+  }, function(response, failure)
+    if generation ~= self._connect_generation then
+      return
+    end
+    if failure then
       self.transport_state = "disconnected"
       self.last_transport_failure = failure
       if self.on_failure then
         self.on_failure(failure)
       end
       if callback then
-        local ready_callback = callback
+        callback(false, failure)
         callback = nil
-        ready_callback(false, failure)
       end
-    end,
-    on_close = function()
+      return
+    end
+    local accepted, snapshot_failure = self:_accept_health_snapshot(response)
+    if not accepted then
       self.transport_state = "disconnected"
-    end,
-  })
-  return self.event_connection
+      self.last_transport_failure = snapshot_failure
+      if self.on_failure then
+        self.on_failure(snapshot_failure)
+      end
+      if callback then
+        callback(false, snapshot_failure)
+        callback = nil
+      end
+      return
+    end
+    self.event_connection = self.transport:connect_events(self.event_sequence, {
+      on_open = function()
+        self.transport_state = "connected"
+        if callback then
+          local ready_callback = callback
+          callback = nil
+          ready_callback(true)
+        end
+      end,
+      on_event = function(event)
+        self:_on_event(event)
+        if callback and self.transport_state == "connected" then
+          local ready_callback = callback
+          callback = nil
+          ready_callback(true)
+        end
+      end,
+      on_error = function(stream_failure)
+        self.transport_state = "disconnected"
+        self.last_transport_failure = stream_failure
+        if self.on_failure then
+          self.on_failure(stream_failure)
+        end
+        if callback then
+          local ready_callback = callback
+          callback = nil
+          ready_callback(false, stream_failure)
+        end
+      end,
+      on_close = function()
+        self.transport_state = "disconnected"
+      end,
+    })
+  end)
+  return self.inspect_request
 end
 
 function Controller:_on_event(event)
@@ -104,9 +191,18 @@ function Controller:_on_event(event)
   end
 
   if self.supervisor_id and event.supervisor_id ~= self.supervisor_id then
+    local failure = self:_transport_failure(
+      "protocol_violation",
+      "event supervisor does not match the inspected supervisor epoch"
+    )
+    failure.trace_id = event.trace_id
     self.transport_state = "disconnected"
+    self.last_transport_failure = failure
     if self.event_connection then
       self.event_connection:close()
+    end
+    if self.on_failure then
+      self.on_failure(failure)
     end
     return
   end
@@ -261,6 +357,11 @@ function Controller:stop_kernel(callback)
 end
 
 function Controller:close()
+  self._connect_generation = self._connect_generation + 1
+  if self.inspect_request and self.transport_state == "connecting" then
+    pcall(self.inspect_request.kill, self.inspect_request, 15)
+  end
+  self.inspect_request = nil
   if self.event_connection then
     self.event_connection:close()
     self.event_connection = nil
@@ -287,8 +388,11 @@ function M.new(options)
     on_execution_completed = opts.on_execution_completed,
     on_output = opts.on_output,
     on_failure = opts.on_failure,
+    on_resynchronized = opts.on_resynchronized,
     last_transport_failure = nil,
     event_connection = nil,
+    inspect_request = nil,
+    _connect_generation = 0,
   }, Controller)
 end
 

@@ -85,7 +85,14 @@ local function run_scenario()
     controller:connect()
     wait_for(5000, function()
       return controller.transport_state == "connected"
-    end, "frontend event transport did not connect")
+    end, "frontend event transport did not connect: " .. vim.inspect({
+      state = controller.transport_state,
+      supervisor_id = controller.supervisor_id,
+      event_sequence = controller.event_sequence,
+      has_event_connection = controller.event_connection ~= nil,
+      last_failure = controller.last_transport_failure,
+      failures = failures,
+    }))
 
     local start_response
     local start_failure
@@ -138,8 +145,9 @@ local function run_scenario()
     end, "authoritative off event did not arrive")
 
     for index, event in ipairs(events) do
-      assert(event.sequence == index, "frontend observed an event sequence gap")
+      assert(event.sequence == index + 1, "frontend observed an event sequence gap")
     end
+    assert(controller.event_sequence == 12)
     assert(#failures == 0, vim.inspect(failures))
     return { event_count = #events, output_count = #outputs }
   end, debug.traceback)

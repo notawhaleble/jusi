@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from jusi.protocol import ProtocolValidationError, validate_event
+from jusi.protocol import ProtocolValidationError, validate_event, validate_health_response
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,3 +50,13 @@ def test_python_consumes_shared_event_fixtures() -> None:
     invalid = load_json(fixture_root / "invalid" / "event-missing-sequence.json")
     with pytest.raises(ProtocolValidationError, match="sequence"):
         validate_event(invalid)
+
+
+def test_python_consumes_shared_health_fixtures() -> None:
+    fixture_root = ROOT / "protocol" / "fixtures" / "v1"
+    response = load_json(fixture_root / "valid" / "health-response.json")
+    assert validate_health_response(response)["kernel"]["state"] == "on"
+
+    invalid = load_json(fixture_root / "invalid" / "health-invalid-window.json")
+    with pytest.raises(ProtocolValidationError, match="window"):
+        validate_health_response(invalid)

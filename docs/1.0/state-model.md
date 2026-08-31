@@ -77,6 +77,8 @@ One HTTP/SSE connectivity epoch between a frontend and supervisor.
 - identity: `transport_id`
 - loss or renewal does not change kernel state
 - resumption uses event cursor/replay or authoritative resource inspection
+- every stream epoch begins with inspection of supervisor identity, kernel snapshot, and retained event window
+- supervisor replacement or an unavailable cursor replaces stale frontend resource state from that snapshot; a replayable cursor consumes missing events in order
 
 ### Notebook And Cell
 

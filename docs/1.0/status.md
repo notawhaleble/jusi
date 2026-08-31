@@ -4,7 +4,7 @@ Updated: 2026-08-31
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0007 are active.
+- The foundation review is accepted; ADRs 0001-0008 are active.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -13,6 +13,7 @@ Updated: 2026-08-31
 - A replaceable curl/`vim.system` adapter and Lua controller now bind that model to HTTP commands and ordered SSE events.
 - Textual output now projects unchanged through `nvim_open_term()` into a hidden, cell-attached terminal buffer. Renderer choice is media-driven.
 - Repository-root Neovim runtime loading exposes explicit connect, kernel start/stop, execute, output-open, and disconnect commands. Output opens in a predictable bottom split.
+- Event-stream connection now inspects authoritative supervisor/kernel state and the retained replay window first. Supervisor replacement and expired cursors replace stale frontend state; replayable cursors consume only missing ordered events.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - The archival tag `legacy/0.x-pre-1.0-2026-08-31` and detached sibling worktree `/Users/niku/Documents/dev/jusi-0.x` preserve the audited backend snapshot.
@@ -37,10 +38,9 @@ Deferred:
 - plugin discovery and workers
 - remote supervisors and `checking`
 - automatic local-service ownership, richer window/focus policy, and interactive PTY clients
-- authoritative resynchronization after supervisor replacement or event cursor expiry
 - input, interrupt, completion, rich media, PTY clients, and durable event storage
 
 ## Next Boundary
 
-1. harden event payload conformance and authoritative supervisor/cursor resynchronization
+1. harden event payload conformance across schema, Python, Lua, and fixtures
 2. decide explicit local-service ownership before adding automatic spawning

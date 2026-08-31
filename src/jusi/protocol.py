@@ -78,3 +78,28 @@ def validate_event(data: object) -> dict[str, Any]:
     if not isinstance(data["payload"], dict):
         raise ProtocolValidationError("payload must be a JSON object")
     return dict(data)
+
+
+def validate_health_response(data: object) -> dict[str, Any]:
+    if not isinstance(data, dict) or data.get("ok") is not True or data.get("status") != "ready":
+        raise ProtocolValidationError("Health response must be a ready object")
+    supervisor_id = data.get("supervisor_id")
+    if not isinstance(supervisor_id, str) or not supervisor_id.strip():
+        raise ProtocolValidationError("supervisor_id must be a non-empty string")
+    earliest = data.get("earliest_event_sequence")
+    latest = data.get("event_sequence")
+    if not isinstance(earliest, int) or isinstance(earliest, bool) or earliest < 1:
+        raise ProtocolValidationError("earliest_event_sequence must be a positive integer")
+    if not isinstance(latest, int) or isinstance(latest, bool) or latest < 0:
+        raise ProtocolValidationError("event_sequence must be a non-negative integer")
+    if earliest > latest + 1:
+        raise ProtocolValidationError("event replay window is invalid")
+    kernel = data.get("kernel")
+    if kernel is not None:
+        if not isinstance(kernel, dict):
+            raise ProtocolValidationError("kernel must be an object or null")
+        if not isinstance(kernel.get("kernel_id"), str) or not kernel["kernel_id"].strip():
+            raise ProtocolValidationError("kernel.kernel_id must be a non-empty string")
+        if kernel.get("state") not in {"off", "on"}:
+            raise ProtocolValidationError("kernel.state must be off or on")
+    return dict(data)

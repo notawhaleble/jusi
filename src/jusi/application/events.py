@@ -27,6 +27,13 @@ class EventLog:
         with self._condition:
             return self._sequence
 
+    @property
+    def earliest_sequence(self) -> int:
+        with self._condition:
+            if self._events:
+                return int(self._events[0]["sequence"])
+            return self._sequence + 1
+
     def append(
         self,
         *,

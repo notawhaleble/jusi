@@ -21,5 +21,6 @@ Terminal presentation does not determine kernel ownership or lifecycle.
 - Failures use the shared failure shape; free-form strings are supplementary diagnostics, not the taxonomy.
 - SSE resumption uses the last observed event identifier or cursor. The frontend does not fill gaps by guessing state.
 - The SSE adapter emits an immediate comment to confirm that the stream is open. Comments carry no resource truth and consume no event sequence.
+- Before opening SSE, the frontend inspects health for the supervisor identity, authoritative kernel snapshot, and retained event window. ADR 0008 defines when to replay and when to replace stale frontend state from that snapshot.
 
 The initial scenario fixture is `fixtures/v1/scenarios/walking-skeleton.json`. Concrete valid and invalid envelopes under `fixtures/v1/` are consumed by both Python and Lua conformance tests.

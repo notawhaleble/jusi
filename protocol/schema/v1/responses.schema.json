@@ -2,6 +2,17 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://jusi.dev/protocol/v1/responses.schema.json",
   "title": "Jusi Protocol v1 HTTP Responses",
+  "allOf": [
+    {
+      "if": {
+        "required": ["status"],
+        "properties": {"status": {"const": "ready"}}
+      },
+      "then": {
+        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel"]
+      }
+    }
+  ],
   "oneOf": [
     {
       "type": "object",
@@ -14,6 +25,7 @@
         "cleanup": {"type": "object"},
         "status": {"type": "string"},
         "supervisor_id": {"type": "string"},
+        "earliest_event_sequence": {"type": "integer", "minimum": 1},
         "event_sequence": {"type": "integer", "minimum": 0},
         "failure": {"$ref": "common.schema.json#/$defs/failure"}
       },

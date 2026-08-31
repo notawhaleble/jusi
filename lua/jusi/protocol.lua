@@ -93,4 +93,34 @@ function M.validate_event(event)
   return true
 end
 
+function M.validate_health_response(response)
+  if type(response) ~= "table" or response.ok ~= true or response.status ~= "ready" then
+    return false, "health response must be a ready object"
+  end
+  if not nonempty_string(response.supervisor_id) then
+    return false, "supervisor_id must be a non-empty string"
+  end
+  local earliest = response.earliest_event_sequence
+  local latest = response.event_sequence
+  if type(earliest) ~= "number" or earliest < 1 or earliest % 1 ~= 0 then
+    return false, "earliest_event_sequence must be a positive integer"
+  end
+  if type(latest) ~= "number" or latest < 0 or latest % 1 ~= 0 then
+    return false, "event_sequence must be a non-negative integer"
+  end
+  if earliest > latest + 1 then
+    return false, "event replay window is invalid"
+  end
+  local kernel = response.kernel
+  if kernel ~= nil and kernel ~= vim.NIL then
+    if type(kernel) ~= "table" or not nonempty_string(kernel.kernel_id) then
+      return false, "kernel must contain a non-empty kernel_id"
+    end
+    if kernel.state ~= "off" and kernel.state ~= "on" then
+      return false, "kernel.state must be off or on"
+    end
+  end
+  return true
+end
+
 return M

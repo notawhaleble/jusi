@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "status": "ready",
+  "supervisor_id": "sup_fixture_1",
+  "earliest_event_sequence": 1,
+  "event_sequence": 4,
+  "kernel": {
+    "kernel_id": "krn_fixture_1",
+    "notebook_id": "nb_fixture_1",
+    "kernel_name": "python3",
+    "state": "on",
+    "pid": 1234
+  }
+}

@@ -49,6 +49,7 @@ class Supervisor:
             return {
                 "status": "ready",
                 "supervisor_id": self.supervisor_id,
+                "earliest_event_sequence": self.events.earliest_sequence,
                 "event_sequence": self.events.latest_sequence,
                 "kernel": self._current_kernel.to_dict() if self._current_kernel is not None else None,
             }
