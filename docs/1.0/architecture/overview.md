@@ -48,6 +48,8 @@ The supervisor treats kernel, execution, client, plugin worker, service, protoco
 
 Kernel process capture and caused execution-failure chronology are specified in [observability.md](observability.md).
 
+Fresh-process discovery, exact-plugin workers, and the retired 0.x handler topology are specified in [plugins.md](plugins.md) and ADR 0010.
+
 ## Implemented Walking-Skeleton Boundary
 
 The active production slice contains only:

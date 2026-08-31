@@ -45,6 +45,7 @@ A family such as SQL, shell, or VisiData owns:
 - handoff validation beyond core envelope validation
 - family-level completion/follow-up semantics
 - common worker adapter where applicable
+- family claim/conflict rules and versioned catalog data; no authority over core resource state
 
 ## Exact Plugin
 
@@ -55,6 +56,7 @@ An exact provider/plugin owns:
 - provider-specific config and credentials
 - exact presentation overrides
 - minimized provider regression fixtures
+- exact worker and kernel-adapter entry points, imported only in isolated worker/discovery or kernel processes
 
 ## Shared Protocol
 
