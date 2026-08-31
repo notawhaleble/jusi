@@ -49,6 +49,11 @@ notebook runtime generation
 No discovery process, catalog snapshot, imported kernel extension, worker,
 client, or capability snapshot survives full notebook restart.
 
+Within that runtime generation, a successful handoff creates a durable client.
+SQL statements, shell commands, follow-ups, completions, and other ordinary
+operation results do not decide that client's lifetime. It ends only through
+explicit close, fatal client/worker loss, or owning-runtime teardown.
+
 These resources are target-side and runtime-scoped. For a remote kernel, the
 service, discovery process, and workers run remotely with that kernel; no local
 Jusi proxy discovers or executes its plugins. A future multi-runtime service
@@ -94,12 +99,11 @@ timeouts, channel loss, invalid frames, exits, and signals fence that worker.
 Isolation contains reliability failures but does not sandbox the user's
 filesystem or environment permissions.
 
-There is intentionally no HTTP or Neovim worker command yet. The next slice must
-define the versioned kernel-adapter handoff that authoritatively chooses the
-exact plugin, family, client, and originating execution before exposing generic
-plugin operations. Before requests become externally reachable, supervisor
-locking must also be narrowed so worker I/O cannot hold the global authoritative
-state lock.
+There is intentionally no HTTP or Neovim worker command yet. Kernel handoff now
+authoritatively identifies the exact plugin and family, and supervisor locking
+keeps worker I/O outside the authoritative-state lock. The remaining boundary
+is a generic operation-result envelope that carries media/presentation without
+letting ordinary results create an implicit client lifecycle.
 
 ## Kernel Adapter And Handoff
 

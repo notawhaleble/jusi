@@ -77,3 +77,9 @@ These invariants constrain implementation and protocol design. A change that vio
 47. Network location does not determine durability or cleanup authority; explicit ownership does.
 48. Service readiness does not depend on successful plugin discovery or kernel startup.
 49. Any future supervisor that owns multiple runtimes must preserve per-runtime plugin and resource isolation.
+
+## Plugin Clients
+
+50. A successful exact-plugin handoff creates a durable client; ordinary execute, follow-up, completion, or action results never decide its lifetime.
+51. A plugin client ends only through explicit close, demonstrated fatal client/worker loss, or cleanup of its owning notebook runtime.
+52. An operation-level plugin error does not close an otherwise usable client or widen failure to the kernel.

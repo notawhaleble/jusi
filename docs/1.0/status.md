@@ -1,6 +1,6 @@
 # Jusi 1.0 Status
 
-Updated: 2026-08-31
+Updated: 2026-09-01
 
 ## Current Facts
 
@@ -32,6 +32,7 @@ Updated: 2026-08-31
 - Service placement is explicit: the authoritative service runs at the kernel target. `JusiServiceStart` is only a notebook-local convenience for local targets; remote targets connect directly to their remote service over HTTP/SSE without a mandatory local proxy or editor-wide singleton.
 - Fresh kernels import catalog-declared adapter modules and require exact plugin-version/family attestation before becoming `on`. Execution captures one versioned exact-provider handoff MIME record, excludes it from presentation, and validates it against the current runtime catalog while leaving the kernel on for local mismatches.
 - Lifecycle and execution use a serialized operation lane distinct from the short-lived authoritative-state lock, so health and inspection remain responsive during bounded discovery, kernel, cleanup, and future worker I/O.
+- Exact-plugin clients are durable within their notebook runtime. Ordinary operation results never decide client lifetime; only explicit close, fatal client/worker loss, or owning-runtime cleanup ends one.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
@@ -59,6 +60,6 @@ Deferred:
 
 ## Next Boundary
 
-1. review proposed ADR 0015: keep plugin payloads opaque inside a core-owned client disposition/presentation/media result envelope
+1. review revised proposed ADR 0015: keep plugin payloads opaque inside a core-owned presentation/media result envelope with no per-result lifetime disposition
 2. activate an exact worker only after a validated kernel handoff
 3. expose generic plugin operations only after worker identity, containment, and conformance tests pass

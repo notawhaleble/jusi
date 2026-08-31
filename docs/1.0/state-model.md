@@ -104,7 +104,14 @@ A backend-visible output or interaction resource associated with an execution or
 
 - identity: `client_id`
 - capabilities: declared presentation and interaction requirements
-- lifetime: independent from frontend buffer/window lifetime
+- lifetime: durable within its owning notebook runtime and independent from
+  individual operation results or frontend buffer/window lifetime
+
+A successful exact-plugin handoff creates the client. It remains a valid target
+for its declared sequence of operations until explicit user close, demonstrated
+fatal client/worker loss, or owning-runtime cleanup. Ordinary SQL statements,
+shell commands, follow-ups, completions, action results, and recoverable plugin
+errors do not implicitly close it.
 
 A Neovim terminal buffer is a frontend projection of a client, not the client identity.
 
@@ -123,6 +130,9 @@ An isolated plugin-owned runtime when plugin behavior needs a separate process o
 The initial worker control path serializes bounded `execute`, `followup`,
 `complete`, and `editor_action` requests. Payloads and results are opaque
 JSON-compatible objects; core validates identity and declared capability.
+“Opaque” means core does not interpret plugin-specific fields; it is unrelated
+to client lifetime. The worker remains owned by its durable client across
+ordinary operation results.
 Concurrent interrupt and terminal interaction are deferred to transports that
 can operate independently of an in-flight request.
 
