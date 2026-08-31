@@ -1,2 +1,1 @@
-"""Domain layer for Jusi."""
-
+"""Framework-independent Jusi domain types."""

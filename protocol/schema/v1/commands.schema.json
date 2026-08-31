@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/commands.schema.json",
+  "title": "Jusi Protocol v1 Commands",
+  "oneOf": [
+    {"$ref": "#/$defs/start_kernel"},
+    {"$ref": "#/$defs/execute"},
+    {"$ref": "#/$defs/stop_kernel"}
+  ],
+  "$defs": {
+    "base": {
+      "type": "object",
+      "required": ["protocol_version", "command_id", "trace_id", "kind"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "command_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "kind": {"type": "string"},
+        "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 256}
+      }
+    },
+    "start_kernel": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {
+          "type": "object",
+          "required": ["kind", "notebook_id", "kernel_name"],
+          "properties": {
+            "kind": {"const": "start_kernel"},
+            "notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "kernel_name": {"type": "string", "minLength": 1, "maxLength": 128}
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "execute": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {
+          "type": "object",
+          "required": ["kind", "kernel_id", "notebook_id", "cell_id", "code"],
+          "properties": {
+            "kind": {"const": "execute"},
+            "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "cell_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "code": {"type": "string"}
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "stop_kernel": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {
+          "type": "object",
+          "required": ["kind", "kernel_id"],
+          "properties": {
+            "kind": {"const": "stop_kernel"},
+            "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128}
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    }
+  }
+}

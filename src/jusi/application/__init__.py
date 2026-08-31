@@ -1,2 +1,1 @@
-"""Application layer for Jusi."""
-
+"""Jusi application orchestration."""

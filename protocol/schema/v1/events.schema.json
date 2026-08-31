@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/events.schema.json",
+  "title": "Jusi Protocol v1 Events",
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "event_id",
+    "supervisor_id",
+    "sequence",
+    "occurred_at",
+    "trace_id",
+    "layer",
+    "operation",
+    "kind",
+    "resource",
+    "payload"
+  ],
+  "properties": {
+    "protocol_version": {"const": 1},
+    "event_id": {"type": "string", "minLength": 3, "maxLength": 128},
+    "supervisor_id": {"type": "string", "minLength": 3, "maxLength": 128},
+    "sequence": {"type": "integer", "minimum": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
+    "layer": {
+      "enum": ["protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_worker"]
+    },
+    "operation": {
+      "enum": ["service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events"]
+    },
+    "kind": {
+      "enum": [
+        "service.ready",
+        "operation.started",
+        "operation.completed",
+        "kernel.state_changed",
+        "execution.started",
+        "execution.output",
+        "execution.completed",
+        "failure.occurred"
+      ]
+    },
+    "resource": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {"enum": ["supervisor", "kernel", "execution", "client", "plugin_worker", "transport", "notebook", "cell"]},
+        "id": {"type": "string", "minLength": 3, "maxLength": 128}
+      },
+      "additionalProperties": false
+    },
+    "payload": {"type": "object"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"kind": {"const": "kernel.state_changed"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["kernel_id", "previous_state", "state"],
+            "properties": {
+              "kernel_id": {"type": "string"},
+              "previous_state": {"enum": ["off", "on"]},
+              "state": {"enum": ["off", "on"]}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "execution.output"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["execution_id", "client_id", "output_kind", "media_type", "data"],
+            "properties": {
+              "execution_id": {"type": "string"},
+              "client_id": {"type": "string"},
+              "output_kind": {"enum": ["stdout", "stderr", "result", "display"]},
+              "media_type": {"type": "string", "minLength": 1},
+              "data": {"type": "string"}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "failure.occurred"}}},
+      "then": {
+        "properties": {
+          "payload": {"$ref": "common.schema.json#/$defs/failure"}
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

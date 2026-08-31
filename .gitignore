@@ -30,3 +30,4 @@ htmlcov/
 
 # OS/editor noise
 .DS_Store
+.nvimlog

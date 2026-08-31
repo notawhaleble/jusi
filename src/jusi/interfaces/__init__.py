@@ -1,2 +1,1 @@
-"""Interface layer for Jusi."""
-
+"""HTTP and SSE adapters for Jusi."""

@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jusi"
-version = "0.1.1"
-description = "Standalone backend for Jusivim notebook execution"
-readme = { file = "PYPI.md", content-type = "text/markdown" }
+version = "1.0.0.dev0"
+description = "Unified Jusi backend, Neovim frontend, and shared notebook protocol"
+readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [
@@ -31,7 +31,12 @@ classifiers = [
 dependencies = [
   "jupyter_client>=8,<9",
   "ipykernel>=6,<7",
-  "visidata>=3,<4",
+  "tornado>=6,<7",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8,<9",
 ]
 
 [project.urls]
@@ -42,11 +47,11 @@ Issues = "https://github.com/notawhaleble/jusi/issues"
 [project.scripts]
 jusi = "jusi.__main__:main"
 
-[project.entry-points."jusi.display_handlers"]
-vd = "jusi_vd.plugin:display_handler_specs"
-
 [tool.hatch.build.targets.wheel]
-packages = ["src/jusi", "src/jusi_vd"]
+packages = ["src/jusi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "e2e: black-box tests requiring local HTTP and real kernel sockets",
+]

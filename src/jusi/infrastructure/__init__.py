@@ -1,2 +1,1 @@
-"""Infrastructure layer for Jusi."""
-
+"""Concrete process and Jupyter adapters."""

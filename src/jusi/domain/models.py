@@ -1,147 +1,154 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from typing import Literal
-
-SessionState = Literal["idle", "starting", "connected", "disconnected", "stopping", "stopped", "failed"]
-CellState = Literal["pending", "busy", "follow-up", "done", "error", "interrupted", "parked"]
-ClientState = Literal["active", "shutting_down", "shutdown"]
-ExecutionOwnerKind = Literal["kernel", "handler", "unknown"]
+from datetime import datetime, timezone
+from typing import Any, Literal
 
 
-@dataclass
-class SessionTarget:
-    source: str = ""
-    alias: str = ""
-    kind: str = ""
-    value: str = ""
-    config: dict[str, object] = field(default_factory=dict)
+KernelState = Literal["off", "on"]
+OperationOutcome = Literal["pending", "running", "succeeded", "failed", "cancelled"]
+ExecutionOutcome = Literal["pending", "running", "succeeded", "failed", "interrupted", "cancelled"]
 
 
-@dataclass
-class ClientTransport:
-    kind: str = ""
-    attach_cmd: list[str] = field(default_factory=list)
-    attach_env: dict[str, str] = field(default_factory=dict)
-    session_id: str = ""
-    client_id: str = ""
-    handler_id: str = ""
-
-
-@dataclass
-class Session:
-    notebook_id: str
-    session_id: str = ""
-    state: SessionState = "idle"
-    kernel_name: str = ""
-    connection: str = ""
-    target: SessionTarget = field(default_factory=SessionTarget)
-    expires_at: float | None = None
-    frontend_last_ack_at: float | None = None
-    frontend_healthcheck_id: str = ""
-    frontend_healthcheck_deadline: float | None = None
-    last_error: str = ""
-    last_action: str = ""
-    visidatarc_content: str = ""
-    plugin_specs: dict[str, dict[str, object]] = field(default_factory=dict)
-    palette: dict[str, dict[str, object]] = field(default_factory=dict)
-
-
-@dataclass
-class CellExecution:
-    cell_id: int
-    status: CellState = "pending"
-    owner_kind: ExecutionOwnerKind = "unknown"
-    client_id: str = ""
-    runtime_mode: str = ""
-    client_bufnr: int = -1
-    client_state: ClientState = "active"
-    transport: ClientTransport = field(default_factory=ClientTransport)
-    presentation: dict[str, object] = field(default_factory=dict)
-
-
-def clear_execution_runtime_identity(execution: CellExecution) -> None:
-    execution.client_bufnr = -1
-    execution.client_id = ""
-    execution.runtime_mode = ""
-    execution.transport = ClientTransport()
-
-
-def normalize_closed_followup_execution(execution: CellExecution) -> None:
-    if execution.status != "follow-up":
-        return
-    execution.status = "done"
-    execution.owner_kind = "unknown"
-    clear_execution_runtime_identity(execution)
-
-
-def normalize_stopped_active_execution(execution: CellExecution) -> None:
-    if execution.status not in {"busy", "follow-up"}:
-        return
-    execution.status = "interrupted"
-    execution.owner_kind = "unknown"
-    execution.client_state = "shutdown"
-    clear_execution_runtime_identity(execution)
+def utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @dataclass(frozen=True)
-class ExecutableCell:
-    cell_id: int
+class ResourceRef:
     kind: str
-    syntax: str
-    main_lines: list[str]
-    keep_running: bool = False
+    resource_id: str
 
-
-JUSI_HANDLER_HANDOFF_MIME = "application/vnd.jusi.handoff+json"
+    def to_dict(self) -> dict[str, str]:
+        return {"kind": self.kind, "id": self.resource_id}
 
 
 @dataclass(frozen=True)
-class HandlerHandoff:
-    handler_id: str
-    magic_name: str
-    content: str = ""
-    meta: dict[str, object] = field(default_factory=dict)
+class ProcessDiagnostics:
+    pid: int | None = None
+    exit_code: int | None = None
+    signal: int | str | None = None
+    stderr_excerpt: str = ""
+    stderr_truncated: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"stderr_truncated": self.stderr_truncated}
+        if self.pid is not None:
+            result["pid"] = self.pid
+        if self.exit_code is not None:
+            result["exit_code"] = self.exit_code
+        if self.signal is not None:
+            result["signal"] = self.signal
+        if self.stderr_excerpt:
+            result["stderr_excerpt"] = self.stderr_excerpt
+        return result
 
 
-def parse_handler_handoff_payload(
-    data: object,
-    *,
-    metadata: object = None,
-) -> HandlerHandoff | None:
-    if not isinstance(data, dict):
-        return None
-    raw_payload = data.get(JUSI_HANDLER_HANDOFF_MIME)
-    if raw_payload is None:
-        return None
-    payload: dict[str, object]
-    if isinstance(raw_payload, str):
-        try:
-            decoded = json.loads(raw_payload)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(decoded, dict):
-            return None
-        payload = decoded
-    elif isinstance(raw_payload, dict):
-        payload = dict(raw_payload)
-    else:
-        return None
-    handler_id = str(payload.get("handler_id", "")).strip()
-    magic_name = str(payload.get("magic_name", "")).strip()
-    if not handler_id or not magic_name:
-        return None
-    handoff_meta: dict[str, object] = {}
-    if isinstance(payload.get("meta"), dict):
-        handoff_meta.update(dict(payload["meta"]))
-    if isinstance(metadata, dict):
-        raw_meta = metadata.get(JUSI_HANDLER_HANDOFF_MIME)
-        if isinstance(raw_meta, dict):
-            handoff_meta.update(dict(raw_meta))
-    return HandlerHandoff(
-        handler_id=handler_id,
-        magic_name=magic_name,
-        content=str(payload.get("content", "")),
-        meta=handoff_meta,
-    )
+@dataclass(frozen=True)
+class Failure:
+    failure_id: str
+    trace_id: str
+    layer: str
+    operation: str
+    reason: str
+    message: str
+    retryable: bool
+    scope: str
+    resource: ResourceRef
+    occurred_at: str = field(default_factory=utc_now)
+    process: ProcessDiagnostics | None = None
+    caused_by_failure_id: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "failure_id": self.failure_id,
+            "trace_id": self.trace_id,
+            "layer": self.layer,
+            "operation": self.operation,
+            "reason": self.reason,
+            "message": self.message,
+            "retryable": self.retryable,
+            "scope": self.scope,
+            "resource": self.resource.to_dict(),
+            "occurred_at": self.occurred_at,
+        }
+        if self.process is not None:
+            result["process"] = self.process.to_dict()
+        if self.caused_by_failure_id:
+            result["caused_by_failure_id"] = self.caused_by_failure_id
+        if self.details:
+            result["details"] = dict(self.details)
+        return result
+
+
+@dataclass
+class KernelResource:
+    kernel_id: str
+    notebook_id: str
+    kernel_name: str
+    state: KernelState
+    pid: int | None = None
+    started_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kernel_id": self.kernel_id,
+            "notebook_id": self.notebook_id,
+            "kernel_name": self.kernel_name,
+            "state": self.state,
+            "pid": self.pid,
+            "started_at": self.started_at,
+        }
+
+
+@dataclass
+class Operation:
+    operation_id: str
+    trace_id: str
+    kind: str
+    outcome: OperationOutcome = "running"
+    started_at: str = field(default_factory=utc_now)
+    completed_at: str | None = None
+
+    def complete(self, outcome: OperationOutcome) -> None:
+        self.outcome = outcome
+        self.completed_at = utc_now()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "operation_id": self.operation_id,
+            "trace_id": self.trace_id,
+            "kind": self.kind,
+            "outcome": self.outcome,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+        }
+
+
+@dataclass
+class ExecutionResource:
+    execution_id: str
+    kernel_id: str
+    notebook_id: str
+    cell_id: str
+    client_id: str
+    outcome: ExecutionOutcome = "running"
+    started_at: str = field(default_factory=utc_now)
+    completed_at: str | None = None
+
+    def complete(self, outcome: ExecutionOutcome) -> None:
+        self.outcome = outcome
+        self.completed_at = utc_now()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "execution_id": self.execution_id,
+            "kernel_id": self.kernel_id,
+            "notebook_id": self.notebook_id,
+            "cell_id": self.cell_id,
+            "client_id": self.client_id,
+            "outcome": self.outcome,
+            "started_at": self.started_at,
+            "completed_at": self.completed_at,
+        }

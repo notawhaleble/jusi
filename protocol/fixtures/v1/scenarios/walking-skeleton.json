@@ -1,0 +1,54 @@
+{
+  "scenario": "service-kernel-execute-stop",
+  "protocol_version": 1,
+  "commands": [
+    {
+      "protocol_version": 1,
+      "command_id": "cmd_start_1",
+      "trace_id": "trace_start_1",
+      "kind": "start_kernel",
+      "idempotency_key": "walk-start",
+      "notebook_id": "nb_walk",
+      "kernel_name": "python3"
+    },
+    {
+      "protocol_version": 1,
+      "command_id": "cmd_execute_1",
+      "trace_id": "trace_execute_1",
+      "kind": "execute",
+      "kernel_id": "krn_walk_1",
+      "notebook_id": "nb_walk",
+      "cell_id": "cell_walk_1",
+      "code": "1 + 1"
+    },
+    {
+      "protocol_version": 1,
+      "command_id": "cmd_stop_1",
+      "trace_id": "trace_stop_1",
+      "kind": "stop_kernel",
+      "idempotency_key": "walk-stop",
+      "kernel_id": "krn_walk_1"
+    }
+  ],
+  "expected_event_kinds": [
+    "service.ready",
+    "operation.started",
+    "kernel.state_changed",
+    "operation.completed",
+    "operation.started",
+    "execution.started",
+    "execution.output",
+    "execution.completed",
+    "operation.completed",
+    "operation.started",
+    "kernel.state_changed",
+    "operation.completed"
+  ],
+  "assertions": {
+    "strictly_increasing_sequence": true,
+    "kernel_states": ["on", "off"],
+    "result": {"media_type": "text/plain", "data": "2"},
+    "repeat_stop_reports": "already_absent",
+    "distinct_identities": ["supervisor_id", "kernel_id", "execution_id", "client_id"]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_invalid_1",
+  "kind": "start_kernel",
+  "notebook_id": "nb_invalid",
+  "kernel_name": "python3"
+}

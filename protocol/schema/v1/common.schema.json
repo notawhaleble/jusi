@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/common.schema.json",
+  "title": "Jusi Protocol v1 Common Types",
+  "$defs": {
+    "protocol_version": {"const": 1},
+    "opaque_id": {"type": "string", "minLength": 3, "maxLength": 128},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "layer": {
+      "enum": [
+        "protocol",
+        "frontend_transport",
+        "service",
+        "supervisor",
+        "kernel",
+        "execution",
+        "client",
+        "plugin_worker"
+      ]
+    },
+    "operation": {
+      "enum": [
+        "service_start",
+        "start_kernel",
+        "stop_kernel",
+        "execute",
+        "interrupt",
+        "cleanup",
+        "inspect",
+        "connect_events"
+      ]
+    },
+    "resource_ref": {
+      "type": "object",
+      "required": ["kind", "id"],
+      "properties": {
+        "kind": {
+          "enum": ["supervisor", "kernel", "execution", "client", "plugin_worker", "transport", "notebook", "cell"]
+        },
+        "id": {"$ref": "#/$defs/opaque_id"}
+      },
+      "additionalProperties": false
+    },
+    "process_diagnostics": {
+      "type": "object",
+      "properties": {
+        "pid": {"type": "integer", "minimum": 1},
+        "exit_code": {"type": ["integer", "null"]},
+        "signal": {"type": ["integer", "string", "null"]},
+        "stderr_excerpt": {"type": "string", "maxLength": 16384},
+        "stderr_truncated": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "failure": {
+      "type": "object",
+      "required": [
+        "failure_id",
+        "trace_id",
+        "layer",
+        "operation",
+        "reason",
+        "message",
+        "retryable",
+        "scope",
+        "resource",
+        "occurred_at"
+      ],
+      "properties": {
+        "failure_id": {"$ref": "#/$defs/opaque_id"},
+        "trace_id": {"$ref": "#/$defs/opaque_id"},
+        "layer": {"$ref": "#/$defs/layer"},
+        "operation": {"$ref": "#/$defs/operation"},
+        "reason": {
+          "enum": [
+            "invalid_request",
+            "unsupported",
+            "not_found",
+            "conflict",
+            "unreachable",
+            "timeout",
+            "cancelled",
+            "spawn_failed",
+            "readiness_failed",
+            "process_exited",
+            "process_signalled",
+            "channel_closed",
+            "protocol_violation",
+            "kernel_died",
+            "execution_error",
+            "interrupted",
+            "plugin_error",
+            "cleanup_incomplete",
+            "capacity_exceeded",
+            "internal_error"
+          ]
+        },
+        "message": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "retryable": {"type": "boolean"},
+        "scope": {
+          "enum": ["request", "transport", "execution", "cell", "client", "plugin_worker", "kernel", "supervisor"]
+        },
+        "resource": {"$ref": "#/$defs/resource_ref"},
+        "occurred_at": {"$ref": "#/$defs/timestamp"},
+        "process": {"$ref": "#/$defs/process_diagnostics"},
+        "caused_by_failure_id": {"$ref": "#/$defs/opaque_id"},
+        "details": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

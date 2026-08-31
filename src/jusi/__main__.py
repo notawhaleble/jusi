@@ -1,24 +1,28 @@
 from __future__ import annotations
 
-import sys
+import argparse
+import asyncio
 
-from jusi.infrastructure.client_process import run_terminal_attach
-from jusi.infrastructure.client_runtime_entrypoint import run_client_runtime
-from jusi.infrastructure.plugin_runtime import run_plugin_runtime
-from jusi.interfaces.stdio import process_stream
+from jusi.service import serve
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="jusi")
+    subparsers = parser.add_subparsers(dest="command")
+    serve_parser = subparsers.add_parser("serve", help="start the Jusi HTTP/SSE service")
+    serve_parser.add_argument("--host", default="127.0.0.1")
+    serve_parser.add_argument("--port", type=int, default=8765)
+    return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if args and args[0] == "plugin-runtime":
-        return run_plugin_runtime()
-    if args and args[0] == "client-runtime":
-        return run_client_runtime()
-    if args and args[0] == "client-process":
-        if len(args) > 1 and args[1] == "terminal-attach":
-            return run_terminal_attach()
-        return run_client_runtime("transcript")
-    return process_stream(sys.stdin, sys.stdout)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command != "serve":
+        parser.print_help()
+        return 2
+    asyncio.run(serve(args.host, args.port))
+    return 0
 
 
 if __name__ == "__main__":

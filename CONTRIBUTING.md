@@ -1,46 +1,29 @@
 # Contributing
 
-## Development Environment
+Read the root `AGENTS.md` and the scoped instructions for the area you are changing.
 
-Use an editable install in a virtual environment.
+## Current Phase
 
-Example:
+The active package is the narrow Jusi 1.0 service walking skeleton. Extend it only along reviewed boundaries; do not reintroduce 0.x lifecycle or transport concepts.
 
-```sh
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -e .
-```
+## Test Baseline
 
-An editable install is the preferred workflow because bundled plugins such as
-`jusi_vd` are discovered through installed package metadata.
-
-## Running Tests
-
-Run the backend test suite through the active environment.
-
-Example:
+Use the environment linked to the current checkout:
 
 ```sh
-python -m unittest
+.venv/bin/python -m pytest -q
 ```
 
-For focused work, run only the affected test modules.
+Do not use `python -m unittest`; it discovers zero tests in this repository. The harness separates unit, integration, conformance, frontend, and end-to-end suites under `tests/`.
 
 ## Documentation
 
-Public-facing docs should:
+- `docs/1.0/` is normative for the rewrite.
+- `docs/legacy/0.x/` is frozen historical evidence.
+- `docs/1.0/status.md` is concise continuity state, not a diary.
+- Architectural decisions belong in `docs/1.0/adr/`.
+- Reproducible failures and unknown-cause observations belong in `docs/1.0/incidents/`.
 
-- describe the current supported contract
-- avoid local repository path references
-- avoid historical or migration framing unless strictly necessary
-- treat the editor side as a regular Vim/Neovim plugin rather than a local sibling checkout
+## Protocol Changes
 
-## Repository Scope
-
-This repository is the backend component.
-
-Plugin-specific behavior that does not belong in core should live in:
-
-- a bundled first-party package when it is part of the supported base experience
-- a separate plugin package/repository when it is not core backend functionality
+A protocol change is complete only when the schema, Python implementation, Lua implementation, fixtures, and conformance tests agree in the same change.
