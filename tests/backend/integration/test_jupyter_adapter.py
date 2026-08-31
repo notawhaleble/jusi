@@ -6,9 +6,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from jusi.application.ports import KernelAdapterError
+from jusi.application.ports import KernelAdapterError, KernelAdapterSpec
 import jusi.infrastructure.jupyter_kernel as jupyter_kernel
-from jusi.infrastructure.jupyter_kernel import MAX_STDERR_BYTES, ManagedJupyterKernel
+from jusi.infrastructure.jupyter_kernel import (
+    MAX_PLUGIN_CONTROL_BYTES,
+    MAX_STDERR_BYTES,
+    ManagedJupyterKernel,
+    PLUGIN_HANDOFF_MIME,
+)
 
 
 class FakeManager:
@@ -88,6 +93,65 @@ def test_execution_error_preserves_ansi_traceback_without_killing_kernel() -> No
     assert result.outputs[0].output_kind == "stderr"
     assert result.outputs[0].media_type == "text/x-ansi"
     assert result.outputs[0].data == "\u001b[31mValueError\u001b[0m\nbad value"
+    assert manager.is_alive()
+    kernel.stop(timeout=1)
+
+
+def test_execution_captures_structured_handoff_without_rendering_it() -> None:
+    class HandoffClient(FakeClient):
+        def execute_interactive(self, code: str, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["output_hook"]({
+                "msg_type": "display_data",
+                "content": {"data": {
+                    PLUGIN_HANDOFF_MIME: {
+                        "protocol_version": 1,
+                        "kind": "plugin.handoff",
+                        "plugin_id": "fixture_provider",
+                        "plugin_version": "1.2.3",
+                        "family_id": "fixture",
+                        "magic_name": "fixture",
+                        "payload": {"value": 7},
+                    },
+                }},
+            })
+            return {"content": {"status": "ok"}}
+
+    stderr_file = tempfile.NamedTemporaryFile(delete=False)
+    kernel = ManagedJupyterKernel(FakeManager(), HandoffClient(), stderr_file, stderr_file.name)  # type: ignore[arg-type]
+    result = kernel.execute("%%fixture", timeout=1)
+    assert result.outputs == ()
+    assert result.handoffs[0].plugin_id == "fixture_provider"
+    assert result.handoffs[0].payload == {"value": 7}
+    kernel.stop(timeout=1)
+
+
+def test_execution_rejects_oversized_plugin_handoff_without_killing_kernel() -> None:
+    class OversizedHandoffClient(FakeClient):
+        def execute_interactive(self, code: str, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["output_hook"]({
+                "msg_type": "display_data",
+                "content": {"data": {
+                    PLUGIN_HANDOFF_MIME: {
+                        "protocol_version": 1,
+                        "kind": "plugin.handoff",
+                        "plugin_id": "fixture_provider",
+                        "plugin_version": "1.2.3",
+                        "family_id": "fixture",
+                        "magic_name": "fixture",
+                        "payload": {"value": "x" * MAX_PLUGIN_CONTROL_BYTES},
+                    },
+                }},
+            })
+            return {"content": {"status": "ok"}}
+
+    stderr_file = tempfile.NamedTemporaryFile(delete=False)
+    manager = FakeManager()
+    kernel = ManagedJupyterKernel(manager, OversizedHandoffClient(), stderr_file, stderr_file.name)  # type: ignore[arg-type]
+    with pytest.raises(KernelAdapterError) as captured:
+        kernel.execute("%%fixture", timeout=1)
+    assert captured.value.layer == "protocol"
+    assert captured.value.reason == "protocol_violation"
+    assert captured.value.details["errors"] == ["Plugin handoff exceeds the size limit"]
     assert manager.is_alive()
     kernel.stop(timeout=1)
 
@@ -188,3 +252,66 @@ def test_readiness_failure_captures_process_stderr_and_cleans_partial_start(monk
     assert state.stopped is True
     assert state.shutdown is True
     assert state.stderr_path is not None and not Path(state.stderr_path).exists()
+
+
+def test_real_kernel_loads_and_attests_catalog_adapter(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    (tmp_path / "fixture_kernel_adapter.py").write_text(
+        """
+def jusi_kernel_adapter_v1():
+    return {
+        "plugin_id": "fixture_provider",
+        "plugin_version": "1.2.3",
+        "families": [{"family_id": "fixture", "magic_name": "fixture"}],
+    }
+
+def load_ipython_extension(ipython):
+    ipython.user_ns["fixture_adapter_loaded"] = 41
+""",
+        encoding="utf-8",
+    )
+    existing = __import__("os").environ.get("PYTHONPATH", "")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path) + ((":" + existing) if existing else ""))
+    adapter = KernelAdapterSpec(
+        plugin_id="fixture_provider",
+        plugin_version="1.2.3",
+        module="fixture_kernel_adapter",
+        families=(("fixture", "fixture"),),
+    )
+    kernel = jupyter_kernel.ManagedJupyterKernelFactory().start(
+        "python3", timeout=8, adapters=(adapter,),
+    )
+    try:
+        result = kernel.execute("fixture_adapter_loaded + 1", timeout=5)
+        assert result.outcome == "succeeded"
+        assert any(output.data == "42" for output in result.outputs)
+    finally:
+        kernel.stop(timeout=5)
+
+
+def test_real_kernel_rejects_adapter_identity_mismatch(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    (tmp_path / "fixture_bad_adapter.py").write_text(
+        """
+def jusi_kernel_adapter_v1():
+    return {
+        "plugin_id": "wrong_provider",
+        "plugin_version": "9.9.9",
+        "families": [{"family_id": "fixture", "magic_name": "fixture"}],
+    }
+""",
+        encoding="utf-8",
+    )
+    existing = __import__("os").environ.get("PYTHONPATH", "")
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path) + ((":" + existing) if existing else ""))
+    expected = KernelAdapterSpec(
+        plugin_id="fixture_provider",
+        plugin_version="1.2.3",
+        module="fixture_bad_adapter",
+        families=(("fixture", "fixture"),),
+    )
+    with pytest.raises(KernelAdapterError) as captured:
+        jupyter_kernel.ManagedJupyterKernelFactory().start(
+            "python3", timeout=8, adapters=(expected,),
+        )
+    assert captured.value.reason == "conflict"
+    assert captured.value.details["expected"]["fixture_bad_adapter"]["plugin_id"] == "fixture_provider"
+    assert captured.value.details["observed"]["fixture_bad_adapter"]["plugin_id"] == "wrong_provider"

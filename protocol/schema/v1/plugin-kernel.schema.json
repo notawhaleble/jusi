@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/plugin-kernel.schema.json",
+  "title": "Jusi Kernel Plugin Messages v1",
+  "oneOf": [
+    {"$ref": "#/$defs/adapters_ready"},
+    {"$ref": "#/$defs/handoff"}
+  ],
+  "$defs": {
+    "family": {
+      "type": "object",
+      "required": ["family_id", "magic_name"],
+      "properties": {
+        "family_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "magic_name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"}
+      },
+      "additionalProperties": false
+    },
+    "adapter": {
+      "type": "object",
+      "required": ["plugin_id", "plugin_version", "module", "families"],
+      "properties": {
+        "plugin_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "plugin_version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "module": {"type": "string", "minLength": 1, "maxLength": 512},
+        "families": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/family"}}
+      },
+      "additionalProperties": false
+    },
+    "adapters_ready": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "adapters"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "plugin.adapters_ready"},
+        "adapters": {"type": "array", "items": {"$ref": "#/$defs/adapter"}}
+      },
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "plugin_id", "plugin_version", "family_id", "magic_name", "payload"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "plugin.handoff"},
+        "plugin_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "plugin_version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "family_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "magic_name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"},
+        "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -10,6 +10,7 @@ from jusi.application.ports import (
     PluginCatalogDiscoveryResult,
     PluginWorkerError,
     PluginWorkerSpec,
+    PluginHandoff,
 )
 from jusi.application.plugin_workers import PluginWorkerManager
 from jusi.application.supervisor import Supervisor, SupervisorError
@@ -50,10 +51,11 @@ class FakeFactory:
         self.error = error
         self.start_count = 0
 
-    def start(self, kernel_name: str, *, timeout: float) -> FakeKernel:
+    def start(self, kernel_name: str, *, timeout: float, adapters=()) -> FakeKernel:
         assert kernel_name == "python3"
         assert timeout > 0
         self.start_count += 1
+        self.adapters = adapters
         if self.error is not None:
             raise self.error
         return self.kernel
@@ -65,11 +67,12 @@ class SequenceFactory(FakeFactory):
         self.index = 0
         super().__init__(kernels[0])
 
-    def start(self, kernel_name: str, *, timeout: float) -> FakeKernel:
+    def start(self, kernel_name: str, *, timeout: float, adapters=()) -> FakeKernel:
         assert kernel_name == "python3"
         assert timeout > 0
         kernel = self.kernels[self.index]
         self.index += 1
+        self.adapters = adapters
         return kernel
 
 
@@ -325,6 +328,53 @@ def test_execution_error_is_local_and_kernel_remains_on() -> None:
         "error_value": "bad value",
     }
     assert supervisor.health()["kernel"]["state"] == "on"
+
+
+def test_plugin_handoff_must_match_the_current_runtime_catalog() -> None:
+    valid_handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={"query": "select 1"},
+    )
+    valid_kernel = FakeKernel(KernelExecutionResult("succeeded", handoffs=(valid_handoff,)))
+    supervisor = Supervisor(FakeFactory(valid_kernel), FakeDiscovery(plugins=[plugin_entry()]))
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    result = supervisor.execute(
+        kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+        code="%%sql", trace_id="trace_execute",
+    )
+    assert result["execution"]["outcome"] == "succeeded"
+
+    mismatched = PluginHandoff(
+        plugin_id="other_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    supervisor._kernel_handle = FakeKernel(KernelExecutionResult("succeeded", handoffs=(mismatched,)))
+    with pytest.raises(SupervisorError) as raised:
+        supervisor.execute(
+            kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell_two",
+            code="%%sql", trace_id="trace_mismatch",
+        )
+    assert raised.value.status_code == 409
+    assert raised.value.failure.layer == "protocol"
+    assert raised.value.failure.scope == "execution"
+    assert raised.value.failure.details["plugin_id"] == "other_sql"
+    assert supervisor.health()["kernel"]["state"] == "on"
+
+
+def test_start_passes_catalog_declared_kernel_adapters_to_the_factory() -> None:
+    plugin = plugin_entry()
+    plugin["kernel_extensions"] = ["fixture_sql.kernel"]
+    factory = FakeFactory()
+    supervisor = Supervisor(factory, FakeDiscovery(plugins=[plugin]))
+
+    supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+
+    assert len(factory.adapters) == 1
+    adapter = factory.adapters[0]
+    assert adapter.plugin_id == "exact_sql"
+    assert adapter.plugin_version == "1.0.0"
+    assert adapter.module == "fixture_sql.kernel"
+    assert adapter.families == (("sql", "sql"),)
 
 
 def test_start_failure_stays_off_and_is_typed() -> None:

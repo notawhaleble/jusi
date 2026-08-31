@@ -7,6 +7,7 @@ from typing import Any
 from jusi.application.events import EventLog
 from jusi.application.ports import (
     KernelAdapterError,
+    KernelAdapterSpec,
     KernelFactory,
     KernelHandle,
     PluginCatalogDiscovery,
@@ -162,7 +163,9 @@ class Supervisor:
             kernel_ref = ResourceRef("kernel", kernel_id)
             self._known_kernel_ids.add(kernel_id)
             try:
-                handle = self._kernel_factory.start(kernel_name, timeout=timeout)
+                handle = self._kernel_factory.start(
+                    kernel_name, timeout=timeout, adapters=self._kernel_adapter_specs(discovery.catalog),
+                )
             except KernelAdapterError as exc:
                 failure = self._failure(
                     trace_id=trace_id,
@@ -174,6 +177,7 @@ class Supervisor:
                     scope="kernel",
                     resource=kernel_ref,
                     process=exc.diagnostics,
+                    details=exc.details,
                 )
                 self._emit_failure(failure)
                 self._complete_operation(operation, "failed", resource=kernel_ref, failure=failure)
@@ -268,7 +272,7 @@ class Supervisor:
                     scope="kernel" if exc.layer == "kernel" else "execution",
                     resource=ResourceRef("kernel", kernel_id) if exc.layer == "kernel" else execution_ref,
                     process=exc.diagnostics,
-                    details=execution_details,
+                    details={**execution_details, **exc.details},
                 )
                 self._emit_failure(kernel_failure)
                 if exc.layer == "kernel":
@@ -313,6 +317,40 @@ class Supervisor:
                 )
                 self._complete_operation(operation, "failed", resource=execution_ref, failure=kernel_failure)
                 raise SupervisorError(503, kernel_failure) from exc
+
+            if result.handoffs:
+                handoff = result.handoffs[0]
+                runtime = self._current_runtime
+                if runtime is None or not self._handoff_matches_catalog(runtime, handoff):
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="protocol",
+                        operation="execute",
+                        reason="invalid_request",
+                        message="Kernel plugin handoff does not match the authoritative runtime catalog",
+                        retryable=False,
+                        scope="execution",
+                        resource=execution_ref,
+                        details={
+                            **execution_details,
+                            "plugin_id": handoff.plugin_id,
+                            "plugin_version": handoff.plugin_version,
+                            "family_id": handoff.family_id,
+                            "magic_name": handoff.magic_name,
+                        },
+                    )
+                    self._emit_failure(failure)
+                    execution.complete("failed")
+                    self.events.append(
+                        trace_id=trace_id,
+                        layer="execution",
+                        operation="execute",
+                        kind="execution.completed",
+                        resource=execution_ref,
+                        payload=execution.to_dict(),
+                    )
+                    self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                    raise SupervisorError(409, failure)
 
             for output in result.outputs:
                 self.events.append(
@@ -602,7 +640,9 @@ class Supervisor:
                 raise SupervisorError(503, failure) from exc
 
             try:
-                next_handle = self._kernel_factory.start(kernel_name, timeout=timeout)
+                next_handle = self._kernel_factory.start(
+                    kernel_name, timeout=timeout, adapters=self._kernel_adapter_specs(discovery.catalog),
+                )
             except KernelAdapterError as exc:
                 failure = self._failure(
                     trace_id=trace_id,
@@ -614,7 +654,11 @@ class Supervisor:
                     scope="kernel",
                     resource=ResourceRef("kernel", next_kernel_id),
                     process=exc.diagnostics,
-                    details={"teardown_completed": True, "next_notebook_id": next_notebook_id},
+                    details={
+                        **exc.details,
+                        "teardown_completed": True,
+                        "next_notebook_id": next_notebook_id,
+                    },
                 )
                 self._emit_failure(failure)
                 self._complete_operation(
@@ -796,6 +840,40 @@ class Supervisor:
             resource=ResourceRef("plugin_discovery", discovery_id),
             process=exc.diagnostics,
             details=details,
+        )
+
+    @staticmethod
+    def _kernel_adapter_specs(catalog: dict[str, Any]) -> tuple[KernelAdapterSpec, ...]:
+        return tuple(
+            KernelAdapterSpec(
+                plugin_id=plugin["plugin_id"],
+                plugin_version=plugin["plugin_version"],
+                module=module,
+                families=tuple(
+                    (family["family_id"], family["magic_name"])
+                    for family in plugin["families"]
+                ),
+            )
+            for plugin in catalog["plugins"]
+            for module in plugin["kernel_extensions"]
+        )
+
+    @staticmethod
+    def _handoff_matches_catalog(runtime: NotebookRuntime, handoff: Any) -> bool:
+        plugin = next(
+            (
+                item for item in runtime.plugin_catalog["plugins"]
+                if item["plugin_id"] == handoff.plugin_id
+                and item["plugin_version"] == handoff.plugin_version
+            ),
+            None,
+        )
+        if plugin is None:
+            return False
+        return any(
+            family["family_id"] == handoff.family_id
+            and family["magic_name"] == handoff.magic_name
+            for family in plugin["families"]
         )
 
     def _emit_failure(self, failure: Failure) -> None:

@@ -245,6 +245,7 @@ function M.validate_plugin_catalog(catalog)
   local plugin_fields = set({ "plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction" })
   local family_by_id = {}
   local family_by_magic = {}
+  local kernel_modules = {}
   for _, plugin in ipairs(catalog.plugins) do
     if type(plugin) ~= "table" then return false, "plugin must be an object" end
     for field, _ in pairs(plugin_fields) do if plugin[field] == nil then return false, "plugin missing field: " .. field end end
@@ -256,6 +257,10 @@ function M.validate_plugin_catalog(catalog)
       if type(plugin[field]) ~= "table" then return false, "plugin list field must be an array" end
       local values = {}
       for _, value in ipairs(plugin[field]) do if not nonempty_string(value) or values[value] then return false, "plugin list values must be unique strings" end values[value] = true end
+    end
+    for _, module in ipairs(plugin.kernel_extensions) do
+      if kernel_modules[module] then return false, "kernel extension module is claimed more than once" end
+      kernel_modules[module] = true
     end
     if type(plugin.families) ~= "table" or #plugin.families == 0 then return false, "plugin families must not be empty" end
     local family_claims = {}
@@ -324,6 +329,45 @@ function M.validate_plugin_worker_message(message)
   if not worker_failure_reasons[message.failure.reason] or not bounded_string(message.failure.message, 1, 1000) or type(message.failure.retryable) ~= "boolean" then return false, "invalid worker failure" end
   if message.failure.details ~= nil and type(message.failure.details) ~= "table" then return false, "invalid worker failure details" end
   return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "failure" })
+end
+
+local function validate_kernel_families(families)
+  if type(families) ~= "table" or #families == 0 then return false, "plugin adapter families must not be empty" end
+  local seen = {}
+  for _, family in ipairs(families) do
+    local ok, err = exact_fields(family, { "family_id", "magic_name" })
+    if not ok then return false, err end
+    if not bounded_string(family.family_id, 1, 128) or not family.magic_name:match("^[A-Za-z][A-Za-z0-9_-]*$") then return false, "invalid plugin adapter family" end
+    local identity = family.family_id .. "\0" .. family.magic_name
+    if seen[identity] then return false, "duplicate plugin adapter family" end
+    seen[identity] = true
+  end
+  return true
+end
+
+function M.validate_plugin_kernel_message(message)
+  if type(message) ~= "table" or message.protocol_version ~= 1 then return false, "invalid plugin kernel envelope" end
+  if message.kind == "plugin.adapters_ready" then
+    local ok, err = exact_fields(message, { "protocol_version", "kind", "adapters" })
+    if not ok then return false, err end
+    if type(message.adapters) ~= "table" then return false, "adapters must be an array" end
+    local modules = {}
+    for _, adapter in ipairs(message.adapters) do
+      local adapter_ok, adapter_err = exact_fields(adapter, { "plugin_id", "plugin_version", "module", "families" })
+      if not adapter_ok then return false, adapter_err end
+      if not bounded_string(adapter.plugin_id, 3, 128) or not bounded_string(adapter.plugin_version, 1, 128) or not bounded_string(adapter.module, 1, 512) or modules[adapter.module] then return false, "invalid plugin adapter identity" end
+      modules[adapter.module] = true
+      local families_ok, families_err = validate_kernel_families(adapter.families)
+      if not families_ok then return false, families_err end
+    end
+    return true
+  elseif message.kind == "plugin.handoff" then
+    local ok, err = exact_fields(message, { "protocol_version", "kind", "plugin_id", "plugin_version", "family_id", "magic_name", "payload" })
+    if not ok then return false, err end
+    if not bounded_string(message.plugin_id, 3, 128) or not bounded_string(message.plugin_version, 1, 128) or type(message.payload) ~= "table" then return false, "invalid plugin handoff" end
+    return validate_kernel_families({ { family_id = message.family_id, magic_name = message.magic_name } })
+  end
+  return false, "unsupported plugin kernel message kind"
 end
 
 return M

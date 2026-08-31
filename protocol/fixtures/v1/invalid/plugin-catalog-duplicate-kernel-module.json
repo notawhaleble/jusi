@@ -1,0 +1,27 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "discovery_id": "discovery_duplicate_module",
+  "plugins": [
+    {
+      "plugin_id": "provider_one",
+      "plugin_version": "1.0.0",
+      "distribution": "jusi-provider-one",
+      "families": [{"family_id": "one", "magic_name": "one", "capabilities": ["execute"]}],
+      "kernel_extensions": ["shared.kernel"],
+      "worker_entry_point": null,
+      "media_types": ["text/plain"],
+      "interaction": "noninteractive"
+    },
+    {
+      "plugin_id": "provider_two",
+      "plugin_version": "1.0.0",
+      "distribution": "jusi-provider-two",
+      "families": [{"family_id": "two", "magic_name": "two", "capabilities": ["execute"]}],
+      "kernel_extensions": ["shared.kernel"],
+      "worker_entry_point": null,
+      "media_types": ["text/plain"],
+      "interaction": "noninteractive"
+    }
+  ]
+}

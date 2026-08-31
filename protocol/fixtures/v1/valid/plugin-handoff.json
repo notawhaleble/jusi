@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "kind": "plugin.handoff",
+  "plugin_id": "sqlite_provider",
+  "plugin_version": "1.0.0",
+  "family_id": "sql",
+  "magic_name": "sql",
+  "payload": {"connection": "analytics", "query": "select 1"}
+}

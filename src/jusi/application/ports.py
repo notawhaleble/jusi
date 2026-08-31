@@ -19,6 +19,35 @@ class KernelExecutionResult:
     outputs: tuple[KernelOutput, ...] = field(default_factory=tuple)
     error_name: str = ""
     error_value: str = ""
+    handoffs: tuple[PluginHandoff, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class PluginHandoff:
+    plugin_id: str
+    plugin_version: str
+    family_id: str
+    magic_name: str
+    payload: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_version": 1,
+            "kind": "plugin.handoff",
+            "plugin_id": self.plugin_id,
+            "plugin_version": self.plugin_version,
+            "family_id": self.family_id,
+            "magic_name": self.magic_name,
+            "payload": dict(self.payload),
+        }
+
+
+@dataclass(frozen=True)
+class KernelAdapterSpec:
+    plugin_id: str
+    plugin_version: str
+    module: str
+    families: tuple[tuple[str, str], ...]
 
 
 class KernelAdapterError(RuntimeError):
@@ -30,12 +59,14 @@ class KernelAdapterError(RuntimeError):
         reason: str,
         retryable: bool,
         diagnostics: ProcessDiagnostics | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.layer = layer
         self.reason = reason
         self.retryable = retryable
         self.diagnostics = diagnostics
+        self.details = details or {}
 
 
 class KernelHandle(Protocol):
@@ -48,7 +79,13 @@ class KernelHandle(Protocol):
 
 
 class KernelFactory(Protocol):
-    def start(self, kernel_name: str, *, timeout: float) -> KernelHandle: ...
+    def start(
+        self,
+        kernel_name: str,
+        *,
+        timeout: float,
+        adapters: tuple[KernelAdapterSpec, ...] = (),
+    ) -> KernelHandle: ...
 
 
 @dataclass(frozen=True)

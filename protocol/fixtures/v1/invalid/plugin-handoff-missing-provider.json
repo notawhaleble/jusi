@@ -1,0 +1,8 @@
+{
+  "protocol_version": 1,
+  "kind": "plugin.handoff",
+  "plugin_version": "1.0.0",
+  "family_id": "sql",
+  "magic_name": "sql",
+  "payload": {}
+}

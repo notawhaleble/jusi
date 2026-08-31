@@ -32,7 +32,7 @@ def entry_source(
                     "capabilities": ["execute", "complete"],
                     "presentation": {{"syntax": "sql", "indent": "sql"}},
                 }}],
-                "kernel_extensions": ["fixture.kernel"],
+                "kernel_extensions": [{f"fixture_{plugin_id}.kernel"!r}],
                 "worker_entry_point": "fixture.worker:main",
                 "media_types": ["text/plain", "text/x-ansi"],
                 "interaction": "request_response",

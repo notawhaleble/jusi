@@ -245,6 +245,7 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
     fields = {"plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"}
     family_by_id: dict[str, tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
     family_by_magic: dict[str, str] = {}
+    kernel_modules: set[str] = set()
     for plugin in data["plugins"]:
         if not isinstance(plugin, dict) or set(plugin) != fields:
             raise ProtocolValidationError("Plugin catalog entry fields are invalid")
@@ -262,6 +263,10 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
             values = plugin[field]
             if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values) or len(values) != len(set(values)):
                 raise ProtocolValidationError(f"plugin.{field} must contain unique non-empty strings")
+        for module in plugin["kernel_extensions"]:
+            if module in kernel_modules:
+                raise ProtocolValidationError(f"Kernel extension module is claimed more than once: {module}")
+            kernel_modules.add(module)
         if not isinstance(plugin["families"], list) or not plugin["families"]:
             raise ProtocolValidationError("plugin.families must be a non-empty array")
         family_claims: set[tuple[str, str]] = set()
@@ -362,3 +367,50 @@ def validate_plugin_worker_message(data: object) -> dict[str, Any]:
         if "details" in failure and not isinstance(failure["details"], dict):
             raise ProtocolValidationError("Plugin worker failure details must be an object")
     return dict(data)
+
+
+def validate_plugin_kernel_message(data: object) -> dict[str, Any]:
+    if not isinstance(data, dict) or data.get("protocol_version") != PROTOCOL_VERSION:
+        raise ProtocolValidationError("Plugin kernel message has an invalid envelope")
+    kind = data.get("kind")
+    if kind == "plugin.adapters_ready":
+        if set(data) != {"protocol_version", "kind", "adapters"} or not isinstance(data.get("adapters"), list):
+            raise ProtocolValidationError("Plugin adapter attestation fields are invalid")
+        modules: set[str] = set()
+        for adapter in data["adapters"]:
+            fields = {"plugin_id", "plugin_version", "module", "families"}
+            if not isinstance(adapter, dict) or set(adapter) != fields:
+                raise ProtocolValidationError("Plugin adapter fields are invalid")
+            if not _bounded_string(adapter["plugin_id"], 3, 128) or not _bounded_string(adapter["plugin_version"], 1, 128) or not _bounded_string(adapter["module"], 1, 512):
+                raise ProtocolValidationError("Plugin adapter identity is invalid")
+            if adapter["module"] in modules:
+                raise ProtocolValidationError("Plugin adapter module is duplicated")
+            modules.add(adapter["module"])
+            _validate_kernel_families(adapter["families"])
+        return dict(data)
+    if kind == "plugin.handoff":
+        fields = {"protocol_version", "kind", "plugin_id", "plugin_version", "family_id", "magic_name", "payload"}
+        if set(data) != fields:
+            raise ProtocolValidationError("Plugin handoff fields are invalid")
+        if not _bounded_string(data["plugin_id"], 3, 128) or not _bounded_string(data["plugin_version"], 1, 128):
+            raise ProtocolValidationError("Plugin handoff provider identity is invalid")
+        _validate_kernel_families([{"family_id": data["family_id"], "magic_name": data["magic_name"]}])
+        if not isinstance(data["payload"], dict):
+            raise ProtocolValidationError("Plugin handoff payload must be an object")
+        return dict(data)
+    raise ProtocolValidationError("Plugin kernel message kind is unsupported")
+
+
+def _validate_kernel_families(families: object) -> None:
+    if not isinstance(families, list) or not families:
+        raise ProtocolValidationError("Plugin adapter families must be a non-empty array")
+    seen: set[tuple[str, str]] = set()
+    for family in families:
+        if not isinstance(family, dict) or set(family) != {"family_id", "magic_name"}:
+            raise ProtocolValidationError("Plugin adapter family fields are invalid")
+        if not _bounded_string(family["family_id"], 1, 128) or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", family["magic_name"]) is None:
+            raise ProtocolValidationError("Plugin adapter family identity is invalid")
+        identity = (family["family_id"], family["magic_name"])
+        if identity in seen:
+            raise ProtocolValidationError("Plugin adapter family is duplicated")
+        seen.add(identity)

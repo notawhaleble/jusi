@@ -156,6 +156,9 @@ Backend resources may reference these identifiers for correlation, but do not ow
 - Start is accepted only when no owned live kernel generation exists, unless an idempotency key identifies the same in-flight request.
 - The operation may be `running` while the visible kernel remains `off`.
 - Start performs fresh plugin discovery before spawning a kernel and publishes no runtime if discovery or startup fails.
+- After Jupyter readiness, every catalog-declared kernel adapter is imported in
+  the fresh kernel and must attest matching exact plugin version and family
+  claims before readiness is authoritative.
 - Readiness changes the kernel to `on` and emits the authoritative event.
 - Startup failure leaves the kernel `off` and returns a structured failure.
 

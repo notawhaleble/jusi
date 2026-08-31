@@ -101,6 +101,21 @@ plugin operations. Before requests become externally reachable, supervisor
 locking must also be narrowed so worker I/O cannot hold the global authoritative
 state lock.
 
+## Kernel Adapter And Handoff
+
+Catalog-declared kernel modules load inside the fresh target kernel after
+Jupyter readiness. Each module exposes `jusi_kernel_adapter_v1()` and may expose
+the standard IPython `load_ipython_extension(ipython)` hook. One aggregate,
+closed attestation must exactly match catalog plugin version and family claims
+before the supervisor publishes kernel state `on`.
+
+Execution adapters emit exact-provider control through
+`application/vnd.jusi.handoff.v1+json`. Core captures at most one record,
+removes it from renderable outputs, and validates it against the current
+runtime catalog. Its payload remains opaque and bounded by the Jupyter command
+path's 1 MiB control-record limit. Backend execution/client/worker identities
+are added only by core.
+
 ## Failure And Verification
 
 - discovery import/schema failure: internal `plugin_discovery/plugin_error`,

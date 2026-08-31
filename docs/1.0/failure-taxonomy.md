@@ -110,6 +110,8 @@ completed so the frontend can retire only the identities that actually ended.
 
 - Python exception from executed code: `execution / execution_error / execution`.
 - Plugin process exits unexpectedly: `plugin_worker / process_exited / plugin_worker`; owning client may close, kernel stays `on`.
+- Kernel adapter import or attestation mismatch during start: `kernel / readiness_failed|protocol_violation|conflict / kernel`; kernel remains `off` with module identities and bounded diagnostics.
+- Execution handoff not present in the authoritative runtime catalog: `protocol / invalid_request / execution`; the owning execution fails and the kernel remains `on`.
 - SSE connection drops: `frontend_transport / channel_closed / transport`; kernel state is unchanged.
 - Kernel process exits during execution: kernel failure scoped to `kernel`, with a caused execution failure scoped to `execution`; kernel becomes `off`.
 - Stop cannot terminate one child: `supervisor / cleanup_incomplete`, with per-resource cleanup results.

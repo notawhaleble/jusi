@@ -32,6 +32,17 @@ The initial workflow fixture is `fixtures/v1/scenarios/walking-skeleton.json`; `
 from ADR 0010. The valid fixture deliberately contains two exact providers
 claiming the same `sql` family; provider coexistence is not itself a conflict.
 Duplicate exact `plugin_id` values are rejected by both Python and Lua.
+One kernel-extension module may belong to only one exact plugin in a catalog.
+
+## Kernel Plugin Control
+
+`schema/v1/plugin-kernel.schema.json` defines the private kernel adapter
+attestation and exact-provider handoff records from ADR 0013. These records use
+dedicated Jupyter MIME types; they are consumed by the target-side service and
+never presented as cell output. The service accepts at most one handoff per
+execution and bounds each encoded control record to 1 MiB. A handoff remains
+opaque until its exact plugin, version, family, and magic identity match the
+immutable runtime catalog.
 
 ## Plugin Worker Control
 

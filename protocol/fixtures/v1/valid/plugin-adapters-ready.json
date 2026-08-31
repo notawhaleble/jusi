@@ -1,0 +1,12 @@
+{
+  "protocol_version": 1,
+  "kind": "plugin.adapters_ready",
+  "adapters": [
+    {
+      "plugin_id": "sqlite_provider",
+      "plugin_version": "1.0.0",
+      "module": "jusi_sqlite.kernel",
+      "families": [{"family_id": "sql", "magic_name": "sql"}]
+    }
+  ]
+}

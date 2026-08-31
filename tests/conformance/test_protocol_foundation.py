@@ -10,6 +10,7 @@ from jusi.protocol import (
     validate_event,
     validate_health_response,
     validate_plugin_catalog,
+    validate_plugin_kernel_message,
     validate_plugin_worker_message,
 )
 
@@ -112,6 +113,10 @@ def test_python_consumes_shared_plugin_catalog_fixtures() -> None:
     with pytest.raises(ProtocolValidationError, match="length"):
         validate_plugin_catalog(short_identity)
 
+    duplicate_module = load_json(fixture_root / "invalid" / "plugin-catalog-duplicate-kernel-module.json")
+    with pytest.raises(ProtocolValidationError, match="Kernel extension"):
+        validate_plugin_catalog(duplicate_module)
+
 
 def test_python_consumes_shared_plugin_worker_fixtures() -> None:
     fixture_root = ROOT / "protocol" / "fixtures" / "v1"
@@ -123,3 +128,14 @@ def test_python_consumes_shared_plugin_worker_fixtures() -> None:
     invalid = load_json(fixture_root / "invalid" / "plugin-worker-identity-missing.json")
     with pytest.raises(ProtocolValidationError, match="plugin_worker_id"):
         validate_plugin_worker_message(invalid)
+
+
+def test_python_consumes_shared_plugin_kernel_fixtures() -> None:
+    fixture_root = ROOT / "protocol" / "fixtures" / "v1"
+    adapters = load_json(fixture_root / "valid" / "plugin-adapters-ready.json")
+    handoff = load_json(fixture_root / "valid" / "plugin-handoff.json")
+    assert validate_plugin_kernel_message(adapters)["adapters"][0]["module"] == "jusi_sqlite.kernel"
+    assert validate_plugin_kernel_message(handoff)["plugin_id"] == "sqlite_provider"
+    invalid = load_json(fixture_root / "invalid" / "plugin-handoff-missing-provider.json")
+    with pytest.raises(ProtocolValidationError, match="fields"):
+        validate_plugin_kernel_message(invalid)
