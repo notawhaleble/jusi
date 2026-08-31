@@ -20,13 +20,14 @@ local command_fields = {
   start_kernel = { "notebook_id", "kernel_name" },
   execute = { "kernel_id", "notebook_id", "cell_id", "code" },
   stop_kernel = { "kernel_id" },
+  restart_notebook = { "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name" },
 }
-local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_worker" })
-local operations = set({ "service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events" })
+local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
+local operations = set({ "service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events" })
 local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "failure.occurred" })
-local resource_kinds = set({ "supervisor", "kernel", "execution", "client", "plugin_worker", "transport", "notebook", "cell" })
+local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
-local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_worker", "kernel", "supervisor" })
+local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
 
 local function exact_fields(value, required, optional)
   for _, field in ipairs(required) do
@@ -212,6 +213,20 @@ function M.validate_health_response(response)
     if kernel.state ~= "off" and kernel.state ~= "on" then
       return false, "kernel.state must be off or on"
     end
+  end
+  if response.runtime == nil then return false, "runtime must be present in health response" end
+  local runtime = response.runtime
+  if runtime ~= vim.NIL then
+    local runtime_fields = set({ "runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog" })
+    for field, _ in pairs(runtime_fields) do if runtime[field] == nil then return false, "runtime missing field: " .. field end end
+    for field, _ in pairs(runtime) do if not runtime_fields[field] then return false, "unknown runtime field: " .. field end end
+    for _, field in ipairs({ "runtime_id", "notebook_id", "discovery_id", "kernel_id" }) do if not nonempty_string(runtime[field]) then return false, "invalid runtime identity" end end
+    local catalog_ok, catalog_error = M.validate_plugin_catalog(runtime.plugin_catalog)
+    if not catalog_ok then return false, catalog_error end
+    if runtime.plugin_catalog.discovery_id ~= runtime.discovery_id then return false, "runtime discovery identity mismatch" end
+    if kernel == nil or kernel == vim.NIL or runtime.kernel_id ~= kernel.kernel_id or runtime.notebook_id ~= kernel.notebook_id then return false, "runtime kernel ownership mismatch" end
+  elseif kernel ~= nil and kernel ~= vim.NIL and kernel.state == "on" then
+    return false, "an on kernel requires an authoritative runtime"
   end
   return true
 end

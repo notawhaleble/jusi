@@ -24,10 +24,10 @@
     "occurred_at": {"type": "string", "format": "date-time"},
     "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
     "layer": {
-      "enum": ["protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_worker"]
+      "enum": ["protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"]
     },
     "operation": {
-      "enum": ["service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events"]
+      "enum": ["service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]
     },
     "kind": {
       "enum": [
@@ -45,7 +45,7 @@
       "type": "object",
       "required": ["kind", "id"],
       "properties": {
-        "kind": {"enum": ["supervisor", "kernel", "execution", "client", "plugin_worker", "transport", "notebook", "cell"]},
+        "kind": {"enum": ["supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"]},
         "id": {"type": "string", "minLength": 3, "maxLength": 128}
       },
       "additionalProperties": false
@@ -76,7 +76,7 @@
             "properties": {
               "operation_id": {"type": "string", "minLength": 3},
               "trace_id": {"type": "string", "minLength": 3},
-              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
               "outcome": {"const": "running"},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "null"}
@@ -96,7 +96,7 @@
             "properties": {
               "operation_id": {"type": "string", "minLength": 3},
               "trace_id": {"type": "string", "minLength": 3},
-              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
               "outcome": {"enum": ["succeeded", "failed", "cancelled"]},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "string", "format": "date-time"},

@@ -5,11 +5,18 @@ import uuid
 from typing import Any
 
 from jusi.application.events import EventLog
-from jusi.application.ports import KernelAdapterError, KernelFactory, KernelHandle
+from jusi.application.ports import (
+    KernelAdapterError,
+    KernelFactory,
+    KernelHandle,
+    PluginCatalogDiscovery,
+    PluginCatalogDiscoveryError,
+)
 from jusi.domain.models import (
     ExecutionResource,
     Failure,
     KernelResource,
+    NotebookRuntime,
     Operation,
     ResourceRef,
 )
@@ -27,14 +34,17 @@ class SupervisorError(RuntimeError):
 
 
 class Supervisor:
-    def __init__(self, kernel_factory: KernelFactory) -> None:
+    def __init__(self, kernel_factory: KernelFactory, plugin_discovery: PluginCatalogDiscovery) -> None:
         self.supervisor_id = new_id("sup")
         self.events = EventLog(self.supervisor_id)
         self._kernel_factory = kernel_factory
+        self._plugin_discovery = plugin_discovery
         self._lock = threading.RLock()
         self._current_kernel: KernelResource | None = None
         self._kernel_handle: KernelHandle | None = None
         self._known_kernel_ids: set[str] = set()
+        self._current_runtime: NotebookRuntime | None = None
+        self._known_runtime_ids: set[str] = set()
         self.events.append(
             trace_id=new_id("trace"),
             layer="service",
@@ -52,6 +62,7 @@ class Supervisor:
                 "earliest_event_sequence": self.events.earliest_sequence,
                 "event_sequence": self.events.latest_sequence,
                 "kernel": self._current_kernel.to_dict() if self._current_kernel is not None else None,
+                "runtime": self._current_runtime.to_dict() if self._current_runtime is not None else None,
             }
 
     def record_failure(self, failure: Failure) -> None:
@@ -98,6 +109,28 @@ class Supervisor:
                 )
 
             operation = self._begin_operation("start_kernel", trace_id)
+            self._current_runtime = None
+            runtime_id = new_id("run")
+            discovery_id = new_id("dsc")
+            self._known_runtime_ids.add(runtime_id)
+            try:
+                discovery = self._plugin_discovery.discover(discovery_id=discovery_id, timeout=timeout)
+            except PluginCatalogDiscoveryError as exc:
+                failure = self._discovery_failure(
+                    exc,
+                    trace_id=trace_id,
+                    operation="start_kernel",
+                    discovery_id=discovery_id,
+                    teardown_completed=None,
+                )
+                self._emit_failure(failure)
+                self._complete_operation(
+                    operation,
+                    "failed",
+                    resource=ResourceRef("plugin_discovery", discovery_id),
+                    failure=failure,
+                )
+                raise SupervisorError(503, failure) from exc
             kernel_id = new_id("krn")
             kernel_ref = ResourceRef("kernel", kernel_id)
             self._known_kernel_ids.add(kernel_id)
@@ -128,6 +161,14 @@ class Supervisor:
             )
             self._current_kernel = kernel
             self._kernel_handle = handle
+            runtime = NotebookRuntime(
+                runtime_id=runtime_id,
+                notebook_id=notebook_id,
+                discovery_id=discovery_id,
+                kernel_id=kernel_id,
+                plugin_catalog=discovery.catalog,
+            )
+            self._current_runtime = runtime
             self.events.append(
                 trace_id=trace_id,
                 layer="kernel",
@@ -137,7 +178,7 @@ class Supervisor:
                 payload={"kernel_id": kernel_id, "previous_state": "off", "state": "on"},
             )
             self._complete_operation(operation, "succeeded", resource=kernel_ref)
-            return {"operation": operation.to_dict(), "kernel": kernel.to_dict()}
+            return {"operation": operation.to_dict(), "runtime": runtime.to_dict(), "kernel": kernel.to_dict()}
 
     def execute(
         self,
@@ -355,6 +396,193 @@ class Supervisor:
             self._complete_operation(operation, "succeeded", resource=ResourceRef("kernel", kernel_id), cleanup=cleanup)
             return {"operation": operation.to_dict(), "kernel": kernel.to_dict(), "cleanup": cleanup}
 
+    def restart_notebook(
+        self,
+        *,
+        runtime_id: str,
+        kernel_id: str,
+        notebook_id: str,
+        next_notebook_id: str,
+        kernel_name: str,
+        trace_id: str,
+        timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        with self._lock:
+            runtime = self._current_runtime
+            kernel = self._current_kernel
+            if (
+                runtime is None
+                or runtime.runtime_id != runtime_id
+                or runtime.notebook_id != notebook_id
+                or runtime.kernel_id != kernel_id
+                or kernel is None
+                or kernel.kernel_id != kernel_id
+            ):
+                known = runtime_id in self._known_runtime_ids
+                raise self._request_failure(
+                    status_code=409 if known else 404,
+                    trace_id=trace_id,
+                    layer="supervisor",
+                    operation="restart_notebook",
+                    reason="conflict" if known else "not_found",
+                    message=f"Notebook runtime {runtime_id} is not current",
+                    retryable=False,
+                    scope="request",
+                    resource=ResourceRef("notebook_runtime", runtime_id),
+                )
+            if next_notebook_id == notebook_id:
+                raise self._request_failure(
+                    status_code=409,
+                    trace_id=trace_id,
+                    layer="supervisor",
+                    operation="restart_notebook",
+                    reason="conflict",
+                    message="Full restart requires a fresh frontend notebook identity",
+                    retryable=False,
+                    scope="request",
+                    resource=ResourceRef("notebook_runtime", runtime_id),
+                )
+
+            operation = self._begin_operation(
+                "restart_notebook",
+                trace_id,
+                resource=ResourceRef("notebook_runtime", runtime_id),
+            )
+            cleanup_result = "already_absent"
+            if kernel.state == "on":
+                handle = self._kernel_handle
+                assert handle is not None
+                try:
+                    handle.stop(timeout=timeout)
+                except KernelAdapterError as exc:
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer=exc.layer,
+                        operation="restart_notebook",
+                        reason=exc.reason,
+                        message=str(exc),
+                        retryable=exc.retryable,
+                        scope="kernel",
+                        resource=ResourceRef("kernel", kernel_id),
+                        process=exc.diagnostics,
+                        details={"teardown_completed": False, "next_notebook_id": next_notebook_id},
+                    )
+                    self._emit_failure(failure)
+                    self._complete_operation(
+                        operation,
+                        "failed",
+                        resource=ResourceRef("notebook_runtime", runtime_id),
+                        failure=failure,
+                    )
+                    raise SupervisorError(503, failure) from exc
+                kernel.state = "off"
+                self._kernel_handle = None
+                cleanup_result = "stopped"
+                self.events.append(
+                    trace_id=trace_id,
+                    layer="kernel",
+                    operation="restart_notebook",
+                    kind="kernel.state_changed",
+                    resource=ResourceRef("kernel", kernel_id),
+                    payload={"kernel_id": kernel_id, "previous_state": "on", "state": "off"},
+                )
+
+            cleanup = {
+                "resource": ResourceRef("notebook_runtime", runtime_id).to_dict(),
+                "kernel_id": kernel_id,
+                "result": cleanup_result,
+            }
+            self._current_runtime = None
+
+            next_runtime_id = new_id("run")
+            discovery_id = new_id("dsc")
+            next_kernel_id = new_id("krn")
+            self._known_runtime_ids.add(next_runtime_id)
+            self._known_kernel_ids.add(next_kernel_id)
+            try:
+                discovery = self._plugin_discovery.discover(discovery_id=discovery_id, timeout=timeout)
+            except PluginCatalogDiscoveryError as exc:
+                failure = self._discovery_failure(
+                    exc,
+                    trace_id=trace_id,
+                    operation="restart_notebook",
+                    discovery_id=discovery_id,
+                    teardown_completed=True,
+                    next_notebook_id=next_notebook_id,
+                )
+                self._emit_failure(failure)
+                self._complete_operation(
+                    operation,
+                    "failed",
+                    resource=ResourceRef("plugin_discovery", discovery_id),
+                    failure=failure,
+                    cleanup=cleanup,
+                )
+                raise SupervisorError(503, failure) from exc
+
+            try:
+                next_handle = self._kernel_factory.start(kernel_name, timeout=timeout)
+            except KernelAdapterError as exc:
+                failure = self._failure(
+                    trace_id=trace_id,
+                    layer=exc.layer,
+                    operation="restart_notebook",
+                    reason=exc.reason,
+                    message=str(exc),
+                    retryable=exc.retryable,
+                    scope="kernel",
+                    resource=ResourceRef("kernel", next_kernel_id),
+                    process=exc.diagnostics,
+                    details={"teardown_completed": True, "next_notebook_id": next_notebook_id},
+                )
+                self._emit_failure(failure)
+                self._complete_operation(
+                    operation,
+                    "failed",
+                    resource=ResourceRef("kernel", next_kernel_id),
+                    failure=failure,
+                    cleanup=cleanup,
+                )
+                raise SupervisorError(503, failure) from exc
+
+            next_kernel = KernelResource(
+                kernel_id=next_kernel_id,
+                notebook_id=next_notebook_id,
+                kernel_name=kernel_name,
+                state="on",
+                pid=next_handle.pid,
+            )
+            next_runtime = NotebookRuntime(
+                runtime_id=next_runtime_id,
+                notebook_id=next_notebook_id,
+                discovery_id=discovery_id,
+                kernel_id=next_kernel_id,
+                plugin_catalog=discovery.catalog,
+            )
+            self._current_kernel = next_kernel
+            self._kernel_handle = next_handle
+            self._current_runtime = next_runtime
+            self.events.append(
+                trace_id=trace_id,
+                layer="kernel",
+                operation="restart_notebook",
+                kind="kernel.state_changed",
+                resource=ResourceRef("kernel", next_kernel_id),
+                payload={"kernel_id": next_kernel_id, "previous_state": "off", "state": "on"},
+            )
+            self._complete_operation(
+                operation,
+                "succeeded",
+                resource=ResourceRef("notebook_runtime", next_runtime_id),
+                cleanup=cleanup,
+            )
+            return {
+                "operation": operation.to_dict(),
+                "runtime": next_runtime.to_dict(),
+                "kernel": next_kernel.to_dict(),
+                "cleanup": cleanup,
+            }
+
     def close(self) -> None:
         with self._lock:
             kernel = self._current_kernel
@@ -453,6 +681,38 @@ class Supervisor:
             process=process,
             details=details or {},
             caused_by_failure_id=caused_by_failure_id,
+        )
+
+    def _discovery_failure(
+        self,
+        exc: PluginCatalogDiscoveryError,
+        *,
+        trace_id: str,
+        operation: str,
+        discovery_id: str,
+        teardown_completed: bool | None,
+        next_notebook_id: str = "",
+    ) -> Failure:
+        details: dict[str, Any] = {}
+        if teardown_completed is not None:
+            details["teardown_completed"] = teardown_completed
+        if next_notebook_id:
+            details["next_notebook_id"] = next_notebook_id
+        if exc.entry_point:
+            details["entry_point"] = exc.entry_point
+        if exc.distribution:
+            details["distribution"] = exc.distribution
+        return self._failure(
+            trace_id=trace_id,
+            layer="plugin_discovery",
+            operation=operation,
+            reason=exc.reason,
+            message=str(exc),
+            retryable=exc.retryable,
+            scope="plugin_discovery",
+            resource=ResourceRef("plugin_discovery", discovery_id),
+            process=exc.diagnostics,
+            details=details,
         )
 
     def _emit_failure(self, failure: Failure) -> None:

@@ -8,6 +8,12 @@ local function equal(actual, expected, message)
   end
 end
 
+local function truthy(value, message)
+  if not value then
+    error(message or "expected a truthy value")
+  end
+end
+
 local FakeTransport = {}
 FakeTransport.__index = FakeTransport
 
@@ -37,11 +43,33 @@ function FakeTransport:request(method, path, payload, _, callback)
       earliest_event_sequence = 1,
       event_sequence = 0,
       kernel = nil,
+      runtime = vim.NIL,
     }, nil)
   elseif payload.kind == "start_kernel" then
-    callback({ ok = true, kernel = { kernel_id = "krn_runtime", state = "on" } }, nil)
+    callback({
+      ok = true,
+      kernel = { kernel_id = "krn_runtime", state = "on" },
+      runtime = {
+        runtime_id = "run_runtime",
+        discovery_id = "discovery_runtime",
+        plugin_catalog = { protocol_version = 1, catalog_version = 1, discovery_id = "discovery_runtime", plugins = {} },
+      },
+    }, nil)
   elseif payload.kind == "execute" then
     callback({ ok = true, execution = { execution_id = "exe_runtime", outcome = "succeeded" } }, nil)
+  elseif payload.kind == "restart_notebook" then
+    callback({
+      ok = true,
+      kernel = { kernel_id = "krn_runtime_2", state = "on" },
+      runtime = {
+        runtime_id = "run_runtime_2",
+        notebook_id = payload.next_notebook_id,
+        discovery_id = "discovery_runtime_2",
+        kernel_id = "krn_runtime_2",
+        plugin_catalog = { protocol_version = 1, catalog_version = 1, discovery_id = "discovery_runtime_2", plugins = {} },
+      },
+      cleanup = { result = "stopped" },
+    }, nil)
   elseif payload.kind == "stop_kernel" then
     callback({
       ok = true,
@@ -82,6 +110,7 @@ local function test_explicit_command_workflow()
     equal(vim.fn.exists(":JusiExecute"), 2)
     equal(vim.fn.exists(":JusiServiceStart"), 2)
     equal(vim.fn.exists(":JusiServiceStop"), 2)
+    equal(vim.fn.exists(":JusiRestart"), 2)
 
     local notebook_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(notebook_buf, 0, -1, false, { "╭──", "1 + 1", "╰──" })
@@ -119,11 +148,27 @@ local function test_explicit_command_workflow()
     end, 10), "terminal output was not rendered")
     equal(vim.api.nvim_buf_get_lines(output_buf, 0, 1, false)[1], "2")
 
+    local old_notebook_id = session.model.notebook_id
+    local old_cell_id = cell_id
+    local text_before_restart = vim.api.nvim_buf_get_lines(notebook_buf, 0, -1, false)
+    jusi.setup({ kernel_name = "python-reloaded" })
+    jusi.restart(notebook_buf)
+    equal(transport.requests[4].payload.kernel_name, "python-reloaded")
+    equal(session.buf, notebook_buf)
+    equal(vim.api.nvim_buf_get_lines(notebook_buf, 0, -1, false), text_before_restart)
+    truthy(session.model.notebook_id ~= old_notebook_id, "restart must replace frontend notebook identity")
+    truthy(session.model:ordered_cells()[1].id ~= old_cell_id, "restart must replace runtime cell identity")
+    equal(vim.api.nvim_buf_is_valid(output_buf), false)
+    equal(session.controller.runtime_id, "run_runtime_2")
+    equal(session.controller.kernel_id, "krn_runtime_2")
+    equal(session.controller.notebook, session.model)
+    jusi.setup({ kernel_name = "python3" })
+
     jusi.stop_kernel()
     equal(session.controller.kernel_state, "off")
     equal(jusi.disconnect(), true)
     equal(session.controller.transport_state, "disconnected")
-    equal(vim.api.nvim_buf_is_valid(output_buf), true)
+    equal(vim.api.nvim_buf_is_valid(output_buf), false)
     equal(jusi._sessions[notebook_buf], session)
     local notebook_id = session.model.notebook_id
     jusi.connect({ buf = notebook_buf })

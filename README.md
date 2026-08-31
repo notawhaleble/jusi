@@ -8,7 +8,7 @@ Jusi 1.0 is a unified Neovim notebook system containing:
 - backend, frontend, and end-to-end tests
 - durable architecture, incident, and continuity records
 
-The foundation and walking skeleton are implemented. The Python package provides the authoritative supervisor, managed Jupyter adapter, HTTP commands, and ordered SSE events. The Neovim frontend provides the symbolic notebook parser, model-owned cell identities, extmark anchoring, localized reconciliation, HTTP/SSE transport, service controller, media-driven native-terminal text projection, and an explicit first command surface. A headless test proves the full start, execute, ordered-result, render, and stop path without an interactive UI.
+The foundation, walking skeleton, isolated plugin-catalog discovery, and full notebook restart are implemented. The Python package provides the authoritative supervisor, managed Jupyter adapter, HTTP commands, and ordered SSE events. The Neovim frontend provides the symbolic notebook parser, model-owned cell identities, extmark anchoring, localized reconciliation, HTTP/SSE transport, service controller, media-driven native-terminal text projection, and an explicit first command surface. Headless tests prove start, execute, ordered-result, render, full runtime replacement, and stop with real kernels.
 
 The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-compatible 0.x frontend. Its Vimscript is not being moved into this repository.
 
@@ -26,7 +26,7 @@ The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-co
 
 ## Current Boundary
 
-The implemented slice is deliberately narrow: service readiness, kernel start, `1 + 1`, ordered result event, idempotent kernel stop, the backend-independent notebook model, and a replaceable headless-Neovim transport/controller binding. Existing 0.x reconnect, healthcheck, prepared-client, stdio, and process-oriented terminal-attachment behavior is not part of 1.0.
+The implemented slice includes service readiness, fresh plugin-catalog discovery, kernel start, execution and ordered results, idempotent kernel stop, full notebook-runtime restart, the backend-independent notebook model, and a replaceable headless-Neovim transport/controller binding. Plugin workers, kernel adapters, rich media, and interactive transports remain deferred. Existing 0.x reconnect, healthcheck, prepared-client, stdio, and process-oriented terminal-attachment behavior is not part of 1.0.
 
 ## Current Manual Workflow
 
@@ -36,7 +36,7 @@ Start the service in a regular terminal:
 .venv/bin/jusi serve
 ```
 
-With this repository installed as a Neovim plugin, open a buffer containing 1.0
+With this repository installed as a Neovim plugin, open a `.vipynb` buffer containing 1.0
 cell delimiters and use:
 
 ```vim
@@ -44,6 +44,7 @@ cell delimiters and use:
 :JusiStartKernel
 :JusiExecute
 :JusiOpenOutput
+:JusiRestart
 :JusiStopKernel
 :JusiDisconnect
 ```

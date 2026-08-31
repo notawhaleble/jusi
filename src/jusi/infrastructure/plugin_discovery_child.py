@@ -57,7 +57,11 @@ def _distribution_identity(
 def _entry_points(
     search_paths: list[str],
 ) -> list[tuple[importlib.metadata.EntryPoint, importlib.metadata.Distribution]]:
-    distributions = importlib.metadata.distributions(path=search_paths or None)
+    distributions = (
+        importlib.metadata.distributions(path=search_paths)
+        if search_paths
+        else importlib.metadata.distributions()
+    )
     discovered = [
         (entry_point, distribution)
         for distribution in distributions

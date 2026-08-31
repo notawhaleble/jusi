@@ -15,6 +15,7 @@
         "kernel",
         "execution",
         "client",
+        "plugin_discovery",
         "plugin_worker"
       ]
     },
@@ -23,6 +24,7 @@
         "service_start",
         "start_kernel",
         "stop_kernel",
+        "restart_notebook",
         "execute",
         "interrupt",
         "cleanup",
@@ -35,7 +37,7 @@
       "required": ["kind", "id"],
       "properties": {
         "kind": {
-          "enum": ["supervisor", "kernel", "execution", "client", "plugin_worker", "transport", "notebook", "cell"]
+          "enum": ["supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"]
         },
         "id": {"$ref": "#/$defs/opaque_id"}
       },
@@ -98,7 +100,7 @@
         "message": {"type": "string", "minLength": 1, "maxLength": 4096},
         "retryable": {"type": "boolean"},
         "scope": {
-          "enum": ["request", "transport", "execution", "cell", "client", "plugin_worker", "kernel", "supervisor"]
+          "enum": ["request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor"]
         },
         "resource": {"$ref": "#/$defs/resource_ref"},
         "occurred_at": {"$ref": "#/$defs/timestamp"},

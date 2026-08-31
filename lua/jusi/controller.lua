@@ -57,6 +57,10 @@ function Controller:_accept_health_snapshot(response)
   if kernel == vim.NIL then
     kernel = nil
   end
+  local runtime = response.runtime
+  if runtime == vim.NIL then
+    runtime = nil
+  end
 
   local changed_supervisor = self.supervisor_id ~= nil and self.supervisor_id ~= response.supervisor_id
   local first_connection = self.supervisor_id == nil
@@ -73,6 +77,15 @@ function Controller:_accept_health_snapshot(response)
     else
       self.kernel_id = nil
       self.kernel_state = "off"
+    end
+    if runtime then
+      self.runtime_id = runtime.runtime_id
+      self.discovery_id = runtime.discovery_id
+      self.plugin_catalog = runtime.plugin_catalog
+    else
+      self.runtime_id = nil
+      self.discovery_id = nil
+      self.plugin_catalog = nil
     end
     if self.on_resynchronized then
       self.on_resynchronized({
@@ -236,7 +249,7 @@ function Controller:_on_event(event)
   if event.kind == "kernel.state_changed" then
     self.kernel_id = event.payload.kernel_id
     self.kernel_state = event.payload.state
-  elseif event.kind == "execution.started" then
+  elseif event.kind == "execution.started" and event.payload.notebook_id == self.notebook.notebook_id then
     self.executions[event.payload.execution_id] = {
       execution_id = event.payload.execution_id,
       cell_id = event.payload.cell_id,
@@ -277,6 +290,54 @@ function Controller:start_kernel(callback)
     if response then
       self.kernel_id = response.kernel.kernel_id
       self.kernel_state = response.kernel.state
+      self.runtime_id = response.runtime.runtime_id
+      self.discovery_id = response.runtime.discovery_id
+      self.plugin_catalog = response.runtime.plugin_catalog
+    end
+    if callback then
+      callback(response, failure)
+    end
+  end)
+end
+
+function Controller:restart_notebook(next_notebook_id, callback)
+  if not self.runtime_id or not self.kernel_id then
+    if callback then
+      callback(nil, {
+        trace_id = "",
+        layer = "frontend_model",
+        operation = "restart_notebook",
+        reason = "conflict",
+        message = "no authoritative notebook runtime is selected",
+        retryable = false,
+        scope = "request",
+        resource = { kind = "notebook", id = self.notebook.notebook_id },
+      })
+    end
+    return nil
+  end
+  local command = self:_command("restart_notebook", {
+    runtime_id = self.runtime_id,
+    kernel_id = self.kernel_id,
+    notebook_id = self.notebook.notebook_id,
+    next_notebook_id = next_notebook_id,
+    kernel_name = self.kernel_name,
+    idempotency_key = new_id("restart"),
+  })
+  return self:_request("POST", "/v1/notebook-runtimes/" .. self.runtime_id .. "/restart", command, function(response, failure)
+    if response then
+      self.runtime_id = response.runtime.runtime_id
+      self.discovery_id = response.runtime.discovery_id
+      self.plugin_catalog = response.runtime.plugin_catalog
+      self.kernel_id = response.kernel.kernel_id
+      self.kernel_state = response.kernel.state
+      self.executions = {}
+    elseif failure and failure.details and failure.details.teardown_completed then
+      self.runtime_id = nil
+      self.discovery_id = nil
+      self.plugin_catalog = nil
+      self.kernel_state = "off"
+      self.executions = {}
     end
     if callback then
       callback(response, failure)
@@ -379,6 +440,9 @@ function M.new(options)
     kernel_name = opts.kernel_name or "python3",
     kernel_id = nil,
     kernel_state = "off",
+    runtime_id = nil,
+    discovery_id = nil,
+    plugin_catalog = nil,
     supervisor_id = nil,
     event_sequence = opts.event_sequence or 0,
     transport_state = "disconnected",

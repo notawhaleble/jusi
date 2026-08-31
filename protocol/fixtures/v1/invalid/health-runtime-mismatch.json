@@ -6,20 +6,20 @@
   "event_sequence": 4,
   "kernel": {
     "kernel_id": "krn_fixture_1",
-    "notebook_id": "nb_fixture_1",
+    "notebook_id": "nb_kernel",
     "kernel_name": "python3",
     "state": "on",
     "pid": 1234
   },
   "runtime": {
     "runtime_id": "run_fixture_1",
-    "notebook_id": "nb_fixture_1",
-    "discovery_id": "discovery_fixture_health_1",
+    "notebook_id": "nb_other",
+    "discovery_id": "discovery_fixture_mismatch_1",
     "kernel_id": "krn_fixture_1",
     "plugin_catalog": {
       "protocol_version": 1,
       "catalog_version": 1,
-      "discovery_id": "discovery_fixture_health_1",
+      "discovery_id": "discovery_fixture_mismatch_1",
       "plugins": []
     }
   }

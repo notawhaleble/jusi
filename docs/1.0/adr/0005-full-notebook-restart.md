@@ -56,4 +56,12 @@ No execution, client, worker, cell-runtime, or kernel identity survives restart.
 - Plugin and configuration development no longer requires buffer wipeout or editor restart.
 - The service architecture must provide a fresh process boundary wherever Python import or entry-point caches could preserve plugin code.
 - Stale events are rejected through replaced resource identities.
-- The wire shape for restart must be introduced atomically with schema, Python, Lua, fixtures, and conformance tests; this ADR does not add that protocol command yet.
+- The restart wire shape is introduced atomically across schema, Python, Lua, fixtures, and conformance tests.
+
+## Implementation Note
+
+Protocol v1 now implements `restart_notebook`. The frontend allocates the next
+notebook-model identity before sending the command but rebuilds the model only
+after successful replacement, or after a typed failure confirms that teardown
+completed. Start and restart both run fresh catalog discovery. The Neovim
+command is `:JusiRestart`.

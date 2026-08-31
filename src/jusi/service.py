@@ -10,11 +10,12 @@ import tornado.netutil
 
 from jusi.application.supervisor import Supervisor
 from jusi.infrastructure.jupyter_kernel import ManagedJupyterKernelFactory
+from jusi.infrastructure.plugin_discovery import FreshProcessPluginCatalogDiscovery
 from jusi.interfaces.http import make_application
 
 
 async def serve(host: str, port: int) -> None:
-    supervisor = Supervisor(ManagedJupyterKernelFactory())
+    supervisor = Supervisor(ManagedJupyterKernelFactory(), FreshProcessPluginCatalogDiscovery())
     application = make_application(supervisor)
     sockets = tornado.netutil.bind_sockets(port, address=host)
     server = tornado.httpserver.HTTPServer(application)

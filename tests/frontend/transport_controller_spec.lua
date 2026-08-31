@@ -49,6 +49,7 @@ function FakeTransport.new(health)
       earliest_event_sequence = 1,
       event_sequence = 0,
       kernel = nil,
+      runtime = vim.NIL,
     },
   }, FakeTransport)
 end
@@ -69,7 +70,15 @@ function FakeTransport:request(method, path, payload, _, callback)
   if path == "/v1/health" then
     callback(vim.deepcopy(self.health), nil)
   elseif payload.kind == "start_kernel" then
-    callback({ ok = true, kernel = { kernel_id = "krn_test", state = "on" } }, nil)
+    callback({
+      ok = true,
+      kernel = { kernel_id = "krn_test", state = "on" },
+      runtime = {
+        runtime_id = "run_test",
+        discovery_id = "discovery_test",
+        plugin_catalog = { protocol_version = 1, catalog_version = 1, discovery_id = "discovery_test", plugins = {} },
+      },
+    }, nil)
   elseif payload.kind == "execute" then
     callback({ ok = true, execution = { execution_id = "exe_test", outcome = "succeeded" } }, nil)
   elseif payload.kind == "stop_kernel" then
@@ -227,6 +236,7 @@ local function test_supervisor_replacement_resynchronizes_from_authoritative_sna
     earliest_event_sequence = 1,
     event_sequence = 1,
     kernel = nil,
+    runtime = vim.NIL,
   })
   local resynchronized
   local controller = controller_module.new({
@@ -248,6 +258,7 @@ local function test_supervisor_replacement_resynchronizes_from_authoritative_sna
   equal(controller.event_sequence, 1)
   equal(controller.kernel_state, "off")
   equal(controller.kernel_id, nil)
+  equal(controller.runtime_id, nil)
   equal(controller.executions, {})
   equal(transport.connected_after, 1)
   controller:close()
@@ -264,7 +275,14 @@ local function test_expired_cursor_resynchronizes_but_replayable_cursor_does_not
     supervisor_id = "sup_test",
     earliest_event_sequence = 10,
     event_sequence = 12,
-    kernel = { kernel_id = "krn_snapshot", state = "on" },
+    kernel = { kernel_id = "krn_snapshot", notebook_id = model.notebook_id, state = "on" },
+    runtime = {
+      runtime_id = "run_snapshot",
+      notebook_id = model.notebook_id,
+      discovery_id = "discovery_snapshot",
+      kernel_id = "krn_snapshot",
+      plugin_catalog = { protocol_version = 1, catalog_version = 1, discovery_id = "discovery_snapshot", plugins = {} },
+    },
   }
 
   local expired_transport = FakeTransport.new(health)
@@ -274,6 +292,8 @@ local function test_expired_cursor_resynchronizes_but_replayable_cursor_does_not
   equal(expired.event_sequence, 12)
   equal(expired.kernel_id, "krn_snapshot")
   equal(expired.kernel_state, "on")
+  equal(expired.runtime_id, "run_snapshot")
+  equal(expired.discovery_id, "discovery_snapshot")
   equal(expired_transport.connected_after, 12)
   expired:close()
 

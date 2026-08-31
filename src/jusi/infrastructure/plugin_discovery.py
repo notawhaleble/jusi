@@ -10,7 +10,7 @@ import tempfile
 import threading
 from typing import Any, Sequence
 
-from jusi.application.ports import PluginCatalogDiscoveryResult
+from jusi.application.ports import PluginCatalogDiscoveryError, PluginCatalogDiscoveryResult
 from jusi.domain.models import ProcessDiagnostics
 from jusi.plugin_api import validate_catalog_claims
 from jusi.protocol import ProtocolValidationError
@@ -20,25 +20,7 @@ DEFAULT_STDERR_LIMIT = 16 * 1024
 DEFAULT_RESULT_LIMIT = 1024 * 1024
 
 
-class PluginDiscoveryError(RuntimeError):
-    def __init__(
-        self,
-        message: str,
-        *,
-        reason: str,
-        retryable: bool,
-        diagnostics: ProcessDiagnostics | None = None,
-        entry_point: str = "",
-        distribution: str = "",
-    ) -> None:
-        super().__init__(message)
-        self.layer = "plugin_discovery"
-        self.operation = "discover_plugins"
-        self.reason = reason
-        self.retryable = retryable
-        self.diagnostics = diagnostics
-        self.entry_point = entry_point
-        self.distribution = distribution
+PluginDiscoveryError = PluginCatalogDiscoveryError
 
 
 class _BoundedStderrReader(threading.Thread):

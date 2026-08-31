@@ -5,7 +5,8 @@
   "oneOf": [
     {"$ref": "#/$defs/start_kernel"},
     {"$ref": "#/$defs/execute"},
-    {"$ref": "#/$defs/stop_kernel"}
+    {"$ref": "#/$defs/stop_kernel"},
+    {"$ref": "#/$defs/restart_notebook"}
   ],
   "$defs": {
     "base": {
@@ -60,6 +61,24 @@
           "properties": {
             "kind": {"const": "stop_kernel"},
             "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128}
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "restart_notebook": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {
+          "type": "object",
+          "required": ["kind", "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"],
+          "properties": {
+            "kind": {"const": "restart_notebook"},
+            "runtime_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "next_notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "kernel_name": {"type": "string", "minLength": 1, "maxLength": 128}
           },
           "unevaluatedProperties": false
         }

@@ -101,10 +101,10 @@ Allowed initial scopes:
 
 Scope describes demonstrated impact, not guessed severity. Propagating to a wider scope requires a recorded causal link.
 
-`plugin_discovery` is currently an internal layer and scope. Before a discovery
-failure is emitted on protocol v1, the operation, resource kind, layer, scope,
-schemas, Python/Lua validators, fixtures, and conformance tests must land
-atomically. Discovery must not counterfeit a `plugin_worker` identity.
+`plugin_discovery` has its own protocol layer, scope, and resource kind. Start
+and full-restart failures retain that origin and never counterfeit a
+`plugin_worker` identity. Restart failures explicitly report whether teardown
+completed so the frontend can retire only the identities that actually ended.
 
 ## Containment Examples
 

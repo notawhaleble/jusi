@@ -22,14 +22,15 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
     "start_kernel": ("notebook_id", "kernel_name"),
     "execute": ("kernel_id", "notebook_id", "cell_id", "code"),
     "stop_kernel": ("kernel_id",),
+    "restart_notebook": ("runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"),
 }
-LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_worker"}
-OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "execute", "interrupt", "cleanup", "inspect", "connect_events"}
+LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
+OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"}
 EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "failure.occurred"}
-RESOURCE_KINDS = {"supervisor", "kernel", "execution", "client", "plugin_worker", "transport", "notebook", "cell"}
+RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
-FAILURE_SCOPES = {"request", "transport", "execution", "cell", "client", "plugin_worker", "kernel", "supervisor"}
+FAILURE_SCOPES = {"request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor"}
 
 
 def _required_strings(value: dict[str, Any], fields: tuple[str, ...], context: str) -> None:
@@ -209,6 +210,21 @@ def validate_health_response(data: object) -> dict[str, Any]:
             raise ProtocolValidationError("kernel.kernel_id must be a non-empty string")
         if kernel.get("state") not in {"off", "on"}:
             raise ProtocolValidationError("kernel.state must be off or on")
+    if "runtime" not in data:
+        raise ProtocolValidationError("runtime must be present in health response")
+    runtime = data["runtime"]
+    if runtime is not None:
+        fields = {"runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog"}
+        if not isinstance(runtime, dict) or set(runtime) != fields:
+            raise ProtocolValidationError("runtime has invalid fields")
+        _required_strings(runtime, ("runtime_id", "notebook_id", "discovery_id", "kernel_id"), "runtime")
+        catalog = validate_plugin_catalog(runtime["plugin_catalog"])
+        if catalog["discovery_id"] != runtime["discovery_id"]:
+            raise ProtocolValidationError("runtime discovery identity mismatch")
+        if kernel is None or runtime["kernel_id"] != kernel["kernel_id"] or runtime["notebook_id"] != kernel.get("notebook_id"):
+            raise ProtocolValidationError("runtime kernel ownership mismatch")
+    elif kernel is not None and kernel.get("state") == "on":
+        raise ProtocolValidationError("an on kernel requires an authoritative runtime")
     return dict(data)
 
 

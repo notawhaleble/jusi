@@ -6,7 +6,7 @@ Notebook.__index = Notebook
 
 local notebook_counter = 0
 
-local function new_notebook_id()
+function M.new_notebook_id()
   notebook_counter = notebook_counter + 1
   return string.format("nb_%x_%x", vim.uv.hrtime(), notebook_counter)
 end
@@ -471,7 +471,7 @@ end
 function M.attach(buf, options)
   vim.validate("buf", buf, "number")
   local opts = options or {}
-  local notebook_id = opts.notebook_id or new_notebook_id()
+  local notebook_id = opts.notebook_id or M.new_notebook_id()
   local self = setmetatable({
     buf = buf,
     notebook_id = notebook_id,

@@ -88,6 +88,11 @@ def test_empty_plugin_environment_returns_a_valid_catalog(tmp_path: Path) -> Non
     assert result.process.exit_code == 0
 
 
+def test_production_environment_enumeration_without_explicit_search_path() -> None:
+    result = FreshProcessPluginCatalogDiscovery().discover(discovery_id="discovery_environment", timeout=2)
+    assert result.catalog["discovery_id"] == "discovery_environment"
+
+
 def test_discovery_is_fresh_deterministic_and_never_imports_provider_in_parent(tmp_path: Path) -> None:
     module_name = install_fixture_distribution(tmp_path, plugin_id="sqlite")
     adapter = discoverer(tmp_path)

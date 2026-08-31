@@ -57,5 +57,26 @@ class PluginCatalogDiscoveryResult:
     process: ProcessDiagnostics
 
 
+class PluginCatalogDiscoveryError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        retryable: bool,
+        diagnostics: ProcessDiagnostics | None = None,
+        entry_point: str = "",
+        distribution: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.layer = "plugin_discovery"
+        self.operation = "discover_plugins"
+        self.reason = reason
+        self.retryable = retryable
+        self.diagnostics = diagnostics
+        self.entry_point = entry_point
+        self.distribution = distribution
+
+
 class PluginCatalogDiscovery(Protocol):
     def discover(self, *, discovery_id: str, timeout: float) -> PluginCatalogDiscoveryResult: ...

@@ -41,6 +41,10 @@ def test_walking_skeleton_uses_only_declared_command_and_event_kinds() -> None:
     assert scenario["assertions"]["kernel_states"] == ["on", "off"]
     assert scenario["assertions"]["result"] == {"media_type": "text/plain", "data": "2"}
 
+    restart = load_json(ROOT / "protocol" / "fixtures" / "v1" / "scenarios" / "restart-notebook.json")
+    assert restart["command"]["kind"] in declared_commands
+    assert set(restart["expected_event_kinds"]) <= declared_events
+
 
 def test_python_consumes_shared_event_fixtures() -> None:
     fixture_root = ROOT / "protocol" / "fixtures" / "v1"
@@ -72,10 +76,15 @@ def test_python_consumes_shared_health_fixtures() -> None:
     fixture_root = ROOT / "protocol" / "fixtures" / "v1"
     response = load_json(fixture_root / "valid" / "health-response.json")
     assert validate_health_response(response)["kernel"]["state"] == "on"
+    assert validate_health_response(response)["runtime"]["plugin_catalog"]["plugins"] == []
 
     invalid = load_json(fixture_root / "invalid" / "health-invalid-window.json")
     with pytest.raises(ProtocolValidationError, match="window"):
         validate_health_response(invalid)
+
+    mismatch = load_json(fixture_root / "invalid" / "health-runtime-mismatch.json")
+    with pytest.raises(ProtocolValidationError, match="ownership"):
+        validate_health_response(mismatch)
 
 
 def test_python_consumes_shared_plugin_catalog_fixtures() -> None:

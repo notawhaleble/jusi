@@ -1,0 +1,28 @@
+{
+  "scenario": "replace-complete-notebook-runtime",
+  "protocol_version": 1,
+  "command": {
+    "protocol_version": 1,
+    "command_id": "cmd_restart_1",
+    "trace_id": "trace_restart_1",
+    "kind": "restart_notebook",
+    "idempotency_key": "restart-one",
+    "runtime_id": "run_old_1",
+    "kernel_id": "krn_old_1",
+    "notebook_id": "nb_old_1",
+    "next_notebook_id": "nb_new_1",
+    "kernel_name": "python3"
+  },
+  "expected_event_kinds": [
+    "operation.started",
+    "kernel.state_changed",
+    "kernel.state_changed",
+    "operation.completed"
+  ],
+  "assertions": {
+    "old_kernel_state": "off",
+    "new_kernel_state": "on",
+    "replace_identities": ["runtime_id", "discovery_id", "kernel_id", "notebook_id", "cell_id"],
+    "preserve": ["buffer_text", "undo_history", "buffer_identity"]
+  }
+}

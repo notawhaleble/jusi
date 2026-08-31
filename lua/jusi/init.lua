@@ -67,6 +67,30 @@ local function accepts_native_notebook(buf)
   return false
 end
 
+local function new_presentation(model)
+  return presentation_module.new({
+    notebook_id = model.notebook_id,
+    on_failure = function(failure)
+      notify(failure_text(failure), vim.log.levels.ERROR)
+    end,
+  })
+end
+
+local function replace_frontend_runtime(session, notebook_id)
+  session.presentation:close()
+  session.model:detach()
+  local model = notebook.attach(session.buf, { notebook_id = notebook_id })
+  local presentation = new_presentation(model)
+  local callbacks = presentation:controller_callbacks()
+  session.model = model
+  session.presentation = presentation
+  session.controller.notebook = model
+  session.controller.on_execution_started = callbacks.on_execution_started
+  session.controller.on_output = callbacks.on_output
+  session.controller.executions = {}
+  return model
+end
+
 function M.connect(options)
   local opts = options or {}
   local buf = opts.buf or vim.api.nvim_get_current_buf()
@@ -80,12 +104,7 @@ function M.connect(options)
   end
 
   local model = notebook.attach(buf)
-  local presentation = presentation_module.new({
-    notebook_id = model.notebook_id,
-    on_failure = function(failure)
-      notify(failure_text(failure), vim.log.levels.ERROR)
-    end,
-  })
+  local presentation = new_presentation(model)
   local callbacks = presentation:controller_callbacks()
   local transport = opts.transport or transport_module.new({ base_url = opts.base_url or config.base_url })
   local controller = controller_module.new({
@@ -216,6 +235,27 @@ function M.start_kernel(buf)
   end)
 end
 
+function M.restart(buf)
+  local session = require_session(buf)
+  if not session then
+    return nil
+  end
+  session.controller.kernel_name = config.kernel_name
+  local next_notebook_id = notebook.new_notebook_id()
+  return session.controller:restart_notebook(next_notebook_id, function(response, failure)
+    local teardown_completed = response ~= nil
+      or (failure and failure.details and failure.details.teardown_completed == true)
+    if teardown_completed then
+      replace_frontend_runtime(session, next_notebook_id)
+    end
+    if failure then
+      notify(failure_text(failure), vim.log.levels.ERROR)
+    elseif response then
+      notify("notebook restarted: " .. response.kernel.kernel_id)
+    end
+  end)
+end
+
 function M.execute(buf, row)
   local session = require_session(buf)
   if not session then
@@ -320,6 +360,9 @@ local function create_commands()
   end, {})
   vim.api.nvim_create_user_command("JusiStartKernel", function()
     M.start_kernel()
+  end, {})
+  vim.api.nvim_create_user_command("JusiRestart", function()
+    M.restart()
   end, {})
   vim.api.nvim_create_user_command("JusiExecute", function()
     M.execute()

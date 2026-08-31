@@ -42,6 +42,37 @@ function M.run()
       return vim.api.nvim_buf_get_lines(output_buf, 0, 1, false)[1] == "2"
     end, "owned local result was not rendered")
 
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "owned_restart_probe = 1" })
+    local before_probe_sequence = session.controller.event_sequence
+    jusi.execute(buf, 1)
+    wait_for(8000, function()
+      return session.controller.event_sequence >= before_probe_sequence + 4
+    end, "restart probe assignment did not complete")
+
+    local old_runtime_id = session.controller.runtime_id
+    local old_notebook_id = session.model.notebook_id
+    local old_cell_id = session.model:cell_at_row(1).id
+    local undo_sequence = vim.fn.undotree().seq_cur
+    jusi.restart(buf)
+    wait_for(12000, function()
+      return session.controller.runtime_id ~= old_runtime_id and session.model.notebook_id ~= old_notebook_id
+    end, "JusiRestart did not replace the complete frontend/backend runtime")
+    assert(session.model:cell_at_row(1).id ~= old_cell_id)
+    assert(vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == "owned_restart_probe = 1")
+    assert(vim.fn.undotree().seq_cur == undo_sequence)
+    assert(not vim.api.nvim_buf_is_valid(output_buf))
+
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "int('owned_restart_probe' in globals())" })
+    local restarted_cell_id = session.model:cell_at_row(1).id
+    jusi.execute(buf, 1)
+    wait_for(8000, function()
+      return session.presentation:buffer_for_cell(restarted_cell_id) ~= nil
+    end, "post-JusiRestart execution produced no output surface")
+    local restarted_output = session.presentation:buffer_for_cell(restarted_cell_id)
+    wait_for(1000, function()
+      return vim.api.nvim_buf_get_lines(restarted_output, 0, 1, false)[1] == "0"
+    end, "JusiRestart retained a global from the old kernel")
+
     jusi.stop_service(buf)
     wait_for(8000, function()
       return service.state == "stopped" and session.service == nil

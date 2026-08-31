@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 import tornado.httpserver
 
-from jusi.application.ports import KernelExecutionResult, KernelOutput
+from jusi.application.ports import KernelExecutionResult, KernelOutput, PluginCatalogDiscoveryResult
 from jusi.application.supervisor import Supervisor
+from jusi.domain.models import ProcessDiagnostics
 from jusi.interfaces.http import make_application
 
 
@@ -30,6 +31,19 @@ class FakeFactory:
     def start(self, kernel_name: str, *, timeout: float) -> FakeKernel:
         assert kernel_name == "python3"
         return FakeKernel()
+
+
+class FakeDiscovery:
+    def discover(self, *, discovery_id: str, timeout: float) -> PluginCatalogDiscoveryResult:
+        return PluginCatalogDiscoveryResult(
+            catalog={
+                "protocol_version": 1,
+                "catalog_version": 1,
+                "discovery_id": discovery_id,
+                "plugins": [],
+            },
+            process=ProcessDiagnostics(pid=9753, exit_code=0),
+        )
 
 
 def make_command(kind: str, trace_id: str, **payload) -> dict:
@@ -72,7 +86,7 @@ async def request_json(socket_path: str, method: str, path: str, payload: dict |
 
 
 async def run_http_sse_scenario(socket_path: str) -> None:
-    supervisor = Supervisor(FakeFactory())
+    supervisor = Supervisor(FakeFactory(), FakeDiscovery())
     application = make_application(supervisor)
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
@@ -101,6 +115,7 @@ async def run_http_sse_scenario(socket_path: str) -> None:
         assert health["earliest_event_sequence"] == 1
         assert health["event_sequence"] == 1
         assert health["kernel"] is None
+        assert health["runtime"] is None
 
         status, started = await request_json(
             socket_path,
@@ -166,6 +181,27 @@ async def run_http_sse_scenario(socket_path: str) -> None:
         )
         assert status == 200
         assert repeated["cleanup"]["result"] == "already_absent"
+
+        runtime_id = started["runtime"]["runtime_id"]
+        status, restarted = await request_json(
+            socket_path,
+            "POST",
+            f"/v1/notebook-runtimes/{runtime_id}/restart",
+            make_command(
+                "restart_notebook",
+                "trace_restart",
+                runtime_id=runtime_id,
+                kernel_id=kernel_id,
+                notebook_id="nb",
+                next_notebook_id="nb_next",
+                kernel_name="python3",
+            ),
+        )
+        assert status == 200
+        assert restarted["cleanup"]["result"] == "already_absent"
+        assert restarted["runtime"]["runtime_id"] != runtime_id
+        assert restarted["kernel"]["kernel_id"] != kernel_id
+        assert restarted["kernel"]["notebook_id"] == "nb_next"
     finally:
         sse_writer.close()
         await sse_writer.wait_closed()

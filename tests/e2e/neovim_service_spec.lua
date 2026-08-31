@@ -109,6 +109,76 @@ local function run_scenario()
     end, "native terminal did not render the result")
     assert(vim.bo[output_buf].buftype == "terminal")
 
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "jusi_restart_probe = 41" })
+    local probe_response
+    local probe_failure
+    controller:execute(cell_id, function(response, failure)
+      probe_response = response
+      probe_failure = failure
+    end)
+    wait_for(8000, function()
+      return probe_response ~= nil or probe_failure ~= nil
+    end, "restart probe setup did not complete")
+    assert(probe_failure == nil, vim.inspect(probe_failure))
+    assert(probe_response.execution.outcome == "succeeded")
+
+    local old_runtime_id = controller.runtime_id
+    local old_discovery_id = controller.discovery_id
+    local old_kernel_id = controller.kernel_id
+    local old_notebook_id = model.notebook_id
+    local text_before_restart = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local undo_sequence_before_restart = vim.fn.undotree().seq_cur
+    local next_notebook_id = notebook.new_notebook_id()
+    local restart_response
+    local restart_failure
+    controller:restart_notebook(next_notebook_id, function(response, failure)
+      restart_response = response
+      restart_failure = failure
+    end)
+    wait_for(12000, function()
+      return restart_response ~= nil or restart_failure ~= nil
+    end, "full notebook restart did not complete")
+    assert(restart_failure == nil, vim.inspect(restart_failure))
+    assert(restart_response.cleanup.result == "stopped")
+    assert(controller.runtime_id ~= old_runtime_id)
+    assert(controller.discovery_id ~= old_discovery_id)
+    assert(controller.kernel_id ~= old_kernel_id)
+    assert(restart_response.runtime.notebook_id == next_notebook_id)
+
+    presentation:close()
+    model:detach()
+    model = notebook.attach(buf, { notebook_id = next_notebook_id })
+    presentation = presentation_module.new({ notebook_id = model.notebook_id })
+    presentation_callbacks = presentation:controller_callbacks()
+    controller.notebook = model
+    controller.on_execution_started = presentation_callbacks.on_execution_started
+    controller.executions = {}
+    local new_cell_id = model:ordered_cells()[1].id
+    assert(model.notebook_id ~= old_notebook_id)
+    assert(new_cell_id ~= cell_id)
+    assert(vim.api.nvim_buf_get_lines(buf, 0, -1, false)[2] == "jusi_restart_probe = 41")
+    assert(vim.deep_equal(vim.api.nvim_buf_get_lines(buf, 0, -1, false), text_before_restart))
+    assert(vim.fn.undotree().seq_cur == undo_sequence_before_restart)
+    assert(not vim.api.nvim_buf_is_valid(output_buf), "restart must retire old output surfaces")
+
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "int('jusi_restart_probe' in globals())" })
+    local post_restart_response
+    local post_restart_failure
+    controller:execute(new_cell_id, function(response, failure)
+      post_restart_response = response
+      post_restart_failure = failure
+    end)
+    wait_for(8000, function()
+      return post_restart_response ~= nil or post_restart_failure ~= nil
+    end, "post-restart execution did not complete")
+    assert(post_restart_failure == nil, vim.inspect(post_restart_failure))
+    wait_for(5000, function()
+      return #outputs > 1
+    end, "post-restart result event did not arrive")
+    assert(outputs[#outputs].cell_id == new_cell_id)
+    assert(outputs[#outputs].output.data == "0", "new kernel unexpectedly retained old globals")
+
     local stop_response
     local stop_failure
     controller:stop_kernel(function(response, failure)
@@ -127,9 +197,9 @@ local function run_scenario()
     for index, event in ipairs(events) do
       assert(event.sequence == index + 1, "frontend observed an event sequence gap")
     end
-    assert(controller.event_sequence == 12)
+    assert(controller.event_sequence == #events + 1)
     assert(#failures == 0, vim.inspect(failures))
-    return { event_count = #events, output_count = #outputs }
+    return { event_count = #events, output_count = #outputs, full_restart = true }
   end, debug.traceback)
 
   if controller then

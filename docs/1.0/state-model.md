@@ -37,6 +37,21 @@ Every attempt uses a fresh interpreter and process group. A successful notebook
 runtime owns the resulting immutable catalog snapshot, not the discovery
 process. A failed entry prevents publication of a partial authoritative catalog.
 
+### Notebook Runtime
+
+One authoritative runtime generation binding a frontend notebook model, one
+validated plugin catalog snapshot, and one kernel generation.
+
+- identity: `runtime_id`
+- owns correlations to: `notebook_id`, `discovery_id`, `kernel_id`
+- catalog: immutable for this generation and discarded on replacement
+- lifetime: successful start until replacement; it may remain inspectable with
+  an `off` kernel after stop or observed kernel death
+
+The health snapshot publishes the runtime and kernel together and validates
+their notebook/kernel ownership. A live kernel without an authoritative runtime
+is a protocol violation.
+
 ### Kernel
 
 One concrete kernel generation.
@@ -118,6 +133,7 @@ Backend resources may reference these identifiers for correlation, but do not ow
 
 - Start is accepted only when no owned live kernel generation exists, unless an idempotency key identifies the same in-flight request.
 - The operation may be `running` while the visible kernel remains `off`.
+- Start performs fresh plugin discovery before spawning a kernel and publishes no runtime if discovery or startup fails.
 - Readiness changes the kernel to `on` and emits the authoritative event.
 - Startup failure leaves the kernel `off` and returns a structured failure.
 
@@ -141,7 +157,12 @@ Backend resources may reference these identifiers for correlation, but do not ow
 - Teardown failure prevents a silent second kernel from being started.
 - Failure after successful teardown leaves the kernel `off` and does not restore stale runtime state.
 
-The protocol command for this operation is intentionally deferred until schema, Python, Lua, fixtures, and conformance coverage can land atomically.
+Protocol v1 now exposes `restart_notebook`, targeting the current `runtime_id`,
+`kernel_id`, and `notebook_id` while carrying a frontend-allocated
+`next_notebook_id`. The response publishes the replacement runtime, discovery,
+catalog, and kernel identities. A failure after teardown includes
+`details.teardown_completed=true` so the frontend retires the old model and
+runtime projections even though replacement startup did not succeed.
 
 ## Remote Checking
 

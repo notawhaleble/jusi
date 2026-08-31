@@ -9,7 +9,7 @@
         "properties": {"status": {"const": "ready"}}
       },
       "then": {
-        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel"]
+        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel", "runtime"]
       }
     }
   ],
@@ -21,6 +21,18 @@
         "ok": {"const": true},
         "operation": {"type": "object"},
         "kernel": {"type": ["object", "null"]},
+        "runtime": {
+          "type": ["object", "null"],
+          "properties": {
+            "runtime_id": {"type": "string", "minLength": 3},
+            "notebook_id": {"type": "string", "minLength": 1},
+            "discovery_id": {"type": "string", "minLength": 3},
+            "kernel_id": {"type": "string", "minLength": 3},
+            "plugin_catalog": {"$ref": "plugin-catalog.schema.json"}
+          },
+          "required": ["runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog"],
+          "additionalProperties": false
+        },
         "execution": {"type": "object"},
         "cleanup": {"type": "object"},
         "status": {"type": "string"},

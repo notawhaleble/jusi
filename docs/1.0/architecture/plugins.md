@@ -69,9 +69,10 @@ PID/exit/signal diagnostics. Any broken entry, duplicate identity, or family
 conflict prevents publication of the entire catalog; stale or partial
 capabilities are never presented as authoritative.
 
-The isolated adapter currently remains an internal application port. It is not
-yet connected to kernel start, HTTP, or SSE; that integration belongs to the
-full notebook-runtime/restart operation.
+The isolated adapter is an application port used by initial start and full
+notebook restart. Its validated catalog is owned by the resulting notebook
+runtime and is present in authoritative health/start/restart snapshots. Plugin
+runtime execution and kernel-extension loading remain deferred.
 
 ## Failure And Verification
 

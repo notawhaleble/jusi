@@ -12,6 +12,7 @@ Owns:
 - idempotent cleanup
 - generic plugin discovery and isolation contracts
 - fail-closed publication of validated plugin catalog snapshots
+- notebook-runtime generations that bind catalog, kernel, and frontend notebook identities
 
 Does not own:
 

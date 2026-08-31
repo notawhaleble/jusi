@@ -102,6 +102,24 @@ class KernelResource:
         }
 
 
+@dataclass(frozen=True)
+class NotebookRuntime:
+    runtime_id: str
+    notebook_id: str
+    discovery_id: str
+    kernel_id: str
+    plugin_catalog: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "runtime_id": self.runtime_id,
+            "notebook_id": self.notebook_id,
+            "discovery_id": self.discovery_id,
+            "kernel_id": self.kernel_id,
+            "plugin_catalog": dict(self.plugin_catalog),
+        }
+
+
 @dataclass
 class Operation:
     operation_id: str

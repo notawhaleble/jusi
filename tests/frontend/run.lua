@@ -12,6 +12,9 @@ for _, command in ipairs(scenario.commands) do
   local ok, err = protocol.validate_command(command, command.kind)
   assert(ok, err)
 end
+local restart_scenario = read_json("protocol/fixtures/v1/scenarios/restart-notebook.json")
+local restart_ok, restart_error = protocol.validate_command(restart_scenario.command, "restart_notebook")
+assert(restart_ok, restart_error)
 
 local invalid = read_json("protocol/fixtures/v1/invalid/command-missing-trace-id.json")
 local ok = protocol.validate_command(invalid, invalid.kind)
@@ -40,6 +43,9 @@ assert(health_ok, health_error)
 local invalid_health = read_json("protocol/fixtures/v1/invalid/health-invalid-window.json")
 local invalid_health_ok = protocol.validate_health_response(invalid_health)
 assert(not invalid_health_ok, "invalid health fixture must be rejected")
+local mismatched_health = read_json("protocol/fixtures/v1/invalid/health-runtime-mismatch.json")
+local mismatched_health_ok = protocol.validate_health_response(mismatched_health)
+assert(not mismatched_health_ok, "runtime/kernel ownership mismatch must be rejected")
 
 local plugin_catalog = read_json("protocol/fixtures/v1/valid/plugin-catalog.json")
 local catalog_ok, catalog_error = protocol.validate_plugin_catalog(plugin_catalog)

@@ -4,5 +4,6 @@
   "supervisor_id": "sup_fixture_1",
   "earliest_event_sequence": 8,
   "event_sequence": 4,
-  "kernel": null
+  "kernel": null,
+  "runtime": null
 }
