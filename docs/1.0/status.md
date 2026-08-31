@@ -4,7 +4,7 @@ Updated: 2026-08-31
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0008 are active.
+- The foundation review is accepted; ADRs 0001-0009 are active.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -14,6 +14,7 @@ Updated: 2026-08-31
 - Textual output now projects unchanged through `nvim_open_term()` into a hidden, cell-attached terminal buffer. Renderer choice is media-driven.
 - Repository-root Neovim runtime loading exposes explicit connect, kernel start/stop, execute, output-open, and disconnect commands. Output opens in a predictable bottom split.
 - Frontend disconnect now closes only transport; the live buffer model, cell identities, kernel view, and output surfaces survive an inspect-before-replay reconnect.
+- Managed local service launch is specified as a future explicit, notebook-scoped process operation; transport connect never spawns or owns a service implicitly.
 - Event-stream connection now inspects authoritative supervisor/kernel state and the retained replay window first. Supervisor replacement and expired cursors replace stale frontend state; replayable cursors consume only missing ordered events.
 - Every initial event kind now has a closed payload contract shared by JSON Schema, Python, Lua, and valid/invalid fixtures. Runtime supervisor events are validated in backend tests before frontend dispatch relies on them.
 - Kernel death and cleanup failures preserve bounded stderr plus PID/exit/signal diagnostics, and execution failures record non-secret payload size. Kernel death emits a caused execution failure before the authoritative `off` transition.
@@ -45,5 +46,5 @@ Deferred:
 
 ## Next Boundary
 
-1. decide explicit local-service ownership before adding automatic spawning
-2. define full notebook restart as an atomic protocol and runtime operation
+1. implement the explicit local-service launcher with bounded readiness, stderr, and cleanup tests
+2. define full notebook restart as an atomic protocol and runtime operation after plugin discovery boundaries exist

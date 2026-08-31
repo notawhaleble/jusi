@@ -43,8 +43,7 @@ configuration updates defaults without duplicating commands.
 
 ## Deliberate Deferral
 
-This slice does not spawn or own the Python service process. The user starts a
-local service explicitly or supplies a supervisor URL. Automatic local service
-ownership needs a separate decision covering executable discovery, logs,
-shutdown, multiple Neovim instances, and whether a kernel should outlive a
-frontend transport.
+This slice does not yet spawn or own the Python service process. The user starts
+a local service explicitly or supplies a supervisor URL. ADR 0009 fixes the
+future launcher boundary: explicit notebook-scoped ownership, captured readiness
+and stderr, and no hidden spawn in the transport-connect command.
