@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "discovery_id": "discovery_invalid_1",
+  "plugins": [
+    {"plugin_id": "duplicate", "plugin_version": "1", "distribution": "one", "families": [{"family_id": "one", "magic_name": "one", "capabilities": ["execute"]}], "kernel_extensions": [], "worker_entry_point": null, "media_types": ["text/plain"], "interaction": "noninteractive"},
+    {"plugin_id": "duplicate", "plugin_version": "1", "distribution": "two", "families": [{"family_id": "two", "magic_name": "two", "capabilities": ["execute"]}], "kernel_extensions": [], "worker_entry_point": null, "media_types": ["text/plain"], "interaction": "noninteractive"}
+  ]
+}

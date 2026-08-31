@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from jusi.protocol import ProtocolValidationError, validate_event, validate_health_response
+from jusi.protocol import ProtocolValidationError, validate_event, validate_health_response, validate_plugin_catalog
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -76,3 +76,15 @@ def test_python_consumes_shared_health_fixtures() -> None:
     invalid = load_json(fixture_root / "invalid" / "health-invalid-window.json")
     with pytest.raises(ProtocolValidationError, match="window"):
         validate_health_response(invalid)
+
+
+def test_python_consumes_shared_plugin_catalog_fixtures() -> None:
+    fixture_root = ROOT / "protocol" / "fixtures" / "v1"
+    catalog = load_json(fixture_root / "valid" / "plugin-catalog.json")
+    validated = validate_plugin_catalog(catalog)
+    assert [plugin["plugin_id"] for plugin in validated["plugins"]] == ["sqlite_provider", "postgres_provider"]
+    assert {family["magic_name"] for plugin in validated["plugins"] for family in plugin["families"]} == {"sql"}
+
+    invalid = load_json(fixture_root / "invalid" / "plugin-catalog-duplicate-id.json")
+    with pytest.raises(ProtocolValidationError, match="Duplicate"):
+        validate_plugin_catalog(invalid)

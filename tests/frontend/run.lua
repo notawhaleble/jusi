@@ -41,6 +41,13 @@ local invalid_health = read_json("protocol/fixtures/v1/invalid/health-invalid-wi
 local invalid_health_ok = protocol.validate_health_response(invalid_health)
 assert(not invalid_health_ok, "invalid health fixture must be rejected")
 
+local plugin_catalog = read_json("protocol/fixtures/v1/valid/plugin-catalog.json")
+local catalog_ok, catalog_error = protocol.validate_plugin_catalog(plugin_catalog)
+assert(catalog_ok, catalog_error)
+local invalid_catalog = read_json("protocol/fixtures/v1/invalid/plugin-catalog-duplicate-id.json")
+local invalid_catalog_ok = protocol.validate_plugin_catalog(invalid_catalog)
+assert(not invalid_catalog_ok, "duplicate plugin identities must be rejected")
+
 local specs = vim.fn.glob("tests/frontend/*_spec.lua", false, true)
 table.sort(specs)
 for _, path in ipairs(specs) do

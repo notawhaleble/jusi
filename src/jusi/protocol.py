@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -204,4 +205,52 @@ def validate_health_response(data: object) -> dict[str, Any]:
             raise ProtocolValidationError("kernel.kernel_id must be a non-empty string")
         if kernel.get("state") not in {"off", "on"}:
             raise ProtocolValidationError("kernel.state must be off or on")
+    return dict(data)
+
+
+def validate_plugin_catalog(data: object) -> dict[str, Any]:
+    if not isinstance(data, dict) or set(data) != {"protocol_version", "catalog_version", "discovery_id", "plugins"}:
+        raise ProtocolValidationError("Plugin catalog has invalid top-level fields")
+    if data["protocol_version"] != 1 or data["catalog_version"] != 1:
+        raise ProtocolValidationError("Plugin catalog version must be 1")
+    if not isinstance(data["discovery_id"], str) or not data["discovery_id"]:
+        raise ProtocolValidationError("discovery_id must be a non-empty string")
+    if not isinstance(data["plugins"], list):
+        raise ProtocolValidationError("plugins must be an array")
+    plugin_ids: set[str] = set()
+    capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions"}
+    interactions = {"noninteractive", "request_response", "terminal_interactive"}
+    fields = {"plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"}
+    for plugin in data["plugins"]:
+        if not isinstance(plugin, dict) or set(plugin) != fields:
+            raise ProtocolValidationError("Plugin catalog entry fields are invalid")
+        _required_strings(plugin, ("plugin_id", "plugin_version", "distribution"), "plugin")
+        if plugin["plugin_id"] in plugin_ids:
+            raise ProtocolValidationError(f"Duplicate plugin_id: {plugin['plugin_id']}")
+        plugin_ids.add(plugin["plugin_id"])
+        if plugin["interaction"] not in interactions:
+            raise ProtocolValidationError("Plugin interaction is invalid")
+        if plugin["worker_entry_point"] is not None and (not isinstance(plugin["worker_entry_point"], str) or not plugin["worker_entry_point"]):
+            raise ProtocolValidationError("worker_entry_point must be a string or null")
+        for field in ("kernel_extensions", "media_types"):
+            values = plugin[field]
+            if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values) or len(values) != len(set(values)):
+                raise ProtocolValidationError(f"plugin.{field} must contain unique non-empty strings")
+        if not isinstance(plugin["families"], list) or not plugin["families"]:
+            raise ProtocolValidationError("plugin.families must be a non-empty array")
+        family_claims: set[tuple[str, str]] = set()
+        for family in plugin["families"]:
+            required = {"family_id", "magic_name", "capabilities"}
+            if not isinstance(family, dict) or not required <= set(family) or set(family) - required - {"presentation"}:
+                raise ProtocolValidationError("Plugin family fields are invalid")
+            _required_strings(family, ("family_id", "magic_name"), "family")
+            claim = (family["family_id"], family["magic_name"])
+            if claim in family_claims or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", family["magic_name"]) is None:
+                raise ProtocolValidationError("Plugin family claim is duplicate or invalid")
+            family_claims.add(claim)
+            if not isinstance(family["capabilities"], list) or len(family["capabilities"]) != len(set(family["capabilities"])) or not set(family["capabilities"]) <= capabilities:
+                raise ProtocolValidationError("Plugin family capabilities are invalid")
+            presentation = family.get("presentation")
+            if presentation is not None and (not isinstance(presentation, dict) or set(presentation) - {"syntax", "indent"} or any(not isinstance(value, str) for value in presentation.values())):
+                raise ProtocolValidationError("Plugin family presentation is invalid")
     return dict(data)

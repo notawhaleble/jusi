@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/plugin-catalog.schema.json",
+  "title": "Jusi Plugin Catalog v1",
+  "type": "object",
+  "required": ["protocol_version", "catalog_version", "discovery_id", "plugins"],
+  "properties": {
+    "protocol_version": {"const": 1},
+    "catalog_version": {"const": 1},
+    "discovery_id": {"type": "string", "minLength": 3, "maxLength": 128},
+    "plugins": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"],
+        "properties": {
+          "plugin_id": {"type": "string", "minLength": 3, "maxLength": 128},
+          "plugin_version": {"type": "string", "minLength": 1, "maxLength": 128},
+          "distribution": {"type": "string", "minLength": 1, "maxLength": 256},
+          "families": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["family_id", "magic_name", "capabilities"],
+              "properties": {
+                "family_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                "magic_name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"},
+                "capabilities": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {"enum": ["execute", "followup", "complete", "interrupt", "editor_actions"]}
+                },
+                "presentation": {
+                  "type": "object",
+                  "properties": {
+                    "syntax": {"type": "string"},
+                    "indent": {"type": "string"}
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "kernel_extensions": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "worker_entry_point": {"type": ["string", "null"], "minLength": 1},
+          "media_types": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "interaction": {"enum": ["noninteractive", "request_response", "terminal_interactive"]}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

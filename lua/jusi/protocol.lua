@@ -212,4 +212,45 @@ function M.validate_health_response(response)
   return true
 end
 
+function M.validate_plugin_catalog(catalog)
+  if type(catalog) ~= "table" or catalog.protocol_version ~= 1 or catalog.catalog_version ~= 1 or not nonempty_string(catalog.discovery_id) or type(catalog.plugins) ~= "table" then
+    return false, "invalid plugin catalog envelope"
+  end
+  local top = { protocol_version = true, catalog_version = true, discovery_id = true, plugins = true }
+  for field, _ in pairs(catalog) do if not top[field] then return false, "unknown plugin catalog field: " .. field end end
+  local ids = {}
+  local capabilities = set({ "execute", "followup", "complete", "interrupt", "editor_actions" })
+  local interactions = set({ "noninteractive", "request_response", "terminal_interactive" })
+  local plugin_fields = set({ "plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction" })
+  for _, plugin in ipairs(catalog.plugins) do
+    if type(plugin) ~= "table" then return false, "plugin must be an object" end
+    for field, _ in pairs(plugin_fields) do if plugin[field] == nil then return false, "plugin missing field: " .. field end end
+    for field, _ in pairs(plugin) do if not plugin_fields[field] then return false, "unknown plugin field: " .. field end end
+    if not nonempty_string(plugin.plugin_id) or not nonempty_string(plugin.plugin_version) or not nonempty_string(plugin.distribution) or ids[plugin.plugin_id] then return false, "invalid or duplicate plugin identity" end
+    ids[plugin.plugin_id] = true
+    if not interactions[plugin.interaction] or (plugin.worker_entry_point ~= vim.NIL and not nonempty_string(plugin.worker_entry_point)) then return false, "invalid plugin interaction or worker" end
+    for _, field in ipairs({ "kernel_extensions", "media_types" }) do
+      if type(plugin[field]) ~= "table" then return false, "plugin list field must be an array" end
+      local values = {}
+      for _, value in ipairs(plugin[field]) do if not nonempty_string(value) or values[value] then return false, "plugin list values must be unique strings" end values[value] = true end
+    end
+    if type(plugin.families) ~= "table" or #plugin.families == 0 then return false, "plugin families must not be empty" end
+    local family_claims = {}
+    for _, family in ipairs(plugin.families) do
+      if type(family) ~= "table" or not nonempty_string(family.family_id) or not nonempty_string(family.magic_name) or type(family.capabilities) ~= "table" then return false, "invalid plugin family" end
+      local claim = family.family_id .. "\0" .. family.magic_name
+      if family_claims[claim] or not family.magic_name:match("^[A-Za-z][A-Za-z0-9_-]*$") then return false, "duplicate or invalid family claim" end
+      family_claims[claim] = true
+      for field, _ in pairs(family) do if field ~= "family_id" and field ~= "magic_name" and field ~= "capabilities" and field ~= "presentation" then return false, "unknown family field" end end
+      local seen = {}
+      for _, value in ipairs(family.capabilities) do if not capabilities[value] or seen[value] then return false, "invalid family capability" end seen[value] = true end
+      if family.presentation ~= nil then
+        if type(family.presentation) ~= "table" then return false, "invalid family presentation" end
+        for field, value in pairs(family.presentation) do if (field ~= "syntax" and field ~= "indent") or type(value) ~= "string" then return false, "invalid family presentation" end end
+      end
+    end
+  end
+  return true
+end
+
 return M
