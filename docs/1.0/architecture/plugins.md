@@ -49,17 +49,44 @@ notebook runtime generation
 No discovery process, catalog snapshot, imported kernel extension, worker,
 client, or capability snapshot survives full notebook restart.
 
+## Discovery Contract
+
+The versioned Python entry-point group is `jusi.plugins.v1`. Each entry-point
+name is one exact `plugin_id` and resolves, only inside the discovery process,
+to a zero-argument callable returning one JSON-compatible catalog-entry object.
+The returned `distribution` and `plugin_version` must exactly match installed
+distribution metadata.
+
+Discovery treats `kernel_extensions` and `worker_entry_point` as opaque strings;
+it does not import or resolve them. Exact providers may share a family claim
+only when magic name, capabilities, and family presentation agree. One magic
+cannot identify incompatible families.
+
+Each attempt runs in a fresh interpreter and owned process group. The machine
+result uses a private bounded file, so provider stdout cannot corrupt it. The
+parent validates the complete catalog again and retains bounded stderr plus
+PID/exit/signal diagnostics. Any broken entry, duplicate identity, or family
+conflict prevents publication of the entire catalog; stale or partial
+capabilities are never presented as authoritative.
+
+The isolated adapter currently remains an internal application port. It is not
+yet connected to kernel start, HTTP, or SSE; that integration belongs to the
+full notebook-runtime/restart operation.
+
 ## Failure And Verification
 
-- discovery import/schema failure: `plugin_worker/plugin_error`, scoped to the
-  exact catalog entry when known; kernel remains `off` during restart/start
+- discovery import/schema failure: internal `plugin_discovery/plugin_error`,
+  attributed to the exact entry point and distribution when known; kernel
+  remains `off` during restart/start
 - worker spawn/death: `plugin_worker/spawn_failed|process_exited|process_signalled`
   with PID/exit/signal/stderr; owning client/execution fails, kernel normally stays `on`
 - handoff mismatch: `protocol/invalid_request`, scoped to the execution/client
 - kernel extension exception: `execution/execution_error`; a process crash is
   separately `kernel/kernel_died`
 
-Required future tests cover discovery in a clean process after package changes,
-one broken plugin beside one healthy plugin, worker death containment, bounded
-stderr, idempotent cleanup, provider-family conflicts, handoff validation, and
-full restart producing fresh catalog/worker/kernel identities.
+Discovery tests now cover a fresh process after package changes, one broken
+plugin beside one healthy plugin, atomic repair on the next attempt, timeout and
+process-group cleanup, bounded stderr, exit/signal distinction, malformed
+entries, and provider-family conflicts. Future runtime tests still need worker
+death containment, idempotent worker cleanup, handoff validation, and full
+restart producing fresh catalog/worker/kernel identities.

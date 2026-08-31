@@ -88,3 +88,11 @@ def test_python_consumes_shared_plugin_catalog_fixtures() -> None:
     invalid = load_json(fixture_root / "invalid" / "plugin-catalog-duplicate-id.json")
     with pytest.raises(ProtocolValidationError, match="Duplicate"):
         validate_plugin_catalog(invalid)
+
+    conflict = load_json(fixture_root / "invalid" / "plugin-catalog-conflicting-family.json")
+    with pytest.raises(ProtocolValidationError, match="Conflicting family"):
+        validate_plugin_catalog(conflict)
+
+    short_identity = load_json(fixture_root / "invalid" / "plugin-catalog-short-identity.json")
+    with pytest.raises(ProtocolValidationError, match="length"):
+        validate_plugin_catalog(short_identity)

@@ -1,0 +1,17 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "discovery_id": "discovery_short_1",
+  "plugins": [
+    {
+      "plugin_id": "x",
+      "plugin_version": "1.0.0",
+      "distribution": "jusi-x",
+      "families": [{"family_id": "x", "magic_name": "x", "capabilities": ["execute"]}],
+      "kernel_extensions": [],
+      "worker_entry_point": null,
+      "media_types": ["text/plain"],
+      "interaction": "noninteractive"
+    }
+  ]
+}

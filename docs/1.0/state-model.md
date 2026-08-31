@@ -24,6 +24,19 @@ The authoritative service instance managing kernels and their child resources.
 
 A restarted non-durable supervisor receives a new identity and event epoch.
 
+### Plugin Discovery
+
+One short-lived process that imports versioned plugin catalog providers and then exits.
+
+- identity: `discovery_id`, unique to one catalog attempt
+- lifetime: one bounded discovery operation; it never becomes a plugin worker
+- output: either one complete validated data-only catalog or one typed failure
+- process boundary: the supervisor does not import provider packages
+
+Every attempt uses a fresh interpreter and process group. A successful notebook
+runtime owns the resulting immutable catalog snapshot, not the discovery
+process. A failed entry prevents publication of a partial authoritative catalog.
+
 ### Kernel
 
 One concrete kernel generation.

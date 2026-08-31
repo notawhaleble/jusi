@@ -24,6 +24,7 @@ A failure must answer:
 - `kernel`: kernel process, readiness, channels, or kernel protocol
 - `execution`: code execution, input, interrupt, or output handling
 - `client`: output/interaction resource failure
+- `plugin_discovery`: isolated catalog discovery, provider import, or catalog assembly failure
 - `plugin_worker`: isolated plugin runtime or plugin control failure
 
 The reporting layer must retain the originating layer rather than replacing it with its own.
@@ -94,10 +95,16 @@ Allowed initial scopes:
 - `cell`
 - `client`
 - `plugin_worker`
+- `plugin_discovery`
 - `kernel`
 - `supervisor`
 
 Scope describes demonstrated impact, not guessed severity. Propagating to a wider scope requires a recorded causal link.
+
+`plugin_discovery` is currently an internal layer and scope. Before a discovery
+failure is emitted on protocol v1, the operation, resource kind, layer, scope,
+schemas, Python/Lua validators, fixtures, and conformance tests must land
+atomically. Discovery must not counterfeit a `plugin_worker` identity.
 
 ## Containment Examples
 

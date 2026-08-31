@@ -14,7 +14,7 @@ These invariants constrain implementation and protocol design. A change that vio
 
 ## Identity And Lifetime
 
-8. Supervisor, kernel, execution, client, plugin worker, cell, and frontend transport have distinct identities and lifetimes.
+8. Supervisor, plugin discovery, kernel, execution, client, plugin worker, cell, and frontend transport have distinct identities and lifetimes.
 9. Cell identity is owned by the notebook model and is independent of line coordinates, extmark IDs, signs, buffers, and backend resources.
 10. Backend resource identifiers are opaque to the frontend and are never reconstructed from local coordinates.
 11. Events from an obsolete resource generation cannot mutate the current generation.

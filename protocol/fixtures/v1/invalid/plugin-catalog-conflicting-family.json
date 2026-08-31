@@ -1,0 +1,27 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "discovery_id": "discovery_conflict_1",
+  "plugins": [
+    {
+      "plugin_id": "sqlite_provider",
+      "plugin_version": "1.0.0",
+      "distribution": "jusi-sqlite",
+      "families": [{"family_id": "sql", "magic_name": "sql", "capabilities": ["execute"], "presentation": {"syntax": "sql"}}],
+      "kernel_extensions": [],
+      "worker_entry_point": null,
+      "media_types": ["text/plain"],
+      "interaction": "noninteractive"
+    },
+    {
+      "plugin_id": "postgres_provider",
+      "plugin_version": "1.0.0",
+      "distribution": "jusi-postgres",
+      "families": [{"family_id": "sql", "magic_name": "sql", "capabilities": ["execute", "complete"], "presentation": {"syntax": "sql"}}],
+      "kernel_extensions": [],
+      "worker_entry_point": null,
+      "media_types": ["text/plain"],
+      "interaction": "noninteractive"
+    }
+  ]
+}

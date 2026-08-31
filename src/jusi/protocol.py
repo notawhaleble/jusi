@@ -38,6 +38,10 @@ def _required_strings(value: dict[str, Any], fields: tuple[str, ...], context: s
             raise ProtocolValidationError(f"{context}.{field} must be a non-empty string")
 
 
+def _bounded_string(value: object, minimum: int, maximum: int) -> bool:
+    return isinstance(value, str) and minimum <= len(value) <= maximum
+
+
 def _exact_fields(value: dict[str, Any], required: set[str], optional: set[str], context: str) -> None:
     missing = required - set(value)
     unknown = set(value) - required - optional
@@ -213,18 +217,22 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
         raise ProtocolValidationError("Plugin catalog has invalid top-level fields")
     if data["protocol_version"] != 1 or data["catalog_version"] != 1:
         raise ProtocolValidationError("Plugin catalog version must be 1")
-    if not isinstance(data["discovery_id"], str) or not data["discovery_id"]:
-        raise ProtocolValidationError("discovery_id must be a non-empty string")
+    if not _bounded_string(data["discovery_id"], 3, 128):
+        raise ProtocolValidationError("discovery_id length is invalid")
     if not isinstance(data["plugins"], list):
         raise ProtocolValidationError("plugins must be an array")
     plugin_ids: set[str] = set()
     capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions"}
     interactions = {"noninteractive", "request_response", "terminal_interactive"}
     fields = {"plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"}
+    family_by_id: dict[str, tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
+    family_by_magic: dict[str, str] = {}
     for plugin in data["plugins"]:
         if not isinstance(plugin, dict) or set(plugin) != fields:
             raise ProtocolValidationError("Plugin catalog entry fields are invalid")
         _required_strings(plugin, ("plugin_id", "plugin_version", "distribution"), "plugin")
+        if not _bounded_string(plugin["plugin_id"], 3, 128) or not _bounded_string(plugin["plugin_version"], 1, 128) or not _bounded_string(plugin["distribution"], 1, 256):
+            raise ProtocolValidationError("Plugin identity field length is invalid")
         if plugin["plugin_id"] in plugin_ids:
             raise ProtocolValidationError(f"Duplicate plugin_id: {plugin['plugin_id']}")
         plugin_ids.add(plugin["plugin_id"])
@@ -244,6 +252,8 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
             if not isinstance(family, dict) or not required <= set(family) or set(family) - required - {"presentation"}:
                 raise ProtocolValidationError("Plugin family fields are invalid")
             _required_strings(family, ("family_id", "magic_name"), "family")
+            if not _bounded_string(family["family_id"], 1, 128):
+                raise ProtocolValidationError("Plugin family_id length is invalid")
             claim = (family["family_id"], family["magic_name"])
             if claim in family_claims or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", family["magic_name"]) is None:
                 raise ProtocolValidationError("Plugin family claim is duplicate or invalid")
@@ -253,4 +263,17 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
             presentation = family.get("presentation")
             if presentation is not None and (not isinstance(presentation, dict) or set(presentation) - {"syntax", "indent"} or any(not isinstance(value, str) for value in presentation.values())):
                 raise ProtocolValidationError("Plugin family presentation is invalid")
+            descriptor = (
+                family["magic_name"],
+                tuple(sorted(family["capabilities"])),
+                tuple(sorted((presentation or {}).items())),
+            )
+            existing = family_by_id.get(family["family_id"])
+            if existing is not None and existing != descriptor:
+                raise ProtocolValidationError(f"Conflicting family claim: {family['family_id']}")
+            claimed_family = family_by_magic.get(family["magic_name"])
+            if claimed_family is not None and claimed_family != family["family_id"]:
+                raise ProtocolValidationError(f"Magic {family['magic_name']} is claimed by incompatible families")
+            family_by_id[family["family_id"]] = descriptor
+            family_by_magic[family["magic_name"]] = family["family_id"]
     return dict(data)

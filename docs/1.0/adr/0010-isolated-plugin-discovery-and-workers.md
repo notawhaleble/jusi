@@ -22,6 +22,9 @@ The long-lived 1.0 service does not import third-party plugin packages.
 - Plugin discovery runs in a fresh short-lived process and returns a validated,
   data-only catalog. Discovery uses a new versioned entry-point group rather
   than loading 0.x `jusi.display_handlers` implementations as if compatible.
+- Catalog publication is atomic: one broken or conflicting provider fails the
+  attempt with exact attribution instead of publishing a partial capability
+  snapshot.
 - Catalog entries declare exact plugin identity/version, family/magic claims,
   kernel extension module names, worker launch reference, supported operations,
   interaction requirements, and media capabilities. They contain no Python

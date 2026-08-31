@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 from jusi.domain.models import ProcessDiagnostics
 
@@ -49,3 +49,13 @@ class KernelHandle(Protocol):
 
 class KernelFactory(Protocol):
     def start(self, kernel_name: str, *, timeout: float) -> KernelHandle: ...
+
+
+@dataclass(frozen=True)
+class PluginCatalogDiscoveryResult:
+    catalog: dict[str, Any]
+    process: ProcessDiagnostics
+
+
+class PluginCatalogDiscovery(Protocol):
+    def discover(self, *, discovery_id: str, timeout: float) -> PluginCatalogDiscoveryResult: ...

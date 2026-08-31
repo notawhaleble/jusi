@@ -11,6 +11,7 @@ Owns:
 - structured failures and trace correlation
 - idempotent cleanup
 - generic plugin discovery and isolation contracts
+- fail-closed publication of validated plugin catalog snapshots
 
 Does not own:
 
