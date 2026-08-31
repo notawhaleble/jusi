@@ -75,9 +75,27 @@ function M.run()
 
     jusi.stop_service(buf)
     wait_for(8000, function()
-      return service.state == "stopped" and session.service == nil
+      return service.state == "stopped" and session.service == nil and jusi._sessions[buf] == nil
     end, "owned local service did not stop")
     assert(session.controller.kernel_state == "off")
+
+    local first_supervisor_id = service.supervisor_id
+    service = jusi.start_service({
+      buf = buf,
+      command = { ".venv/bin/python", "-m", "jusi", "serve" },
+      timeout_ms = 8000,
+    })
+    wait_for(8000, function()
+      local replacement = jusi._sessions[buf]
+      return replacement and replacement.controller.transport_state == "connected"
+    end, "owned local service did not restart after confirmed stop")
+    local replacement = jusi._sessions[buf]
+    assert(replacement.service == service)
+    assert(service.supervisor_id ~= first_supervisor_id)
+    jusi.stop_service(buf)
+    wait_for(8000, function()
+      return service.state == "stopped" and jusi._sessions[buf] == nil
+    end, "replacement owned local service did not stop")
   end, debug.traceback)
   if buf and jusi._sessions[buf] then
     jusi._destroy_session(buf)

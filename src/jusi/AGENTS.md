@@ -15,6 +15,7 @@ It does not own Neovim buffers, extmarks, presentation layout, or frontend-local
 - Child process stderr, exit code, signal, operation, layer, reason, and trace ID must survive normalization.
 - Cleanup and stop are idempotent and report which resources were actually stopped.
 - Terminal output bytes remain opaque to the service; do not parse ANSI escape sequences.
+- The service is target-side. Plugin discovery and workers belong to one notebook runtime at that target, not to a frontend-local gateway or process-global catalog.
 
 ## Verification
 

@@ -3,18 +3,20 @@
 ## Shape
 
 ```text
-Neovim notebook model
-    | HTTP commands / inspection
-    | SSE ordered events
-    v
-Python service and authoritative supervisor
-    | Jupyter channels
-    v
-Kernel generation
+local target:
+  Neovim -> local Jusi service/supervisor -> local kernel/workers
+
+remote target:
+  Neovim -> HTTP/SSE -> remote Jusi service/supervisor -> remote kernel/workers
+```
 
 Optional per-client plugin workers and interactive streams remain subordinate,
 isolated resources. They do not redefine kernel control.
-```
+
+The service runs at the kernel target. The local launcher is a convenience for
+the local-target case, not a mandatory proxy tier or editor-wide daemon. ADR
+0012 defines target placement and rejects a frontend-local gateway for remote
+kernels.
 
 ## Control Plane
 

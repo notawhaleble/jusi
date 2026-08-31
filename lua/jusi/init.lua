@@ -76,6 +76,13 @@ local function new_presentation(model)
   })
 end
 
+local function retire_session(session)
+  sessions[session.buf] = nil
+  session.controller:close()
+  session.presentation:close()
+  session.model:detach()
+end
+
 local function replace_frontend_runtime(session, notebook_id)
   session.presentation:close()
   session.model:detach()
@@ -202,6 +209,7 @@ function M.stop_service(buf)
         notify(failure_text(failure), vim.log.levels.ERROR)
       else
         session.service = nil
+        retire_session(session)
         notify("local service stopped: " .. result.result)
       end
     end)
@@ -330,8 +338,7 @@ function M._destroy_session(buf)
   if not session then
     return false
   end
-  sessions[session.buf] = nil
-  session.controller:close()
+  retire_session(session)
   if session.service then
     session.service:stop(function(_, failure)
       if failure then
@@ -339,8 +346,6 @@ function M._destroy_session(buf)
       end
     end)
   end
-  session.presentation:close()
-  session.model:detach()
   return true
 end
 

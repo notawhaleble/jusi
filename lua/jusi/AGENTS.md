@@ -20,3 +20,4 @@ It does not own kernel liveness, backend resource truth, process cleanup policy,
 - Feed textual and ANSI-bearing output to Neovim's terminal renderer without implementing an ANSI parser.
 - A PTY or dedicated bidirectional stream is reserved for genuinely interactive clients.
 - The frontend never guesses whether a kernel is alive.
+- `JusiServiceStart` is only a local-target convenience. Remote targets connect directly to their target-side service; never spawn an implicit local proxy.

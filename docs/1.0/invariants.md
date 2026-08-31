@@ -68,3 +68,12 @@ These invariants constrain implementation and protocol design. A change that vio
 41. Restart creates new kernel, execution, client, plugin-worker, and runtime cell identities.
 42. Events and callbacks from every replaced identity are ignored after restart.
 43. If teardown succeeds but replacement startup fails, the kernel is `off`; stale runtime state is not restored as a fallback.
+
+## Target Placement
+
+44. The authoritative Jusi service and supervisor run at the kernel target; a remote kernel is not controlled through a mandatory frontend-local Jusi proxy.
+45. `JusiServiceStart` is a local-target convenience operation, while transport connection to an existing local or remote service is a distinct operation.
+46. Plugin catalogs, discovery attempts, workers, clients, and kernel adapters belong to one notebook runtime at that target; they are never editor-wide or OS-session-wide globals.
+47. Network location does not determine durability or cleanup authority; explicit ownership does.
+48. Service readiness does not depend on successful plugin discovery or kernel startup.
+49. Any future supervisor that owns multiple runtimes must preserve per-runtime plugin and resource isolation.

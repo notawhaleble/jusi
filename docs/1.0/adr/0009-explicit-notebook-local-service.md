@@ -18,12 +18,18 @@ The initial managed-local topology is one explicitly launched service/supervisor
 per notebook runtime. Service launch, transport connect, kernel start, transport
 disconnect, kernel stop, and service stop are distinct operations.
 
+This decision covers only a local target. ADR 0012 establishes that remote
+kernels use a target-side service reached directly over HTTP/SSE; this launcher
+does not become a mandatory local proxy.
+
 - `:JusiConnect` only inspects and connects to a supplied/configured URL. It
   never spawns a process.
 - `:JusiServiceStart` launches the configured executable on
   an ephemeral loopback port, capture readiness JSON and bounded stderr, and
   record a frontend-owned service-process identity separately from
   `supervisor_id` and `transport_id`.
+- Successful local launch performs the transport connection automatically;
+  users do not run `:JusiConnect` first for this path.
 - An explicitly configured remote/external URL is never treated as a
   frontend-owned process and is never terminated by local cleanup.
 - Disconnecting transport does not stop an owned service or kernel.

@@ -49,6 +49,11 @@ notebook runtime generation
 No discovery process, catalog snapshot, imported kernel extension, worker,
 client, or capability snapshot survives full notebook restart.
 
+These resources are target-side and runtime-scoped. For a remote kernel, the
+service, discovery process, and workers run remotely with that kernel; no local
+Jusi proxy discovers or executes its plugins. A future multi-runtime service
+must retain a separate catalog and worker registry per `runtime_id`.
+
 ## Discovery Contract
 
 The versioned Python entry-point group is `jusi.plugins.v1`. Each entry-point

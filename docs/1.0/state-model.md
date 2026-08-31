@@ -4,7 +4,7 @@
 
 ### Local Service Process
 
-An optional frontend-owned Python service process for one notebook runtime.
+An optional frontend-owned Python service process for one local notebook target.
 
 - identity: `service_process_id`, distinct from the service's `supervisor_id`
 - lifetime: explicit service start/stop or owning notebook-buffer destruction
@@ -13,6 +13,10 @@ An optional frontend-owned Python service process for one notebook runtime.
 
 Externally configured and remote service URLs have no frontend-owned service
 process resource and are never terminated by local cleanup.
+
+There is no mandatory local service process for a remote target. In that case
+Neovim's HTTP/SSE transport connects directly, possibly through an SSH tunnel or
+port forward, to the service running beside the target kernel.
 
 ### Supervisor
 
@@ -23,6 +27,8 @@ The authoritative service instance managing kernels and their child resources.
 - owns: kernel generations, executions, clients, plugin workers, event sequence
 
 A restarted non-durable supervisor receives a new identity and event epoch.
+The supervisor is target-side. Its plugin catalogs and workers are scoped to a
+notebook runtime generation, not to a Neovim instance or OS login session.
 
 ### Plugin Discovery
 

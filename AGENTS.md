@@ -26,6 +26,8 @@ Documents under `docs/legacy/0.x/` are historical evidence, never normative 1.0 
 - Treat start, stop, execute, interrupt, cleanup, and transport connection as operations, not kernel states.
 - Never infer kernel liveness in the frontend.
 - Keep supervisor, kernel, execution, client, plugin worker, cell, and frontend transport identities distinct.
+- Run the authoritative service at the kernel target. Do not introduce a mandatory frontend-local proxy for remote kernels.
+- Keep plugin catalogs, discovery, workers, and adapters scoped to one target-side notebook runtime; never make them editor-wide or OS-session-wide globals.
 - Keep terminal presentation separate from kernel-control transport.
 - Select presentation by media type and interaction needs, not by cell kind or plugin identity.
 - Protocol changes are atomic across schemas, Python, Lua, fixtures, and conformance tests.

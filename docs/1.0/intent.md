@@ -43,6 +43,9 @@ The native 1.0 text grammar, symmetric cell boundaries, history suffix, and loca
 
 - HTTP is the baseline command and inspection plane.
 - SSE is the baseline ordered event plane.
+- The Jusi service runs at the kernel target. Neovim connects directly to that
+  target-side service; a local service is needed only for a local target.
+- A mandatory frontend-local proxy for remote kernels is not part of the architecture.
 - Textual and ANSI-bearing output uses Neovim's terminal renderer without a Jusi ANSI parser.
 - A dedicated PTY or stream is added only for genuinely interactive, bidirectional, or high-volume clients.
 

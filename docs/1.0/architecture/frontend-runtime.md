@@ -54,7 +54,23 @@ uses an ephemeral loopback port, validates readiness JSON, retains the final
 16 KiB of stderr, and reports spawn/readiness/exit/cleanup failures with a
 distinct `service_process_id`.
 
+For the managed-local path, `:JusiServiceStart` performs connection after
+readiness; `:JusiConnect` is not a prerequisite. For a remote or independently
+managed target, Neovim uses `:JusiConnect` and launches no local proxy.
+
+Owned services are scoped per notebook buffer, not per Neovim process or OS
+login session. Different buffers and different Neovim instances may therefore
+own distinct local services. The current supervisor admits at most one active
+kernel generation; kernels across restart are sequential, not concurrent.
+
 `:JusiServiceStop` first stops an authoritatively `on` kernel, then disconnects
 transport and terminates the owned service. A kernel-stop failure prevents the
 service from being silently killed. Wiping the owning notebook buffer performs
 best-effort owned-process cleanup; external URLs are never terminated.
+
+After confirmed service stop, its frontend session and runtime projections are
+retired while buffer text and undo history remain. A later
+`:JusiServiceStart` on the same buffer creates a fresh service, supervisor,
+transport, notebook model, and eventual kernel generation. Repeating start
+while a session or launch is already active is rejected without spawning a
+second process.
