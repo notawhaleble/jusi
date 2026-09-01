@@ -5,6 +5,5 @@
   "request_id": "wreq_fixture_1",
   "trace_id": "trace_fixture_1",
   "operation": "complete",
-  "result": {"items": ["select"]},
-  "core_requests": []
+  "result": {"items": ["select"]}
 }

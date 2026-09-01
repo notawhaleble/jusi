@@ -1,0 +1,19 @@
+{
+  "protocol_version": 1,
+  "kind": "worker.result",
+  "plugin_worker_id": "pwrk_fixture_1",
+  "request_id": "wreq_fixture_2",
+  "trace_id": "trace_fixture_2",
+  "operation": "execute",
+  "result": {},
+  "core_requests": [
+    {
+      "request_id": "core_req_fixture_1",
+      "kind": "terminal_surface.create",
+      "argv": ["visidata"],
+      "cwd": null,
+      "environment_overrides": {},
+      "capabilities": ["input"]
+    }
+  ]
+}

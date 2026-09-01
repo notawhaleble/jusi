@@ -234,3 +234,30 @@ class ClientResource:
             "interaction": self.interaction,
             "created_at": self.created_at,
         }
+
+
+@dataclass(frozen=True)
+class SurfaceResource:
+    surface_id: str
+    client_id: str
+    runtime_id: str
+    kind: str
+    capabilities: tuple[str, ...]
+    endpoint: str
+    subprotocol: str = "jusi.terminal.v1"
+    created_at: str = field(default_factory=utc_now)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "surface_id": self.surface_id,
+            "client_id": self.client_id,
+            "runtime_id": self.runtime_id,
+            "kind": self.kind,
+            "capabilities": list(self.capabilities),
+            "transport": {
+                "kind": "websocket",
+                "endpoint": self.endpoint,
+                "subprotocol": self.subprotocol,
+            },
+            "created_at": self.created_at,
+        }

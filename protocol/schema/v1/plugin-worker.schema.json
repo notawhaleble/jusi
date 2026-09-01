@@ -72,7 +72,7 @@
         {"$ref": "#/$defs/response"},
         {
           "type": "object",
-          "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "result"],
+          "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "result", "core_requests"],
           "properties": {
             "protocol_version": {"const": 1},
             "kind": {"const": "worker.result"},
@@ -80,11 +80,52 @@
             "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
             "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
             "operation": {"enum": ["execute", "followup", "complete", "editor_action"]},
-            "result": {"type": "object"}
+            "result": {"type": "object"},
+            "core_requests": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"$ref": "#/$defs/terminal_surface_create"}
+            }
           },
           "additionalProperties": false
         }
       ]
+    },
+    "terminal_surface_create": {
+      "type": "object",
+      "required": ["request_id", "kind", "argv", "cwd", "environment_overrides", "capabilities"],
+      "properties": {
+        "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
+        "kind": {"const": "terminal_surface.create"},
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 128,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        },
+        "cwd": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "string", "pattern": "^/", "maxLength": 4096}
+          ]
+        },
+        "environment_overrides": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": {"minLength": 1, "maxLength": 256},
+          "additionalProperties": {"type": "string", "maxLength": 8192}
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["input", "resize", "signal"]},
+          "allOf": [
+            {"contains": {"const": "input"}},
+            {"contains": {"const": "resize"}}
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "failure": {
       "allOf": [

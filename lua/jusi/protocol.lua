@@ -25,8 +25,8 @@ local command_fields = {
 }
 local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
 local operations = set({ "service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events" })
-local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "failure.occurred" })
-local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
+local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
+local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
 local worker_operations = set({ "execute", "followup", "complete", "editor_action" })
@@ -70,6 +70,64 @@ local function validate_client(client)
     seen[capability] = true
   end
   if not ({ noninteractive = true, request_response = true, terminal_interactive = true })[client.interaction] then return false, "invalid client interaction" end
+  return true
+end
+
+local function validate_surface(surface)
+  if type(surface) ~= "table" then return false, "surface must be an object" end
+  local fields = { "surface_id", "client_id", "runtime_id", "kind", "capabilities", "transport", "created_at" }
+  local ok, err = exact_fields(surface, fields)
+  if not ok then return false, err end
+  for _, field in ipairs({ "surface_id", "client_id", "runtime_id", "created_at" }) do
+    if not nonempty_string(surface[field]) then return false, "invalid surface identity" end
+  end
+  if surface.kind ~= "terminal" then return false, "invalid surface kind" end
+  if type(surface.capabilities) ~= "table" or not vim.islist(surface.capabilities) then return false, "invalid surface capabilities" end
+  local allowed_capabilities = set({ "input", "resize", "signal" })
+  local capabilities = {}
+  for _, capability in ipairs(surface.capabilities) do
+    if not allowed_capabilities[capability] or capabilities[capability] then return false, "invalid surface capabilities" end
+    capabilities[capability] = true
+  end
+  if not capabilities.input or not capabilities.resize then return false, "invalid surface capabilities" end
+  if type(surface.transport) ~= "table" then return false, "surface transport must be an object" end
+  local transport_ok, transport_error = exact_fields(surface.transport, { "kind", "endpoint", "subprotocol" })
+  if not transport_ok then return false, transport_error end
+  if surface.transport.kind ~= "websocket"
+      or surface.transport.subprotocol ~= "jusi.terminal.v1"
+      or surface.transport.endpoint ~= "/v1/surfaces/" .. surface.surface_id .. "/terminal" then
+    return false, "invalid surface transport"
+  end
+  return true
+end
+
+local function validate_terminal_surface_request(request)
+  if type(request) ~= "table" then return false, "core request must be an object" end
+  local ok, err = exact_fields(request, { "request_id", "kind", "argv", "cwd", "environment_overrides", "capabilities" })
+  if not ok then return false, err end
+  if not bounded_string(request.request_id, 3, 128) or request.kind ~= "terminal_surface.create" then
+    return false, "invalid core request identity or kind"
+  end
+  if type(request.argv) ~= "table" or not vim.islist(request.argv) or #request.argv < 1 or #request.argv > 128 then return false, "terminal argv must be a non-empty array" end
+  for _, argument in ipairs(request.argv) do
+    if not bounded_string(argument, 1, 4096) then return false, "terminal argv must contain bounded non-empty strings" end
+  end
+  if not null(request.cwd) and (not bounded_string(request.cwd, 1, 4096) or request.cwd:sub(1, 1) ~= "/") then return false, "terminal cwd must be null or absolute" end
+  if type(request.environment_overrides) ~= "table" then return false, "terminal environment overrides must be an object" end
+  local environment_count = 0
+  for name, value in pairs(request.environment_overrides) do
+    environment_count = environment_count + 1
+    if not bounded_string(name, 1, 256) or type(value) ~= "string" or vim.fn.strchars(value) > 8192 then return false, "terminal environment overrides must contain bounded string names and values" end
+  end
+  if environment_count > 128 then return false, "too many terminal environment overrides" end
+  if type(request.capabilities) ~= "table" or not vim.islist(request.capabilities) then return false, "invalid terminal capabilities" end
+  local allowed = set({ "input", "resize", "signal" })
+  local actual = {}
+  for _, capability in ipairs(request.capabilities) do
+    if not allowed[capability] or actual[capability] then return false, "invalid terminal capabilities" end
+    actual[capability] = true
+  end
+  if not actual.input or not actual.resize then return false, "invalid terminal capabilities" end
   return true
 end
 
@@ -120,6 +178,20 @@ local function validate_event_payload(event)
     if not ok then return false, err end
     if not nonempty_string(payload.client_id) or not nonempty_string(payload.plugin_worker_id) or not ({ explicit_close = true, fatal_failure = true, runtime_cleanup = true })[payload.reason] or not nonempty_string(payload.closed_at) or (payload.failure_id ~= nil and not bounded_string(payload.failure_id, 3, 128)) then return false, "invalid client close payload" end
     if event.resource.kind ~= "client" or event.resource.id ~= payload.client_id then return false, "client event resource mismatch" end
+  elseif kind == "surface.created" then
+    ok, err = validate_surface(payload)
+    if not ok then return false, err end
+    if event.resource.kind ~= "surface" or event.resource.id ~= payload.surface_id then return false, "surface event resource mismatch" end
+  elseif kind == "surface.closed" then
+    ok, err = exact_fields(payload, { "surface_id", "client_id", "reason", "closed_at" }, { "failure_id" })
+    if not ok then return false, err end
+    if not nonempty_string(payload.surface_id) or not nonempty_string(payload.client_id)
+        or not ({ client_cleanup = true, fatal_failure = true })[payload.reason]
+        or not nonempty_string(payload.closed_at)
+        or (payload.failure_id ~= nil and not bounded_string(payload.failure_id, 3, 128)) then
+      return false, "invalid surface close payload"
+    end
+    if event.resource.kind ~= "surface" or event.resource.id ~= payload.surface_id then return false, "surface event resource mismatch" end
   elseif kind == "failure.occurred" then
     ok, err = exact_fields(payload, { "failure_id", "trace_id", "layer", "operation", "reason", "message", "retryable", "scope", "resource", "occurred_at" }, { "process", "caused_by_failure_id", "details" })
     if not ok then return false, err end
@@ -284,6 +356,20 @@ function M.validate_health_response(response)
     for capability, _ in pairs(expected_capabilities) do if not actual_capabilities[capability] then return false, "client family capabilities mismatch" end end
     for capability, _ in pairs(actual_capabilities) do if not expected_capabilities[capability] then return false, "client family capabilities mismatch" end end
   end
+  if type(response.surfaces) ~= "table" or not vim.islist(response.surfaces) then return false, "surfaces must be present as an array" end
+  local surface_ids = {}
+  for _, surface in ipairs(response.surfaces) do
+    local surface_ok, surface_error = validate_surface(surface)
+    if not surface_ok then return false, surface_error end
+    if surface_ids[surface.surface_id] then return false, "duplicate surface identity" end
+    surface_ids[surface.surface_id] = true
+    local owner = nil
+    for _, client in ipairs(response.clients) do
+      if client.client_id == surface.client_id then owner = client break end
+    end
+    if owner == nil or surface.runtime_id ~= owner.runtime_id then return false, "surface client ownership mismatch" end
+    if owner.interaction ~= "terminal_interactive" then return false, "terminal surface owner is not interactive" end
+  end
   return true
 end
 
@@ -375,7 +461,17 @@ function M.validate_plugin_worker_message(message)
     return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "payload" })
   elseif kind == "worker.result" then
     if type(message.result) ~= "table" then return false, "worker result must be an object" end
-    return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "result" })
+    local result_ok, result_error = exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "result", "core_requests" })
+    if not result_ok then return false, result_error end
+    if type(message.core_requests) ~= "table" or not vim.islist(message.core_requests) then return false, "worker core_requests must be an array" end
+    local request_ids = {}
+    for _, request in ipairs(message.core_requests) do
+      local request_ok, request_error = validate_terminal_surface_request(request)
+      if not request_ok then return false, request_error end
+      if request_ids[request.request_id] then return false, "duplicate core request identity" end
+      request_ids[request.request_id] = true
+    end
+    return true
   end
   if type(message.failure) ~= "table" then return false, "worker failure must be an object" end
   local failure_ok, failure_error = exact_fields(message.failure, { "reason", "message", "retryable" }, { "details" })

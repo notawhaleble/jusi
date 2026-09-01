@@ -23,6 +23,9 @@ local function event(sequence, kind, payload)
   elseif kind == "client.created" or kind == "client.closed" then
     resource_kind = "client"
     resource_id = payload.client_id
+  elseif kind == "surface.created" or kind == "surface.closed" then
+    resource_kind = "surface"
+    resource_id = payload.surface_id
   end
   return {
     protocol_version = 1,
@@ -31,7 +34,7 @@ local function event(sequence, kind, payload)
     sequence = sequence,
     occurred_at = "2026-08-31T12:00:00Z",
     trace_id = "trace_test",
-    layer = kind == "kernel.state_changed" and "kernel" or ((kind == "client.created" or kind == "client.closed") and "client" or "execution"),
+    layer = kind == "kernel.state_changed" and "kernel" or (((kind == "client.created" or kind == "client.closed" or kind == "surface.created" or kind == "surface.closed")) and "client" or "execution"),
     operation = kind == "service.ready" and "service_start" or (kind == "kernel.state_changed" and "start_kernel" or "execute"),
     kind = kind,
     resource = { kind = resource_kind, id = resource_id },
@@ -46,11 +49,15 @@ local function test_controller_tracks_durable_client_lifecycle()
   local transport = FakeTransport.new()
   local created
   local closed
+  local surface_created
+  local surface_closed
   local controller = controller_module.new({
     notebook = model,
     transport = transport,
     on_client_created = function(client) created = client end,
     on_client_closed = function(client, close) closed = { client = client, close = close } end,
+    on_surface_created = function(surface) surface_created = surface end,
+    on_surface_closed = function(surface, close) surface_closed = { surface = surface, close = close } end,
   })
   controller:connect()
   local client = {
@@ -71,12 +78,28 @@ local function test_controller_tracks_durable_client_lifecycle()
   transport.event_callbacks.on_event(event(1, "client.created", client))
   equal(controller.clients.cli_plugin.plugin_id, "sqlite_provider")
   equal(created.client_id, "cli_plugin")
+  local surface = {
+    surface_id = "srf_plugin",
+    client_id = "cli_plugin",
+    runtime_id = "run_plugin",
+    kind = "terminal",
+    capabilities = { "input", "resize" },
+    transport = {
+      kind = "websocket",
+      endpoint = "/v1/surfaces/srf_plugin/terminal",
+      subprotocol = "jusi.terminal.v1",
+    },
+    created_at = "2026-09-01T08:00:01Z",
+  }
+  transport.event_callbacks.on_event(event(2, "surface.created", surface))
+  equal(controller.surfaces.srf_plugin.client_id, "cli_plugin")
+  equal(surface_created.surface_id, "srf_plugin")
   controller:close_client("cli_plugin")
   equal(transport.requests[2].method, "DELETE")
   equal(transport.requests[2].path, "/v1/clients/cli_plugin")
   equal(transport.requests[2].payload.kind, "close_client")
   equal(transport.requests[2].payload.client_id, "cli_plugin")
-  transport.event_callbacks.on_event(event(2, "client.closed", {
+  transport.event_callbacks.on_event(event(3, "client.closed", {
     client_id = "cli_plugin",
     plugin_worker_id = "pwrk_plugin",
     reason = "fatal_failure",
@@ -84,8 +107,84 @@ local function test_controller_tracks_durable_client_lifecycle()
     closed_at = "2026-09-01T08:01:00Z",
   }))
   equal(controller.clients, {})
+  equal(controller.surfaces, {})
   equal(closed.client.client_id, "cli_plugin")
   equal(closed.close.reason, "fatal_failure")
+  equal(surface_closed.surface.surface_id, "srf_plugin")
+  equal(surface_closed.close.reason, "client_cleanup")
+  controller:close()
+  model:detach()
+end
+
+local function test_controller_accepts_authoritative_surface_snapshot()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "╭──", "%%sql", "╰──" })
+  local model = notebook.attach(buf)
+  local client = {
+    client_id = "cli_snapshot",
+    runtime_id = "run_snapshot",
+    kernel_id = "krn_snapshot",
+    notebook_id = model.notebook_id,
+    cell_id = model:ordered_cells()[1].id,
+    execution_id = "exe_snapshot",
+    plugin_worker_id = "pwrk_snapshot",
+    plugin_id = "sqlite_provider",
+    plugin_version = "1.0.0",
+    family_id = "sql",
+    capabilities = { "execute", "followup" },
+    interaction = "terminal_interactive",
+    created_at = "2026-09-01T08:00:00Z",
+  }
+  local surface = {
+    surface_id = "srf_snapshot",
+    client_id = "cli_snapshot",
+    runtime_id = "run_snapshot",
+    kind = "terminal",
+    capabilities = { "input", "resize", "signal" },
+    transport = {
+      kind = "websocket",
+      endpoint = "/v1/surfaces/srf_snapshot/terminal",
+      subprotocol = "jusi.terminal.v1",
+    },
+    created_at = "2026-09-01T08:00:01Z",
+  }
+  local transport = FakeTransport.new({
+    ok = true,
+    status = "ready",
+    supervisor_id = "sup_test",
+    earliest_event_sequence = 1,
+    event_sequence = 0,
+    kernel = { kernel_id = "krn_snapshot", notebook_id = model.notebook_id, state = "on" },
+    runtime = {
+      runtime_id = "run_snapshot",
+      notebook_id = model.notebook_id,
+      discovery_id = "discovery_snapshot",
+      kernel_id = "krn_snapshot",
+      plugin_catalog = {
+        protocol_version = 1,
+        catalog_version = 1,
+        discovery_id = "discovery_snapshot",
+        plugins = {
+          {
+            plugin_id = "sqlite_provider",
+            plugin_version = "1.0.0",
+            distribution = "jusi-sqlite",
+            families = { { family_id = "sql", magic_name = "sql", capabilities = { "execute", "followup" } } },
+            kernel_extensions = {},
+            worker_entry_point = "jusi_sqlite:create_worker",
+            media_types = { "application/x-jusi-terminal" },
+            interaction = "terminal_interactive",
+          },
+        },
+      },
+    },
+    clients = { client },
+    surfaces = { surface },
+  })
+  local controller = controller_module.new({ notebook = model, transport = transport })
+  controller:connect()
+  equal(controller.clients.cli_snapshot.plugin_worker_id, "pwrk_snapshot")
+  equal(controller.surfaces.srf_snapshot.client_id, "cli_snapshot")
   controller:close()
   model:detach()
 end
@@ -101,6 +200,7 @@ function FakeTransport.new(health)
       ok = true,
       status = "ready",
       clients = {},
+      surfaces = {},
       supervisor_id = "sup_test",
       earliest_event_sequence = 1,
       event_sequence = 0,
@@ -291,6 +391,7 @@ local function test_supervisor_replacement_resynchronizes_from_authoritative_sna
     ok = true,
     status = "ready",
     clients = {},
+    surfaces = {},
     supervisor_id = "sup_new",
     earliest_event_sequence = 1,
     event_sequence = 1,
@@ -332,6 +433,7 @@ local function test_expired_cursor_resynchronizes_but_replayable_cursor_does_not
     ok = true,
     status = "ready",
     clients = {},
+    surfaces = {},
     supervisor_id = "sup_test",
     earliest_event_sequence = 10,
     event_sequence = 12,
@@ -374,6 +476,7 @@ end
 function M.run()
   test_fragmented_sse_parser()
   test_controller_tracks_durable_client_lifecycle()
+  test_controller_accepts_authoritative_surface_snapshot()
   test_controller_routes_identity_and_preserves_kernel_truth_on_gap()
   test_invalid_cell_is_rejected_before_transport()
   test_malformed_event_disconnects_without_changing_kernel_truth()

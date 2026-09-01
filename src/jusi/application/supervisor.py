@@ -13,6 +13,7 @@ from jusi.application.ports import (
     PluginCatalogDiscovery,
     PluginCatalogDiscoveryError,
     PluginWorkerError,
+    TerminalSurfaceRequest,
 )
 from jusi.application.plugin_workers import PluginWorkerManager, PluginWorkerSelectionError
 from jusi.domain.models import (
@@ -23,6 +24,7 @@ from jusi.domain.models import (
     NotebookRuntime,
     Operation,
     ResourceRef,
+    SurfaceResource,
     utc_now,
 )
 
@@ -59,6 +61,8 @@ class Supervisor:
         self._known_runtime_ids: set[str] = set()
         self._clients: dict[str, ClientResource] = {}
         self._known_client_ids: set[str] = set()
+        self._surfaces: dict[str, SurfaceResource] = {}
+        self._surface_requests: dict[str, TerminalSurfaceRequest] = {}
         self.events.append(
             trace_id=new_id("trace"),
             layer="service",
@@ -78,6 +82,7 @@ class Supervisor:
                 "kernel": self._current_kernel.to_dict() if self._current_kernel is not None else None,
                 "runtime": self._current_runtime.to_dict() if self._current_runtime is not None else None,
                 "clients": [client.to_dict() for client in self._clients.values()],
+                "surfaces": [surface.to_dict() for surface in self._surfaces.values()],
             }
 
     def record_failure(self, failure: Failure) -> None:
@@ -460,34 +465,8 @@ class Supervisor:
                     self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
                     raise SupervisorError(503, failure) from exc
 
-                execution.client_id = client_id
-                client = ClientResource(
-                    client_id=client_id,
-                    runtime_id=runtime.runtime_id,
-                    kernel_id=kernel_id,
-                    notebook_id=notebook_id,
-                    cell_id=cell_id,
-                    execution_id=execution.execution_id,
-                    plugin_worker_id=worker.plugin_worker_id,
-                    plugin_id=worker.plugin_id,
-                    plugin_version=worker.plugin_version,
-                    family_id=worker.family_id,
-                    capabilities=worker.capabilities,
-                    interaction=worker.interaction,
-                )
-                with self._state_lock:
-                    self._clients[client_id] = client
-                    self._known_client_ids.add(client_id)
-                self.events.append(
-                    trace_id=trace_id,
-                    layer="client",
-                    operation="execute",
-                    kind="client.created",
-                    resource=ResourceRef("client", client_id),
-                    payload=client.to_dict(),
-                )
                 try:
-                    self._plugin_workers.request(
+                    worker_result = self._plugin_workers.request(
                         worker.plugin_worker_id,
                         "execute",
                         handoff.payload,
@@ -505,13 +484,6 @@ class Supervisor:
                         details=execution_details,
                     )
                     self._emit_failure(failure)
-                    self._retire_client(
-                        client_id,
-                        trace_id=trace_id,
-                        operation="execute",
-                        reason="fatal_failure",
-                        failure_id=failure.failure_id,
-                    )
                     execution.complete("failed")
                     self.events.append(
                         trace_id=trace_id,
@@ -523,6 +495,94 @@ class Supervisor:
                     )
                     self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
                     raise SupervisorError(503, failure) from exc
+
+                required_surface = worker.interaction == "terminal_interactive"
+                invalid_surface_request = (
+                    len(worker_result.core_requests) != (1 if required_surface else 0)
+                )
+                if invalid_surface_request:
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="plugin_worker",
+                        operation="execute",
+                        reason="protocol_violation",
+                        message=(
+                            "Interactive plugin worker must request exactly one terminal surface"
+                            if required_surface
+                            else "Non-interactive plugin worker cannot request a terminal surface"
+                        ),
+                        retryable=False,
+                        scope="client",
+                        resource=ResourceRef("plugin_worker", worker.plugin_worker_id),
+                        details={**execution_details, "client_id": client_id},
+                    )
+                    self._emit_failure(failure)
+                    try:
+                        self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=timeout)
+                    except (PluginWorkerSelectionError, PluginWorkerError):
+                        pass
+                    execution.complete("failed")
+                    self.events.append(
+                        trace_id=trace_id,
+                        layer="execution",
+                        operation="execute",
+                        kind="execution.completed",
+                        resource=execution_ref,
+                        payload=execution.to_dict(),
+                    )
+                    self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                    raise SupervisorError(502, failure)
+
+                execution.client_id = client_id
+                client = ClientResource(
+                    client_id=client_id,
+                    runtime_id=runtime.runtime_id,
+                    kernel_id=kernel_id,
+                    notebook_id=notebook_id,
+                    cell_id=cell_id,
+                    execution_id=execution.execution_id,
+                    plugin_worker_id=worker.plugin_worker_id,
+                    plugin_id=worker.plugin_id,
+                    plugin_version=worker.plugin_version,
+                    family_id=worker.family_id,
+                    capabilities=worker.capabilities,
+                    interaction=worker.interaction,
+                )
+                surface = None
+                if required_surface:
+                    surface_id = new_id("srf")
+                    request = worker_result.core_requests[0]
+                    surface = SurfaceResource(
+                        surface_id=surface_id,
+                        client_id=client_id,
+                        runtime_id=runtime.runtime_id,
+                        kind="terminal",
+                        capabilities=request.capabilities,
+                        endpoint=f"/v1/surfaces/{surface_id}/terminal",
+                    )
+                with self._state_lock:
+                    self._clients[client_id] = client
+                    self._known_client_ids.add(client_id)
+                    if surface is not None:
+                        self._surfaces[surface.surface_id] = surface
+                        self._surface_requests[surface.surface_id] = request
+                self.events.append(
+                    trace_id=trace_id,
+                    layer="client",
+                    operation="execute",
+                    kind="client.created",
+                    resource=ResourceRef("client", client_id),
+                    payload=client.to_dict(),
+                )
+                if surface is not None:
+                    self.events.append(
+                        trace_id=trace_id,
+                        layer="client",
+                        operation="execute",
+                        kind="surface.created",
+                        resource=ResourceRef("surface", surface.surface_id),
+                        payload=surface.to_dict(),
+                    )
 
             for output in result.outputs:
                 self.events.append(
@@ -1181,8 +1241,29 @@ class Supervisor:
     ) -> None:
         with self._state_lock:
             client = self._clients.pop(client_id, None)
+            surfaces = [surface for surface in self._surfaces.values() if surface.client_id == client_id]
+            for surface in surfaces:
+                self._surfaces.pop(surface.surface_id, None)
+                self._surface_requests.pop(surface.surface_id, None)
         if client is None:
             return
+        for surface in surfaces:
+            surface_payload: dict[str, Any] = {
+                "surface_id": surface.surface_id,
+                "client_id": client_id,
+                "reason": "fatal_failure" if failure_id else "client_cleanup",
+                "closed_at": utc_now(),
+            }
+            if failure_id:
+                surface_payload["failure_id"] = failure_id
+            self.events.append(
+                trace_id=trace_id,
+                layer="client",
+                operation=operation,
+                kind="surface.closed",
+                resource=ResourceRef("surface", surface.surface_id),
+                payload=surface_payload,
+            )
         payload: dict[str, Any] = {
             "client_id": client.client_id,
             "plugin_worker_id": client.plugin_worker_id,

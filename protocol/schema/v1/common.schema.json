@@ -38,7 +38,7 @@
       "required": ["kind", "id"],
       "properties": {
         "kind": {
-          "enum": ["supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"]
+          "enum": ["supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"]
         },
         "id": {"$ref": "#/$defs/opaque_id"}
       },

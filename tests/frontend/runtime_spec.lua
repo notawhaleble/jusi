@@ -40,6 +40,7 @@ function FakeTransport:request(method, path, payload, _, callback)
       ok = true,
       status = "ready",
       clients = {},
+      surfaces = {},
       supervisor_id = "sup_runtime",
       earliest_event_sequence = 1,
       event_sequence = 0,

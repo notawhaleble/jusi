@@ -58,17 +58,48 @@ def test_worker_is_fresh_isolated_and_stdout_cannot_corrupt_control(tmp_path: Pa
     adapter = factory(tmp_path)
     first = adapter.start(spec(entry_point, "first"), timeout=2)
     first_result = first.request("complete", {"text": "sel"}, trace_id="trace_first", timeout=2)
-    assert first_result["pid"] == first.pid
-    assert first_result["worker_id"] == "pwrk_first"
-    assert first_result["payload"] == {"text": "sel"}
+    assert first_result.result["pid"] == first.pid
+    assert first_result.result["worker_id"] == "pwrk_first"
+    assert first_result.result["payload"] == {"text": "sel"}
     assert first.stop(trace_id="trace_stop", timeout=2) == "stopped"
     assert first.stop(trace_id="trace_stop_again", timeout=2) == "already_absent"
 
     second = adapter.start(spec(entry_point, "second"), timeout=2)
     second_result = second.request("followup", {}, trace_id="trace_second", timeout=2)
-    assert second_result["pid"] != first_result["pid"]
+    assert second_result.result["pid"] != first_result.result["pid"]
     assert "fixture_exact_worker" not in sys.modules
     assert second.stop(trace_id="trace_stop_second", timeout=2) == "stopped"
+
+
+def test_worker_sdk_returns_typed_private_terminal_surface_request(tmp_path: Path) -> None:
+    entry_point = write_worker(tmp_path, """
+        from jusi.plugin_api import WorkerResult, terminal_surface
+
+        class Worker:
+            def handle(self, operation, payload):
+                return WorkerResult(
+                    result={"accepted": True},
+                    core_requests=(terminal_surface(
+                        "terminal_main",
+                        ("visidata", "--play", "/private/query.vd"),
+                        cwd="/target/work",
+                        environment_overrides={"TERM": "xterm-256color"},
+                        signal=True,
+                    ),),
+                )
+
+        def create_worker(context):
+            return Worker()
+    """)
+    worker = factory(tmp_path).start(spec(entry_point, "surface"), timeout=2)
+    result = worker.request("execute", {}, trace_id="trace_surface", timeout=2)
+    assert result.result == {"accepted": True}
+    assert len(result.core_requests) == 1
+    request = result.core_requests[0]
+    assert request.argv == ("visidata", "--play", "/private/query.vd")
+    assert request.cwd == "/target/work"
+    assert request.capabilities == ("input", "resize", "signal")
+    assert worker.stop(trace_id="trace_stop_surface", timeout=2) == "stopped"
 
 
 def test_handler_failure_fences_only_the_worker_and_preserves_diagnostics(tmp_path: Path) -> None:
@@ -115,7 +146,7 @@ def test_one_worker_failure_does_not_damage_another_worker(tmp_path: Path) -> No
     with pytest.raises(PluginWorkerError):
         failed.request("execute", {"crash": True}, trace_id="trace_failed", timeout=2)
 
-    assert survivor.request("execute", {}, trace_id="trace_survivor", timeout=2) == {
+    assert survivor.request("execute", {}, trace_id="trace_survivor", timeout=2).result == {
         "worker_id": "pwrk_survivor",
         "alive": True,
     }

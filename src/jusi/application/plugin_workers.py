@@ -10,6 +10,7 @@ from jusi.application.ports import (
     PluginWorkerFactory,
     PluginWorkerHandle,
     PluginWorkerSpec,
+    PluginWorkerOperationResult,
 )
 from jusi.domain.models import NotebookRuntime, PluginWorkerResource
 
@@ -103,7 +104,7 @@ class PluginWorkerManager:
         *,
         trace_id: str,
         timeout: float,
-    ) -> dict[str, Any]:
+    ) -> PluginWorkerOperationResult:
         with self._lock:
             owned = self._workers.get(plugin_worker_id)
             if owned is None:

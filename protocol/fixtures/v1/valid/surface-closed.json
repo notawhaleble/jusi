@@ -1,0 +1,19 @@
+{
+  "protocol_version": 1,
+  "event_id": "evt_surface_closed_1",
+  "supervisor_id": "sup_fixture",
+  "sequence": 11,
+  "occurred_at": "2026-09-01T08:01:00Z",
+  "trace_id": "trace_surface_close",
+  "layer": "client",
+  "operation": "execute",
+  "kind": "surface.closed",
+  "resource": {"kind": "surface", "id": "surf_fixture"},
+  "payload": {
+    "surface_id": "surf_fixture",
+    "client_id": "cli_fixture",
+    "reason": "fatal_failure",
+    "failure_id": "fail_fixture",
+    "closed_at": "2026-09-01T08:01:00Z"
+  }
+}

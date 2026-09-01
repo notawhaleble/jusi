@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from jusi.protocol import ProtocolValidationError, validate_plugin_catalog
+from jusi.application.ports import TerminalSurfaceRequest
 
 
 ENTRY_POINT_GROUP = "jusi.plugins.v1"
@@ -17,6 +18,30 @@ class WorkerContext:
     family_id: str
     client_id: str
     execution_id: str
+
+
+@dataclass(frozen=True)
+class WorkerResult:
+    result: dict[str, Any]
+    core_requests: tuple[TerminalSurfaceRequest, ...] = ()
+
+
+def terminal_surface(
+    request_id: str,
+    argv: tuple[str, ...],
+    *,
+    cwd: str | None = None,
+    environment_overrides: dict[str, str] | None = None,
+    signal: bool = False,
+) -> TerminalSurfaceRequest:
+    capabilities = ("input", "resize", "signal") if signal else ("input", "resize")
+    return TerminalSurfaceRequest(
+        request_id=request_id,
+        argv=argv,
+        cwd=cwd,
+        environment_overrides=dict(environment_overrides or {}),
+        capabilities=capabilities,
+    )
 
 
 def validate_discovered_entry(

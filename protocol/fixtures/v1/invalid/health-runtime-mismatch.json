@@ -23,5 +23,6 @@
       "plugins": []
     }
   },
-  "clients": []
+  "clients": [],
+  "surfaces": []
 }

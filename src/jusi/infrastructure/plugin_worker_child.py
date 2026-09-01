@@ -8,7 +8,7 @@ import traceback
 from typing import Any
 
 from jusi.infrastructure.plugin_worker_channel import read_frame, write_frame
-from jusi.plugin_api import WorkerContext
+from jusi.plugin_api import WorkerContext, WorkerResult
 from jusi.protocol import ProtocolValidationError, validate_plugin_worker_message
 
 
@@ -113,9 +113,15 @@ def run(args: argparse.Namespace) -> int:
             print("unexpected plugin worker control kind", file=sys.stderr)
             return 21
         try:
-            result = worker.handle(message["operation"], message["payload"])
-            if not isinstance(result, dict):
-                raise TypeError("worker handle result must be an object")
+            handled = worker.handle(message["operation"], message["payload"])
+            if isinstance(handled, WorkerResult):
+                result = handled.result
+                core_requests = [request.to_dict() for request in handled.core_requests]
+            elif isinstance(handled, dict):
+                result = handled
+                core_requests = []
+            else:
+                raise TypeError("worker handle result must be an object or WorkerResult")
             response = {
                 "protocol_version": 1,
                 "kind": "worker.result",
@@ -124,6 +130,7 @@ def run(args: argparse.Namespace) -> int:
                 "trace_id": message["trace_id"],
                 "operation": message["operation"],
                 "result": result,
+                "core_requests": core_requests,
             }
             validate_plugin_worker_message(response)
             write_frame(control_output, response, limit=args.frame_limit)

@@ -72,8 +72,12 @@ function Controller:_accept_health_snapshot(response)
     self.event_sequence = response.event_sequence
     self.executions = {}
     self.clients = {}
+    self.surfaces = {}
     for _, client in ipairs(response.clients) do
       self.clients[client.client_id] = client
+    end
+    for _, surface in ipairs(response.surfaces) do
+      self.surfaces[surface.surface_id] = surface
     end
     if kernel then
       self.kernel_id = kernel.kernel_id
@@ -285,8 +289,33 @@ function Controller:_on_event(event)
   elseif event.kind == "client.closed" then
     local client = self.clients[event.payload.client_id]
     self.clients[event.payload.client_id] = nil
+    for surface_id, surface in pairs(self.surfaces) do
+      if surface.client_id == event.payload.client_id then
+        self.surfaces[surface_id] = nil
+        if self.on_surface_closed then
+          self.on_surface_closed(surface, {
+            surface_id = surface_id,
+            client_id = event.payload.client_id,
+            reason = "client_cleanup",
+            failure_id = event.payload.failure_id,
+            closed_at = event.payload.closed_at,
+          }, event)
+        end
+      end
+    end
     if self.on_client_closed then
       self.on_client_closed(client, event.payload, event)
+    end
+  elseif event.kind == "surface.created" then
+    self.surfaces[event.payload.surface_id] = event.payload
+    if self.on_surface_created then
+      self.on_surface_created(event.payload, event)
+    end
+  elseif event.kind == "surface.closed" then
+    local surface = self.surfaces[event.payload.surface_id]
+    self.surfaces[event.payload.surface_id] = nil
+    if self.on_surface_closed then
+      self.on_surface_closed(surface, event.payload, event)
     end
   elseif event.kind == "failure.occurred" and self.on_failure then
     self.on_failure(event.payload)
@@ -349,6 +378,7 @@ function Controller:restart_notebook(next_notebook_id, callback)
       self.kernel_state = response.kernel.state
       self.executions = {}
       self.clients = {}
+      self.surfaces = {}
     elseif failure and failure.details and failure.details.teardown_completed then
       self.runtime_id = nil
       self.discovery_id = nil
@@ -356,6 +386,7 @@ function Controller:restart_notebook(next_notebook_id, callback)
       self.kernel_state = "off"
       self.executions = {}
       self.clients = {}
+      self.surfaces = {}
     end
     if callback then
       callback(response, failure)
@@ -489,12 +520,15 @@ function M.new(options)
     transport_state = "disconnected",
     executions = {},
     clients = {},
+    surfaces = {},
     on_event = opts.on_event,
     on_execution_started = opts.on_execution_started,
     on_execution_completed = opts.on_execution_completed,
     on_output = opts.on_output,
     on_client_created = opts.on_client_created,
     on_client_closed = opts.on_client_closed,
+    on_surface_created = opts.on_surface_created,
+    on_surface_closed = opts.on_surface_closed,
     on_failure = opts.on_failure,
     on_resynchronized = opts.on_resynchronized,
     last_transport_failure = nil,

@@ -3,6 +3,37 @@
   "$id": "https://jusi.dev/protocol/v1/responses.schema.json",
   "title": "Jusi Protocol v1 HTTP Responses",
   "$defs": {
+    "surface": {
+      "type": "object",
+      "required": ["surface_id", "client_id", "runtime_id", "kind", "capabilities", "transport", "created_at"],
+      "properties": {
+        "surface_id": {"type": "string", "minLength": 3},
+        "client_id": {"type": "string", "minLength": 3},
+        "runtime_id": {"type": "string", "minLength": 3},
+        "kind": {"const": "terminal"},
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["input", "resize", "signal"]},
+          "allOf": [
+            {"contains": {"const": "input"}},
+            {"contains": {"const": "resize"}}
+          ]
+        },
+        "transport": {
+          "type": "object",
+          "required": ["kind", "endpoint", "subprotocol"],
+          "properties": {
+            "kind": {"const": "websocket"},
+            "endpoint": {"type": "string", "pattern": "^/", "minLength": 1},
+            "subprotocol": {"const": "jusi.terminal.v1"}
+          },
+          "additionalProperties": false
+        },
+        "created_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
     "client": {
       "type": "object",
       "required": ["client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "capabilities", "interaction", "created_at"],
@@ -31,7 +62,7 @@
         "properties": {"status": {"const": "ready"}}
       },
       "then": {
-        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel", "runtime", "clients"]
+        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel", "runtime", "clients", "surfaces"]
       }
     }
   ],
@@ -56,6 +87,7 @@
           "additionalProperties": false
         },
         "clients": {"type": "array", "items": {"$ref": "#/$defs/client"}},
+        "surfaces": {"type": "array", "items": {"$ref": "#/$defs/surface"}},
         "execution": {"type": "object"},
         "cleanup": {"type": "object"},
         "status": {"type": "string"},

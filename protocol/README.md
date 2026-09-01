@@ -50,8 +50,12 @@ immutable runtime catalog.
 envelope from ADR 0011. It is not an HTTP/SSE or terminal transport. Python and
 Lua consume the same identity, operation, result, and failure fixtures even
 though only the Python supervisor/worker boundary currently carries these
-messages. Plugin-owned payload and result objects remain opaque to core.
-They are private backend control data and are never forwarded as an implicit
+messages. Plugin-owned payload and result objects remain opaque to core. Every
+successful worker result also carries a `core_requests` array. The first
+supported typed request is `terminal_surface.create`: the worker supplies a target-side argv,
+absolute-or-null cwd, environment overrides, and generic terminal capabilities;
+it never supplies a frontend command or credentials.
+These requests are private backend control data and are never forwarded as an implicit
 frontend plugin API. Frontend-visible plugin behavior uses versioned generic
 client/surface, control, action, and failure contracts from ADR 0015.
 
@@ -64,3 +68,13 @@ failures use `failure.occurred` and retire only that client. The explicit,
 idempotent `close_client` command stops the exact worker and emits
 `client.closed`. Kernel stop and full notebook restart retire remaining clients
 as runtime cleanup.
+
+## Terminal Surfaces
+
+A terminal surface is a public resource owned by one client and notebook
+runtime. Health snapshots include all current `surfaces`, while
+`surface.created` and `surface.closed` provide the ordered lifecycle. The
+descriptor contains only generic capabilities and a relative WebSocket endpoint
+using subprotocol `jusi.terminal.v1`; it never exposes a target process command,
+environment, or authentication data to the frontend. Terminal bytes and attach
+control belong to the dedicated stream described by ADR 0016, not SSE.

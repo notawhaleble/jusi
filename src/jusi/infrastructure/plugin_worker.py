@@ -9,7 +9,13 @@ import threading
 import uuid
 from typing import Any, BinaryIO, Sequence
 
-from jusi.application.ports import PluginWorkerError, PluginWorkerHandle, PluginWorkerSpec
+from jusi.application.ports import (
+    PluginWorkerError,
+    PluginWorkerHandle,
+    PluginWorkerOperationResult,
+    PluginWorkerSpec,
+    TerminalSurfaceRequest,
+)
 from jusi.domain.models import ProcessDiagnostics
 from jusi.infrastructure.plugin_worker_channel import (
     DEFAULT_FRAME_LIMIT,
@@ -97,7 +103,7 @@ class FreshProcessPluginWorker:
         *,
         trace_id: str,
         timeout: float,
-    ) -> dict[str, Any]:
+    ) -> PluginWorkerOperationResult:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
         request_id = f"wreq_{uuid.uuid4().hex}"
@@ -130,7 +136,19 @@ class FreshProcessPluginWorker:
                 self._fenced = True
                 self._terminate()
                 raise self._error("Plugin worker returned an unexpected message", reason="protocol_violation", retryable=False)
-            return dict(response["result"])
+            return PluginWorkerOperationResult(
+                result=dict(response["result"]),
+                core_requests=tuple(
+                    TerminalSurfaceRequest(
+                        request_id=item["request_id"],
+                        argv=tuple(item["argv"]),
+                        cwd=item["cwd"],
+                        environment_overrides=dict(item["environment_overrides"]),
+                        capabilities=tuple(item["capabilities"]),
+                    )
+                    for item in response["core_requests"]
+                ),
+            )
 
     def stop(self, *, trace_id: str, timeout: float) -> str:
         if timeout <= 0:

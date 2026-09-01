@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from jusi.application.plugin_workers import PluginWorkerManager, PluginWorkerSelectionError
-from jusi.application.ports import PluginWorkerSpec
+from jusi.application.ports import PluginWorkerOperationResult, PluginWorkerSpec
 from jusi.domain.models import NotebookRuntime
 
 
@@ -14,10 +14,10 @@ class FakeHandle:
         self.requests: list[tuple[str, dict, str]] = []
         self.stop_count = 0
 
-    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float) -> dict:
+    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float) -> PluginWorkerOperationResult:
         assert timeout > 0
         self.requests.append((operation, payload, trace_id))
-        return {"accepted": True}
+        return PluginWorkerOperationResult({"accepted": True})
 
     def stop(self, *, trace_id: str, timeout: float) -> str:
         assert trace_id and timeout > 0
@@ -83,7 +83,7 @@ def test_manager_selects_entry_point_only_from_current_catalog_and_checks_capabi
     assert resource.plugin_version == "2.0.0"
     assert manager.request(
         resource.plugin_worker_id, "complete", {"text": "sel"}, trace_id="trace_complete", timeout=2,
-    ) == {"accepted": True}
+    ).result == {"accepted": True}
 
     with pytest.raises(PluginWorkerSelectionError, match="does not declare") as unsupported:
         manager.request(resource.plugin_worker_id, "followup", {}, trace_id="trace_followup", timeout=2)

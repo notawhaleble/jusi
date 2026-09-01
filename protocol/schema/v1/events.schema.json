@@ -40,6 +40,8 @@
         "execution.completed",
         "client.created",
         "client.closed",
+        "surface.created",
+        "surface.closed",
         "failure.occurred"
       ]
     },
@@ -47,7 +49,7 @@
       "type": "object",
       "required": ["kind", "id"],
       "properties": {
-        "kind": {"enum": ["supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"]},
+        "kind": {"enum": ["supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"]},
         "id": {"type": "string", "minLength": 3, "maxLength": 128}
       },
       "additionalProperties": false
@@ -209,6 +211,33 @@
               "client_id": {"type": "string", "minLength": 3},
               "plugin_worker_id": {"type": "string", "minLength": 3},
               "reason": {"enum": ["explicit_close", "fatal_failure", "runtime_cleanup"]},
+              "closed_at": {"type": "string", "format": "date-time"},
+              "failure_id": {"type": "string", "minLength": 3}
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "surface.created"}}},
+      "then": {
+        "properties": {
+          "payload": {"$ref": "responses.schema.json#/$defs/surface"}
+        }
+      }
+    },
+    {
+      "if": {"properties": {"kind": {"const": "surface.closed"}}},
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["surface_id", "client_id", "reason", "closed_at"],
+            "properties": {
+              "surface_id": {"type": "string", "minLength": 3},
+              "client_id": {"type": "string", "minLength": 3},
+              "reason": {"enum": ["client_cleanup", "fatal_failure"]},
               "closed_at": {"type": "string", "format": "date-time"},
               "failure_id": {"type": "string", "minLength": 3}
             },

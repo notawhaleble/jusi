@@ -74,6 +74,8 @@ def test_python_consumes_shared_event_fixtures() -> None:
         "execution.completed",
         "client.created",
         "client.closed",
+        "surface.created",
+        "surface.closed",
         "failure.occurred",
     }
 
@@ -87,6 +89,17 @@ def test_python_consumes_shared_event_fixtures() -> None:
     with pytest.raises(ProtocolValidationError, match="fields"):
         validate_event(invalid_client)
 
+    surface = validate_event(load_json(fixture_root / "valid" / "surface-created.json"))
+    assert surface["payload"]["transport"] == {
+        "kind": "websocket",
+        "endpoint": "/v1/surfaces/surf_fixture/terminal",
+        "subprotocol": "jusi.terminal.v1",
+    }
+    assert validate_event(load_json(fixture_root / "valid" / "surface-closed.json"))["kind"] == "surface.closed"
+    invalid_surface = load_json(fixture_root / "invalid" / "surface-created-missing-transport.json")
+    with pytest.raises(ProtocolValidationError, match="fields"):
+        validate_event(invalid_surface)
+
 
 def test_python_consumes_shared_close_client_command() -> None:
     command = load_json(ROOT / "protocol" / "fixtures" / "v1" / "valid" / "close-client.json")
@@ -98,6 +111,7 @@ def test_python_consumes_shared_health_fixtures() -> None:
     response = load_json(fixture_root / "valid" / "health-response.json")
     assert validate_health_response(response)["kernel"]["state"] == "on"
     assert validate_health_response(response)["runtime"]["plugin_catalog"]["plugins"] == []
+    assert validate_health_response(response)["surfaces"] == []
 
     invalid = load_json(fixture_root / "invalid" / "health-invalid-window.json")
     with pytest.raises(ProtocolValidationError, match="window"):
@@ -106,6 +120,10 @@ def test_python_consumes_shared_health_fixtures() -> None:
     mismatch = load_json(fixture_root / "invalid" / "health-runtime-mismatch.json")
     with pytest.raises(ProtocolValidationError, match="ownership"):
         validate_health_response(mismatch)
+
+    missing_surfaces = load_json(fixture_root / "invalid" / "health-missing-surfaces.json")
+    with pytest.raises(ProtocolValidationError, match="surfaces"):
+        validate_health_response(missing_surfaces)
 
 
 def test_python_consumes_shared_plugin_catalog_fixtures() -> None:
@@ -138,6 +156,31 @@ def test_python_consumes_shared_plugin_worker_fixtures() -> None:
     result = load_json(fixture_root / "valid" / "plugin-worker-result.json")
     assert validate_plugin_worker_message(request)["operation"] == "complete"
     assert validate_plugin_worker_message(result)["result"] == {"items": ["select"]}
+    assert validate_plugin_worker_message(result)["core_requests"] == []
+
+    surface_request = validate_plugin_worker_message(
+        load_json(fixture_root / "valid" / "plugin-worker-terminal-surface-request.json")
+    )
+    assert surface_request["core_requests"][0] == {
+        "request_id": "core_req_fixture_1",
+        "kind": "terminal_surface.create",
+        "argv": ["visidata", "--play", "/tmp/jusi-query.vd"],
+        "cwd": "/tmp",
+        "environment_overrides": {"TERM": "xterm-256color"},
+        "capabilities": ["input", "resize", "signal"],
+    }
+
+    invalid_surface_request = load_json(
+        fixture_root / "invalid" / "plugin-worker-terminal-surface-missing-resize.json"
+    )
+    with pytest.raises(ProtocolValidationError, match="capabilities"):
+        validate_plugin_worker_message(invalid_surface_request)
+
+    missing_core_requests = load_json(
+        fixture_root / "invalid" / "plugin-worker-result-missing-core-requests.json"
+    )
+    with pytest.raises(ProtocolValidationError, match="fields"):
+        validate_plugin_worker_message(missing_core_requests)
 
     invalid = load_json(fixture_root / "invalid" / "plugin-worker-identity-missing.json")
     with pytest.raises(ProtocolValidationError, match="plugin_worker_id"):

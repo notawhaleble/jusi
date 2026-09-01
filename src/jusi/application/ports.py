@@ -148,6 +148,31 @@ class PluginWorkerError(RuntimeError):
         self.details = details or {}
 
 
+@dataclass(frozen=True)
+class TerminalSurfaceRequest:
+    request_id: str
+    argv: tuple[str, ...]
+    cwd: str | None = None
+    environment_overrides: dict[str, str] = field(default_factory=dict)
+    capabilities: tuple[str, ...] = ("input", "resize")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "kind": "terminal_surface.create",
+            "argv": list(self.argv),
+            "cwd": self.cwd,
+            "environment_overrides": dict(self.environment_overrides),
+            "capabilities": list(self.capabilities),
+        }
+
+
+@dataclass(frozen=True)
+class PluginWorkerOperationResult:
+    result: dict[str, Any]
+    core_requests: tuple[TerminalSurfaceRequest, ...] = field(default_factory=tuple)
+
+
 class PluginWorkerHandle(Protocol):
     @property
     def pid(self) -> int | None: ...
@@ -159,7 +184,7 @@ class PluginWorkerHandle(Protocol):
         *,
         trace_id: str,
         timeout: float,
-    ) -> dict[str, Any]: ...
+    ) -> PluginWorkerOperationResult: ...
 
     def stop(self, *, trace_id: str, timeout: float) -> str: ...
 

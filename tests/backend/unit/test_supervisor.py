@@ -11,8 +11,10 @@ from jusi.application.ports import (
     PluginCatalogDiscoveryError,
     PluginCatalogDiscoveryResult,
     PluginWorkerError,
+    PluginWorkerOperationResult,
     PluginWorkerSpec,
     PluginHandoff,
+    TerminalSurfaceRequest,
 )
 from jusi.application.plugin_workers import PluginWorkerManager
 from jusi.application.supervisor import Supervisor, SupervisorError
@@ -117,15 +119,17 @@ class FakePluginWorkerHandle:
         self,
         stop_error: PluginWorkerError | None = None,
         request_error: PluginWorkerError | None = None,
+        operation_result: PluginWorkerOperationResult | None = None,
     ) -> None:
         self.stop_error = stop_error
         self.request_error = request_error
+        self.operation_result = operation_result or PluginWorkerOperationResult({"accepted": True})
         self.stop_count = 0
 
-    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float) -> dict:
+    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float) -> PluginWorkerOperationResult:
         if self.request_error is not None:
             raise self.request_error
-        return {"operation": operation, "payload": payload}
+        return self.operation_result
 
     def stop(self, *, trace_id: str, timeout: float) -> str:
         self.stop_count += 1
@@ -140,10 +144,12 @@ class FakePluginWorkerFactory:
         stop_error: PluginWorkerError | None = None,
         request_error: PluginWorkerError | None = None,
         start_error: PluginWorkerError | None = None,
+        operation_result: PluginWorkerOperationResult | None = None,
     ) -> None:
         self.stop_error = stop_error
         self.request_error = request_error
         self.start_error = start_error
+        self.operation_result = operation_result
         self.specs: list[PluginWorkerSpec] = []
         self.handles: list[FakePluginWorkerHandle] = []
 
@@ -151,7 +157,7 @@ class FakePluginWorkerFactory:
         self.specs.append(spec)
         if self.start_error is not None:
             raise self.start_error
-        handle = FakePluginWorkerHandle(self.stop_error, self.request_error)
+        handle = FakePluginWorkerHandle(self.stop_error, self.request_error, self.operation_result)
         self.handles.append(handle)
         return handle
 
@@ -171,6 +177,12 @@ def plugin_entry() -> dict:
         "media_types": ["text/plain"],
         "interaction": "request_response",
     }
+
+
+def interactive_plugin_entry() -> dict:
+    entry = plugin_entry()
+    entry["interaction"] = "terminal_interactive"
+    return entry
 
 
 def test_walking_skeleton_event_order_and_idempotent_stop() -> None:
@@ -478,7 +490,9 @@ def test_fatal_plugin_worker_failure_closes_only_its_client() -> None:
     assert supervisor.health()["clients"] == []
     events = supervisor.events.events_after(0)
     kinds = [event["kind"] for event in events]
-    assert kinds.index("client.created") < kinds.index("failure.occurred") < kinds.index("client.closed")
+    assert "failure.occurred" in kinds
+    assert "client.created" not in kinds
+    assert "client.closed" not in kinds
     assert "secret query" not in str(failure.to_dict())
 
 
@@ -585,6 +599,91 @@ def test_explicit_client_close_is_scoped_and_idempotent() -> None:
         "operation.started", "operation.completed",
     ]
     assert close_events[1]["payload"]["reason"] == "explicit_close"
+
+
+def test_interactive_client_and_required_surface_publish_and_retire_atomically() -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    request = TerminalSurfaceRequest(
+        request_id="terminal_main",
+        argv=("vd", "--play", "private-secret-path"),
+        cwd="/target/work",
+        environment_overrides={"PRIVATE_TOKEN": "secret"},
+        capabilities=("input", "resize", "signal"),
+    )
+    worker_factory = FakePluginWorkerFactory(
+        operation_result=PluginWorkerOperationResult({}, (request,)),
+    )
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[interactive_plugin_entry()]),
+        PluginWorkerManager(worker_factory),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    executed = supervisor.execute(
+        kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+        code="%%sql", trace_id="trace_execute",
+    )
+
+    health = supervisor.health()
+    assert len(health["clients"]) == len(health["surfaces"]) == 1
+    surface = health["surfaces"][0]
+    assert surface["client_id"] == executed["execution"]["client_id"]
+    assert surface["capabilities"] == ["input", "resize", "signal"]
+    assert surface["transport"]["endpoint"] == f"/v1/surfaces/{surface['surface_id']}/terminal"
+    serialized = repr(health) + repr(supervisor.events.events_after(0))
+    assert "private-secret-path" not in serialized
+    assert "PRIVATE_TOKEN" not in serialized
+    assert "secret" not in serialized
+
+    supervisor.close_client(client_id=surface["client_id"], trace_id="trace_close")
+    assert supervisor.health()["surfaces"] == []
+    close_kinds = [
+        event["kind"] for event in supervisor.events.events_after(0)
+        if event["trace_id"] == "trace_close"
+    ]
+    assert close_kinds == ["operation.started", "surface.closed", "client.closed", "operation.completed"]
+
+
+@pytest.mark.parametrize(
+    ("plugin", "operation_result"),
+    [
+        (interactive_plugin_entry(), PluginWorkerOperationResult({})),
+        (
+            plugin_entry(),
+            PluginWorkerOperationResult({}, (TerminalSurfaceRequest("terminal_main", ("vd",)),)),
+        ),
+    ],
+)
+def test_required_surface_contract_fails_before_client_publication(
+    plugin: dict,
+    operation_result: PluginWorkerOperationResult,
+) -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    worker_factory = FakePluginWorkerFactory(operation_result=operation_result)
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin]),
+        PluginWorkerManager(worker_factory),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+
+    with pytest.raises(SupervisorError) as raised:
+        supervisor.execute(
+            kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+            code="%%sql", trace_id="trace_execute",
+        )
+
+    assert raised.value.failure.reason == "protocol_violation"
+    assert raised.value.failure.scope == "client"
+    assert supervisor.health()["clients"] == []
+    assert supervisor.health()["surfaces"] == []
+    assert worker_factory.handles[0].stop_count == 1
 
 
 def test_start_failure_stays_off_and_is_typed() -> None:

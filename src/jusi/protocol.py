@@ -27,8 +27,8 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
 }
 LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
 OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"}
-EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "failure.occurred"}
-RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
+EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
+RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
 FAILURE_SCOPES = {"request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor"}
@@ -90,6 +90,27 @@ def _validate_client(client: object, context: str = "client") -> dict[str, Any]:
     if client["interaction"] not in {"noninteractive", "request_response", "terminal_interactive"}:
         raise ProtocolValidationError(f"{context}.interaction is invalid")
     return client
+
+
+def _validate_surface(surface: object, context: str = "surface") -> dict[str, Any]:
+    fields = {"surface_id", "client_id", "runtime_id", "kind", "capabilities", "transport", "created_at"}
+    if not isinstance(surface, dict) or set(surface) != fields:
+        raise ProtocolValidationError(f"{context} has invalid fields")
+    _required_strings(surface, ("surface_id", "client_id", "runtime_id", "created_at"), context)
+    if surface["kind"] != "terminal":
+        raise ProtocolValidationError(f"{context}.kind is invalid")
+    capabilities = surface["capabilities"]
+    if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) or not {"input", "resize"} <= set(capabilities) or not set(capabilities) <= {"input", "resize", "signal"}:
+        raise ProtocolValidationError(f"{context}.capabilities are invalid")
+    transport = surface["transport"]
+    if not isinstance(transport, dict) or set(transport) != {"kind", "endpoint", "subprotocol"}:
+        raise ProtocolValidationError(f"{context}.transport has invalid fields")
+    if transport["kind"] != "websocket" or transport["subprotocol"] != "jusi.terminal.v1":
+        raise ProtocolValidationError(f"{context}.transport is invalid")
+    expected_endpoint = f"/v1/surfaces/{surface['surface_id']}/terminal"
+    if transport["endpoint"] != expected_endpoint:
+        raise ProtocolValidationError(f"{context}.transport endpoint identity mismatch")
+    return surface
 
 
 def _validate_event_payload(data: dict[str, Any]) -> None:
@@ -163,6 +184,19 @@ def _validate_event_payload(data: dict[str, Any]) -> None:
             raise ProtocolValidationError("client close failure identity is invalid")
         if data["resource"] != {"kind": "client", "id": payload["client_id"]}:
             raise ProtocolValidationError("client event resource mismatch")
+    elif kind == "surface.created":
+        _validate_surface(payload, "payload")
+        if data["resource"] != {"kind": "surface", "id": payload["surface_id"]}:
+            raise ProtocolValidationError("surface event resource mismatch")
+    elif kind == "surface.closed":
+        _exact_fields(payload, {"surface_id", "client_id", "reason", "closed_at"}, {"failure_id"}, "payload")
+        _required_strings(payload, ("surface_id", "client_id", "reason", "closed_at"), "payload")
+        if payload["reason"] not in {"client_cleanup", "fatal_failure"}:
+            raise ProtocolValidationError("surface close reason is invalid")
+        if "failure_id" in payload and not _bounded_string(payload["failure_id"], 3, 128):
+            raise ProtocolValidationError("surface close failure identity is invalid")
+        if data["resource"] != {"kind": "surface", "id": payload["surface_id"]}:
+            raise ProtocolValidationError("surface event resource mismatch")
     elif kind == "failure.occurred":
         required = {"failure_id", "trace_id", "layer", "operation", "reason", "message", "retryable", "scope", "resource", "occurred_at"}
         optional = {"process", "caused_by_failure_id", "details"}
@@ -302,6 +336,21 @@ def validate_health_response(data: object) -> dict[str, Any]:
         )
         if family is None or set(family["capabilities"]) != set(client["capabilities"]):
             raise ProtocolValidationError("client family capabilities mismatch")
+    surfaces = data.get("surfaces")
+    if not isinstance(surfaces, list):
+        raise ProtocolValidationError("surfaces must be present as an array")
+    surface_ids: set[str] = set()
+    clients_by_id = {client["client_id"]: client for client in clients}
+    for index, candidate in enumerate(surfaces):
+        surface = _validate_surface(candidate, f"surfaces[{index}]")
+        if surface["surface_id"] in surface_ids:
+            raise ProtocolValidationError("surface identity is duplicated")
+        surface_ids.add(surface["surface_id"])
+        owner = clients_by_id.get(surface["client_id"])
+        if owner is None or surface["runtime_id"] != owner["runtime_id"]:
+            raise ProtocolValidationError("surface client ownership mismatch")
+        if owner["interaction"] != "terminal_interactive":
+            raise ProtocolValidationError("terminal surface owner is not interactive")
     return dict(data)
 
 
@@ -427,8 +476,32 @@ def validate_plugin_worker_message(data: object) -> dict[str, Any]:
         if set(data) != common_fields | {"payload"} or not isinstance(data.get("payload"), dict):
             raise ProtocolValidationError("Plugin worker request fields are invalid")
     elif kind == "worker.result":
-        if set(data) != common_fields | {"result"} or not isinstance(data.get("result"), dict):
+        if set(data) != common_fields | {"result", "core_requests"} or not isinstance(data.get("result"), dict) or not isinstance(data.get("core_requests"), list):
             raise ProtocolValidationError("Plugin worker result fields are invalid")
+        request_ids: set[str] = set()
+        for request in data["core_requests"]:
+            if not isinstance(request, dict) or set(request) != {"request_id", "kind", "argv", "cwd", "environment_overrides", "capabilities"}:
+                raise ProtocolValidationError("Plugin worker core request fields are invalid")
+            if not _bounded_string(request["request_id"], 3, 128) or request["request_id"] in request_ids:
+                raise ProtocolValidationError("Plugin worker core request identity is invalid")
+            request_ids.add(request["request_id"])
+            if request["kind"] != "terminal_surface.create":
+                raise ProtocolValidationError("Plugin worker core request kind is unsupported")
+            argv = request["argv"]
+            if not isinstance(argv, list) or not 1 <= len(argv) <= 128 or any(not _bounded_string(value, 1, 4096) for value in argv):
+                raise ProtocolValidationError("Terminal surface argv is invalid")
+            cwd = request["cwd"]
+            if cwd is not None and (not _bounded_string(cwd, 1, 4096) or not cwd.startswith("/")):
+                raise ProtocolValidationError("Terminal surface cwd must be null or absolute")
+            environment = request["environment_overrides"]
+            if not isinstance(environment, dict) or len(environment) > 128 or any(
+                not _bounded_string(key, 1, 256) or not isinstance(value, str) or len(value) > 8192
+                for key, value in environment.items()
+            ):
+                raise ProtocolValidationError("Terminal surface environment is invalid")
+            capabilities = request["capabilities"]
+            if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) or not {"input", "resize"} <= set(capabilities) or not set(capabilities) <= {"input", "resize", "signal"}:
+                raise ProtocolValidationError("Terminal surface capabilities are invalid")
     else:
         if set(data) != common_fields | {"failure"} or not isinstance(data.get("failure"), dict):
             raise ProtocolValidationError("Plugin worker failure fields are invalid")
