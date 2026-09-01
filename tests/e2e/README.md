@@ -12,6 +12,12 @@ The first black-box test does not require Neovim:
 
 The test must assert event order, trace correlation, distinct resource identities, terminal `on`/`off` kernel state, and cleanup of every process it created.
 
+`terminal_surface_spec.lua` explicitly enables the test-only exact plugin under
+`tests/fixtures/terminal_plugin`. It proves the complete native Neovim path,
+including first-draw geometry, opaque input/output, explicit client close, and
+kernel survival. The fixture is never discovered by an ordinary service unless
+that directory is deliberately placed on `PYTHONPATH`.
+
 The complementary headless-Neovim test exercises the Lua notebook model,
 HTTP/SSE transport, and controller against that real service and kernel without
 requiring the interactive UI:

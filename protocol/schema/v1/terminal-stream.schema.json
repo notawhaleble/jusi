@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/terminal-stream.schema.json",
+  "title": "Jusi Terminal Stream v1 Text Controls",
+  "description": "JSON text controls for WebSocket subprotocol jusi.terminal.v1. Client binary messages are raw PTY input. Server binary output uses the framing documented in protocol/README.md.",
+  "oneOf": [
+    {"$ref": "#/$defs/attach"},
+    {"$ref": "#/$defs/attached"},
+    {"$ref": "#/$defs/resize"},
+    {"$ref": "#/$defs/resized"},
+    {"$ref": "#/$defs/failure"}
+  ],
+  "$defs": {
+    "opaque_id": {"type": "string", "minLength": 3, "maxLength": 128},
+    "cursor": {
+      "description": "Canonical decimal uint64 byte offset naming the next output byte to consume.",
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]|1844674407370955161[0-4]|18446744073709551615)$"
+    },
+    "rows": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "columns": {"type": "integer", "minimum": 1, "maximum": 65535},
+    "attach": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "surface_id", "attachment_id", "cursor", "rows", "columns"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "attach"},
+        "surface_id": {"$ref": "#/$defs/opaque_id"},
+        "attachment_id": {"$ref": "#/$defs/opaque_id"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "rows": {"$ref": "#/$defs/rows"},
+        "columns": {"$ref": "#/$defs/columns"}
+      },
+      "additionalProperties": false
+    },
+    "attached": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "surface_id", "attachment_id", "cursor", "rows", "columns"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "attached"},
+        "surface_id": {"$ref": "#/$defs/opaque_id"},
+        "attachment_id": {"$ref": "#/$defs/opaque_id"},
+        "cursor": {"$ref": "#/$defs/cursor"},
+        "rows": {"$ref": "#/$defs/rows"},
+        "columns": {"$ref": "#/$defs/columns"}
+      },
+      "additionalProperties": false
+    },
+    "resize": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "surface_id", "attachment_id", "resize_id", "rows", "columns"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "resize"},
+        "surface_id": {"$ref": "#/$defs/opaque_id"},
+        "attachment_id": {"$ref": "#/$defs/opaque_id"},
+        "resize_id": {"$ref": "#/$defs/opaque_id"},
+        "rows": {"$ref": "#/$defs/rows"},
+        "columns": {"$ref": "#/$defs/columns"}
+      },
+      "additionalProperties": false
+    },
+    "resized": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "surface_id", "attachment_id", "resize_id", "rows", "columns"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "resized"},
+        "surface_id": {"$ref": "#/$defs/opaque_id"},
+        "attachment_id": {"$ref": "#/$defs/opaque_id"},
+        "resize_id": {"$ref": "#/$defs/opaque_id"},
+        "rows": {"$ref": "#/$defs/rows"},
+        "columns": {"$ref": "#/$defs/columns"}
+      },
+      "additionalProperties": false
+    },
+    "failure": {
+      "type": "object",
+      "required": ["protocol_version", "kind", "surface_id", "attachment_id", "operation", "reason", "message", "retryable"],
+      "properties": {
+        "protocol_version": {"const": 1},
+        "kind": {"const": "failure"},
+        "surface_id": {"$ref": "#/$defs/opaque_id"},
+        "attachment_id": {"$ref": "#/$defs/opaque_id"},
+        "operation": {"enum": ["attach", "resize", "stream"]},
+        "reason": {"enum": ["busy", "cursor_expired", "not_found", "protocol_violation", "channel_closed"]},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "retryable": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  }
+}

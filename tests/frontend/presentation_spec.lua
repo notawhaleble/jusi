@@ -1,4 +1,5 @@
 local presentation_module = require("jusi.presentation")
+local interactive_terminal = require("jusi.presentation.interactive_terminal")
 
 local M = {}
 
@@ -91,11 +92,39 @@ local function test_invalid_text_payload_is_a_local_surface_failure()
   presentation:close()
 end
 
+local function test_interactive_terminal_is_a_generic_bridge_projection()
+  local launches = {}
+  local manager = interactive_terminal.new({
+    base_url = "https://target.example/jusi/",
+    command = { "/opt/jusi", "terminal-bridge" },
+    height = 9,
+    notebook_buf = vim.api.nvim_create_buf(false, true),
+    notebook_id = "nb_test",
+    launch = function(options)
+      table.insert(launches, options)
+      return { buf = vim.api.nvim_create_buf(false, true), job_id = 999 }
+    end,
+  })
+  local client = { client_id = "cli_test", cell_id = "cell_a" }
+  local surface = { surface_id = "srf_test", client_id = "cli_test", kind = "terminal" }
+  local record = assert(manager:open(surface, client))
+  equal(launches[1].command, {
+    "/opt/jusi", "terminal-bridge", "https://target.example/jusi", "srf_test",
+  })
+  equal(manager:buffer_for_cell("cell_a"), record.buf)
+  manager:reconcile({ srf_test = surface }, { cli_test = client })
+  equal(#launches, 1, "authoritative replay must not duplicate a live projection")
+  manager:reconcile({}, {})
+  equal(manager:buffer_for_cell("cell_a"), nil)
+  assert(not vim.api.nvim_buf_is_valid(record.buf), "retired surface must delete its terminal buffer")
+end
+
 function M.run()
   test_text_and_ansi_share_native_terminal_surface()
   test_new_execution_replaces_only_its_cells_surface()
   test_unsupported_media_is_local_and_does_not_create_terminal()
   test_invalid_text_payload_is_a_local_surface_failure()
+  test_interactive_terminal_is_a_generic_bridge_projection()
 end
 
 return M

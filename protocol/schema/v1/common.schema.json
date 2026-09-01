@@ -27,6 +27,7 @@
         "close_client",
         "restart_notebook",
         "execute",
+        "run_terminal_surface",
         "interrupt",
         "cleanup",
         "inspect",

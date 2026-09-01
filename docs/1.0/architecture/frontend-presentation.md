@@ -46,3 +46,22 @@ The frontend owns buffer/window placement, focus, current geometry, input
 routing, and explicit close. The backend owns application state and rendered
 content. Fatal surface/client failures arrive through generic core failure
 events; recoverable application errors remain content on the plugin surface.
+
+The terminal surface projection is now implemented. `surface.created` opens a
+native Neovim terminal split at its real geometry and starts the configured
+repository bridge as a terminal job. The bridge command receives only the
+configured target service URL and core `surface_id`; it never receives a
+plugin-provided command, environment, or payload. Target bytes therefore flow
+through Neovim's terminal emulator, while plugin application state and the PTY
+remain at the target service.
+
+`terminal_bridge_command` defaults to `{ "jusi", "terminal-bridge" }`. When a
+local `service_command` ends in `serve`, setup derives the bridge command from
+the same executable unless explicitly overridden. Remote service placement
+does not change the bridge executable's local ownership.
+
+Authoritative health reconciliation creates missing projections and removes
+stale ones without duplicating existing terminal jobs. A `surface.closed` or
+session teardown stops only that bridge job and deletes its buffer. Automatic
+reattachment after a bridge failure is deferred until the frontend can persist
+the exact consumed byte cursor; it must never resume from a guessed position.

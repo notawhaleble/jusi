@@ -18,6 +18,7 @@ from jusi.application.ports import (
 )
 from jusi.application.plugin_workers import PluginWorkerManager
 from jusi.application.supervisor import Supervisor, SupervisorError
+from jusi.application.terminal_surfaces import TerminalSurfaceError
 from jusi.domain.models import ProcessDiagnostics
 from jusi.protocol import validate_event, validate_health_response
 
@@ -160,6 +161,23 @@ class FakePluginWorkerFactory:
         handle = FakePluginWorkerHandle(self.stop_error, self.request_error, self.operation_result)
         self.handles.append(handle)
         return handle
+
+
+class FakeTerminalSurfaces:
+    def __init__(self) -> None:
+        self.prepared: dict[str, tuple[object, object]] = {}
+        self.closed: list[str] = []
+        self.on_fatal = None
+
+    def set_fatal_handler(self, handler) -> None:  # type: ignore[no-untyped-def]
+        self.on_fatal = handler
+
+    def prepare(self, resource: object, request: object) -> None:
+        self.prepared[resource.surface_id] = (resource, request)  # type: ignore[attr-defined]
+
+    def close(self, surface_id: str, *, timeout: float) -> dict:
+        self.closed.append(surface_id)
+        return {"surface_id": surface_id, "result": "stopped"}
 
 
 def plugin_entry() -> dict:
@@ -616,10 +634,12 @@ def test_interactive_client_and_required_surface_publish_and_retire_atomically()
     worker_factory = FakePluginWorkerFactory(
         operation_result=PluginWorkerOperationResult({}, (request,)),
     )
+    terminal_surfaces = FakeTerminalSurfaces()
     supervisor = Supervisor(
         FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
         FakeDiscovery(plugins=[interactive_plugin_entry()]),
         PluginWorkerManager(worker_factory),
+        terminal_surfaces,  # type: ignore[arg-type]
     )
     started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
     executed = supervisor.execute(
@@ -645,6 +665,100 @@ def test_interactive_client_and_required_surface_publish_and_retire_atomically()
         if event["trace_id"] == "trace_close"
     ]
     assert close_kinds == ["operation.started", "surface.closed", "client.closed", "operation.completed"]
+
+
+def test_fatal_terminal_surface_loss_retires_only_its_client_through_core_failure() -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    worker_factory = FakePluginWorkerFactory(
+        operation_result=PluginWorkerOperationResult(
+            {}, (TerminalSurfaceRequest("terminal_main", ("vd",)),),
+        ),
+    )
+    terminal_surfaces = FakeTerminalSurfaces()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[interactive_plugin_entry()]),
+        PluginWorkerManager(worker_factory),
+        terminal_surfaces,  # type: ignore[arg-type]
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    supervisor.execute(
+        kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+        code="%%sql", trace_id="trace_execute",
+    )
+    surface, _ = next(iter(terminal_surfaces.prepared.values()))
+    assert terminal_surfaces.on_fatal is not None
+    terminal_surfaces.on_fatal(
+        surface,
+        TerminalSurfaceError(
+            "target application exited", reason="channel_closed",
+            diagnostics=ProcessDiagnostics(pid=9911, exit_code=7, stderr_excerpt="fatal details"),
+        ),
+    )
+
+    health = supervisor.health()
+    assert health["kernel"]["state"] == "on"
+    assert health["clients"] == []
+    assert health["surfaces"] == []
+    fatal_events = [
+        event for event in supervisor.events.events_after(0)
+        if event["operation"] == "run_terminal_surface"
+    ]
+    for event in fatal_events:
+        validate_event(event)
+    assert [event["kind"] for event in fatal_events] == [
+        "failure.occurred", "surface.closed", "client.closed",
+    ]
+    failure = fatal_events[0]["payload"]
+    assert failure["layer"] == "client"
+    assert failure["reason"] == "channel_closed"
+    assert failure["process"]["exit_code"] == 7
+    assert fatal_events[1]["payload"]["failure_id"] == failure["failure_id"]
+    assert fatal_events[2]["payload"]["failure_id"] == failure["failure_id"]
+    assert worker_factory.handles[0].stop_count == 1
+
+
+def test_kernel_stop_closes_target_surface_before_its_plugin_worker() -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    worker_factory = FakePluginWorkerFactory(
+        operation_result=PluginWorkerOperationResult(
+            {}, (TerminalSurfaceRequest("terminal_main", ("vd",)),),
+        ),
+    )
+    terminal_surfaces = FakeTerminalSurfaces()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[interactive_plugin_entry()]),
+        PluginWorkerManager(worker_factory),
+        terminal_surfaces,  # type: ignore[arg-type]
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    supervisor.execute(
+        kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+        code="%%sql", trace_id="trace_execute",
+    )
+    order: list[str] = []
+    original_surface_close = terminal_surfaces.close
+    original_worker_stop = worker_factory.handles[0].stop
+
+    def close_surface(surface_id: str, *, timeout: float) -> dict:
+        order.append("surface")
+        return original_surface_close(surface_id, timeout=timeout)
+
+    def stop_worker(*, trace_id: str, timeout: float) -> str:
+        order.append("worker")
+        return original_worker_stop(trace_id=trace_id, timeout=timeout)
+
+    terminal_surfaces.close = close_surface  # type: ignore[method-assign]
+    worker_factory.handles[0].stop = stop_worker  # type: ignore[method-assign]
+    supervisor.stop_kernel(kernel_id=started["kernel"]["kernel_id"], trace_id="trace_stop")
+    assert order[:2] == ["surface", "worker"]
 
 
 @pytest.mark.parametrize(

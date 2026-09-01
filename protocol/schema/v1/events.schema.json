@@ -27,7 +27,7 @@
       "enum": ["protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"]
     },
     "operation": {
-      "enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]
+      "enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events"]
     },
     "kind": {
       "enum": [
@@ -80,7 +80,7 @@
             "properties": {
               "operation_id": {"type": "string", "minLength": 3},
               "trace_id": {"type": "string", "minLength": 3},
-              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events"]},
               "outcome": {"const": "running"},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "null"}
@@ -100,7 +100,7 @@
             "properties": {
               "operation_id": {"type": "string", "minLength": 3},
               "trace_id": {"type": "string", "minLength": 3},
-              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events"]},
               "outcome": {"enum": ["succeeded", "failed", "cancelled"]},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "string", "format": "date-time"},

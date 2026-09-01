@@ -11,3 +11,7 @@ Initial conformance coverage validates:
 - additive unknown fields where permitted
 
 Event payload objects are closed even though additive top-level event fields remain permitted. Runtime events emitted by the supervisor are also passed through the Python validator, while the shared all-kind fixture is consumed by both Python and Lua.
+
+Terminal-stream fixtures cover every JSON control, uint64 cursor and geometry
+bounds, the binary server-output header, and unchanged raw bytes in both
+directions.

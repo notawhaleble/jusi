@@ -1,0 +1,26 @@
+{
+  "protocol_version": 1,
+  "event_id": "evt_surface_failure",
+  "supervisor_id": "sup_fixture",
+  "sequence": 14,
+  "occurred_at": "2026-09-01T08:00:05Z",
+  "trace_id": "trace_surface_failure",
+  "layer": "client",
+  "operation": "run_terminal_surface",
+  "kind": "failure.occurred",
+  "resource": {"kind": "surface", "id": "surf_plugin"},
+  "payload": {
+    "failure_id": "fail_surface",
+    "trace_id": "trace_surface_failure",
+    "layer": "client",
+    "operation": "run_terminal_surface",
+    "reason": "channel_closed",
+    "message": "Target terminal process exited",
+    "retryable": true,
+    "scope": "client",
+    "resource": {"kind": "surface", "id": "surf_plugin"},
+    "occurred_at": "2026-09-01T08:00:05Z",
+    "process": {"pid": 9911, "exit_code": 7, "signal": null, "stderr_excerpt": "fatal details", "stderr_truncated": false},
+    "details": {"client_id": "cli_plugin"}
+  }
+}

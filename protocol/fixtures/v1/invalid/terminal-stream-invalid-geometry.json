@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "kind": "resize",
+  "surface_id": "surf_fixture",
+  "attachment_id": "attach_fixture_1",
+  "resize_id": "resize_fixture_1",
+  "rows": 0,
+  "columns": 120
+}

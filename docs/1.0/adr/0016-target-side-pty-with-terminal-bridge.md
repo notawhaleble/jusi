@@ -21,7 +21,7 @@ interactive terminal is genuinely bidirectional and potentially high-volume.
 Routing its bytes through plugin request/response calls or ordinary SSE events
 would couple terminal backpressure to kernel control and event observability.
 
-## Proposed Decision
+## Decision
 
 The target-side Jusi service owns a generic terminal-surface broker. For an
 interactive surface it owns the target PTY master, child-process diagnostics,
@@ -122,7 +122,29 @@ still requires a separate frontend projection protocol.
 The service already runs at the kernel target. The frontend connects to its
 configured URL; deployment-specific tunneling belongs outside surface identity.
 
-## Required Proof Before Acceptance
+## Verification
+
+The initial implementation now proves:
+
+- the target PTY is created only by the first attachment and has verified
+  frontend geometry before the child starts or draws
+- the WebSocket and bridge preserve ANSI, NUL, and non-UTF-8 bytes without
+  decoding them
+- output cursors are contiguous, bounded replay is exact, and an expired
+  cursor is rejected explicitly
+- resize acknowledgements follow a successful target PTY resize
+- attachment delivery is bounded and cannot block the supervisor state lock
+- an unexpected target application exit emits a typed core failure, retires
+  only its client and surface, and leaves the kernel state unchanged
+- the same relative surface descriptor is resolved against either a local or
+  remote configured service URL
+
+The contract supports exact reattachment, but automatic bridge restart and
+frontend cursor persistence are intentionally deferred. A new bridge currently
+starts from cursor zero and therefore succeeds only while the complete stream
+remains retained; otherwise it receives `cursor_expired` rather than guessing.
+
+These remain permanent regression requirements:
 
 - A fixture terminal application must not emit its first draw until the target
   PTY has the Neovim-reported geometry.
@@ -136,7 +158,7 @@ configured URL; deployment-specific tunneling belongs outside surface identity.
   bridge behavior; only the configured service URL differs.
 - Expired stream continuity must be detected, never guessed around.
 
-## Consequences If Accepted
+## Consequences
 
 - The repository gains a small Python bridge executable and a target-side PTY
   broker with a dedicated WebSocket endpoint.

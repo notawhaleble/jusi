@@ -1,0 +1,2 @@
+[jusi.plugins.v1]
+terminal_fixture = jusi_terminal_fixture:catalog_entry

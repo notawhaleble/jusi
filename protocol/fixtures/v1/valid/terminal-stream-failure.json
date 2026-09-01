@@ -1,0 +1,10 @@
+{
+  "protocol_version": 1,
+  "kind": "failure",
+  "surface_id": "surf_fixture",
+  "attachment_id": "attach_fixture_1",
+  "operation": "attach",
+  "reason": "cursor_expired",
+  "message": "Requested terminal output is no longer retained",
+  "retryable": false
+}

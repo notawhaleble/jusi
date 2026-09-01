@@ -13,9 +13,9 @@ from jusi.application.ports import (
     PluginCatalogDiscovery,
     PluginCatalogDiscoveryError,
     PluginWorkerError,
-    TerminalSurfaceRequest,
 )
 from jusi.application.plugin_workers import PluginWorkerManager, PluginWorkerSelectionError
+from jusi.application.terminal_surfaces import TerminalSurfaceError, TerminalSurfaceManager
 from jusi.domain.models import (
     ClientResource,
     ExecutionResource,
@@ -46,12 +46,16 @@ class Supervisor:
         kernel_factory: KernelFactory,
         plugin_discovery: PluginCatalogDiscovery,
         plugin_workers: PluginWorkerManager | None = None,
+        terminal_surfaces: TerminalSurfaceManager | None = None,
     ) -> None:
         self.supervisor_id = new_id("sup")
         self.events = EventLog(self.supervisor_id)
         self._kernel_factory = kernel_factory
         self._plugin_discovery = plugin_discovery
         self._plugin_workers = plugin_workers
+        self._terminal_surfaces = terminal_surfaces
+        if terminal_surfaces is not None:
+            terminal_surfaces.set_fatal_handler(self.terminal_surface_failed)
         self._operation_lock = threading.RLock()
         self._state_lock = threading.RLock()
         self._current_kernel: KernelResource | None = None
@@ -62,7 +66,6 @@ class Supervisor:
         self._clients: dict[str, ClientResource] = {}
         self._known_client_ids: set[str] = set()
         self._surfaces: dict[str, SurfaceResource] = {}
-        self._surface_requests: dict[str, TerminalSurfaceRequest] = {}
         self.events.append(
             trace_id=new_id("trace"),
             layer="service",
@@ -106,6 +109,96 @@ class Supervisor:
                 resource=ResourceRef("kernel", kernel_id),
             )
 
+    def attach_terminal_surface(
+        self,
+        surface_id: str,
+        *,
+        attachment_id: str,
+        rows: int,
+        cols: int,
+        after_cursor: int,
+    ) -> tuple[Any, dict[str, int]]:
+        if self._terminal_surfaces is None:
+            raise TerminalSurfaceError("Terminal surfaces are not configured", reason="not_found")
+        with self._state_lock:
+            if surface_id not in self._surfaces:
+                raise TerminalSurfaceError(f"Unknown terminal surface {surface_id}", reason="not_found")
+        return self._terminal_surfaces.attach(
+            surface_id,
+            attachment_id=attachment_id,
+            rows=rows,
+            cols=cols,
+            after_cursor=after_cursor,
+        )
+
+    def detach_terminal_surface(self, surface_id: str, attachment_id: str) -> None:
+        if self._terminal_surfaces is not None:
+            self._terminal_surfaces.detach(surface_id, attachment_id)
+
+    def write_terminal_surface(self, surface_id: str, attachment_id: str, data: bytes) -> None:
+        if self._terminal_surfaces is None:
+            raise TerminalSurfaceError("Terminal surfaces are not configured", reason="not_found")
+        self._terminal_surfaces.write(surface_id, attachment_id, data)
+
+    def resize_terminal_surface(
+        self, surface_id: str, attachment_id: str, *, rows: int, cols: int,
+    ) -> None:
+        if self._terminal_surfaces is None:
+            raise TerminalSurfaceError("Terminal surfaces are not configured", reason="not_found")
+        self._terminal_surfaces.resize(surface_id, attachment_id, rows=rows, cols=cols)
+
+    def terminal_surface_failed(
+        self, surface: SurfaceResource, error: TerminalSurfaceError,
+    ) -> None:
+        """Fence one client after an independently observed target-surface death."""
+        with self._operation_lock:
+            with self._state_lock:
+                current = self._surfaces.get(surface.surface_id)
+                client = self._clients.get(surface.client_id)
+            if current is None or client is None:
+                return
+            trace_id = new_id("trace")
+            failure = self._failure(
+                trace_id=trace_id,
+                layer="client",
+                operation="run_terminal_surface",
+                reason="channel_closed",
+                message=str(error),
+                retryable=True,
+                scope="client",
+                resource=ResourceRef("surface", surface.surface_id),
+                process=error.diagnostics,
+                details={**error.details, "client_id": client.client_id},
+            )
+            self._emit_failure(failure)
+            if self._plugin_workers is not None:
+                try:
+                    self._plugin_workers.stop(
+                        client.plugin_worker_id, trace_id=trace_id, timeout=5.0,
+                    )
+                except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+                    worker_failure = self._failure(
+                        trace_id=trace_id,
+                        layer="plugin_worker",
+                        operation="run_terminal_surface",
+                        reason=exc.reason,
+                        message=str(exc),
+                        retryable=exc.retryable if isinstance(exc, PluginWorkerError) else False,
+                        scope="plugin_worker",
+                        resource=ResourceRef("plugin_worker", client.plugin_worker_id),
+                        process=exc.diagnostics if isinstance(exc, PluginWorkerError) else None,
+                        details=exc.details if isinstance(exc, PluginWorkerError) else {},
+                        caused_by_failure_id=failure.failure_id,
+                    )
+                    self._emit_failure(worker_failure)
+            self._retire_client(
+                client.client_id,
+                trace_id=trace_id,
+                operation="run_terminal_surface",
+                reason="fatal_failure",
+                failure_id=failure.failure_id,
+            )
+
     def start_kernel(
         self,
         *,
@@ -129,6 +222,24 @@ class Supervisor:
                 )
 
             operation = self._begin_operation("start_kernel", trace_id)
+            surface_cleanup: list[dict[str, Any]] = []
+            if self._current_runtime is not None:
+                surface_cleanup = self._close_runtime_terminal_surfaces(
+                    self._current_runtime.runtime_id, timeout=timeout,
+                )
+                failed_surfaces = [item for item in surface_cleanup if item["result"] == "failed"]
+                if failed_surfaces:
+                    failure = self._failure(
+                        trace_id=trace_id, layer="client", operation="start_kernel",
+                        reason="cleanup_incomplete",
+                        message="Could not clean up terminal surfaces from the previous notebook runtime",
+                        retryable=True, scope="client",
+                        resource=ResourceRef("surface", failed_surfaces[0]["surface_id"]),
+                        details={"terminal_surfaces": surface_cleanup},
+                    )
+                    self._emit_failure(failure)
+                    self._complete_operation(operation, "failed", resource=failure.resource, failure=failure)
+                    raise SupervisorError(503, failure)
             if self._current_runtime is not None and self._plugin_workers is not None:
                 worker_cleanup = self._plugin_workers.teardown_runtime(
                     self._current_runtime.runtime_id, trace_id=trace_id, timeout=timeout,
@@ -314,6 +425,22 @@ class Supervisor:
                         # observed. Cleanup diagnostics remain attached to the
                         # originating kernel failure for this initial slice.
                         pass
+                    if self._current_runtime is not None:
+                        surface_cleanup = self._close_runtime_terminal_surfaces(
+                            self._current_runtime.runtime_id, timeout=1.0,
+                        )
+                        failed_surfaces = [item for item in surface_cleanup if item["result"] == "failed"]
+                        if failed_surfaces:
+                            cleanup_failure = self._failure(
+                                trace_id=trace_id, layer="client", operation="execute",
+                                reason="cleanup_incomplete",
+                                message="Kernel died and terminal-surface cleanup was incomplete",
+                                retryable=True, scope="client",
+                                resource=ResourceRef("surface", failed_surfaces[0]["surface_id"]),
+                                details={"terminal_surfaces": surface_cleanup},
+                                caused_by_failure_id=kernel_failure.failure_id,
+                            )
+                            self._emit_failure(cleanup_failure)
                     if self._current_runtime is not None and self._plugin_workers is not None:
                         worker_cleanup = self._plugin_workers.teardown_runtime(
                             self._current_runtime.runtime_id,
@@ -533,6 +660,31 @@ class Supervisor:
                     self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
                     raise SupervisorError(502, failure)
 
+                if required_surface and self._terminal_surfaces is None:
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="supervisor",
+                        operation="execute",
+                        reason="unsupported",
+                        message="Interactive terminal surfaces are not configured",
+                        retryable=False,
+                        scope="client",
+                        resource=ResourceRef("plugin_worker", worker.plugin_worker_id),
+                        details={**execution_details, "client_id": client_id},
+                    )
+                    self._emit_failure(failure)
+                    try:
+                        self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=timeout)
+                    except (PluginWorkerSelectionError, PluginWorkerError):
+                        pass
+                    execution.complete("failed")
+                    self.events.append(
+                        trace_id=trace_id, layer="execution", operation="execute",
+                        kind="execution.completed", resource=execution_ref, payload=execution.to_dict(),
+                    )
+                    self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                    raise SupervisorError(503, failure)
+
                 execution.client_id = client_id
                 client = ClientResource(
                     client_id=client_id,
@@ -560,12 +712,38 @@ class Supervisor:
                         capabilities=request.capabilities,
                         endpoint=f"/v1/surfaces/{surface_id}/terminal",
                     )
+                    assert self._terminal_surfaces is not None
+                    try:
+                        self._terminal_surfaces.prepare(surface, request)
+                    except TerminalSurfaceError as exc:
+                        failure = self._failure(
+                            trace_id=trace_id,
+                            layer="client",
+                            operation="execute",
+                            reason=exc.reason,
+                            message=str(exc),
+                            retryable=False,
+                            scope="client",
+                            resource=ResourceRef("surface", surface_id),
+                            details={**execution_details, "client_id": client_id},
+                        )
+                        self._emit_failure(failure)
+                        try:
+                            self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=timeout)
+                        except (PluginWorkerSelectionError, PluginWorkerError):
+                            pass
+                        execution.complete("failed")
+                        self.events.append(
+                            trace_id=trace_id, layer="execution", operation="execute",
+                            kind="execution.completed", resource=execution_ref, payload=execution.to_dict(),
+                        )
+                        self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                        raise SupervisorError(503, failure) from exc
                 with self._state_lock:
                     self._clients[client_id] = client
                     self._known_client_ids.add(client_id)
                     if surface is not None:
                         self._surfaces[surface.surface_id] = surface
-                        self._surface_requests[surface.surface_id] = request
                 self.events.append(
                     trace_id=trace_id,
                     layer="client",
@@ -677,6 +855,38 @@ class Supervisor:
                 self._emit_failure(failure)
                 self._complete_operation(operation, "failed", resource=client_ref, failure=failure)
                 raise SupervisorError(503, failure)
+            terminal_cleanup: list[dict[str, Any]] = []
+            with self._state_lock:
+                client_surfaces = [
+                    surface for surface in self._surfaces.values() if surface.client_id == client_id
+                ]
+            if self._terminal_surfaces is not None:
+                try:
+                    terminal_cleanup = [
+                        self._terminal_surfaces.close(surface.surface_id, timeout=timeout)
+                        for surface in client_surfaces
+                    ]
+                except TerminalSurfaceError as exc:
+                    failed_surface = next(
+                        (surface for surface in client_surfaces if surface.surface_id not in {
+                            item["surface_id"] for item in terminal_cleanup
+                        }),
+                        client_surfaces[0],
+                    )
+                    failure = self._failure(
+                        trace_id=trace_id,
+                        layer="client",
+                        operation="close_client",
+                        reason="cleanup_incomplete",
+                        message=str(exc),
+                        retryable=True,
+                        scope="client",
+                        resource=ResourceRef("surface", failed_surface.surface_id),
+                        details={**exc.details, "client_id": client_id},
+                    )
+                    self._emit_failure(failure)
+                    self._complete_operation(operation, "failed", resource=failure.resource, failure=failure)
+                    raise SupervisorError(503, failure) from exc
             try:
                 worker_cleanup = self._plugin_workers.stop(
                     client.plugin_worker_id,
@@ -713,6 +923,8 @@ class Supervisor:
                 "result": worker_cleanup["result"],
                 "plugin_worker_id": client.plugin_worker_id,
             }
+            if terminal_cleanup:
+                cleanup["terminal_surfaces"] = terminal_cleanup
             self._complete_operation(operation, "succeeded", resource=client_ref, cleanup=cleanup)
             return {"operation": operation.to_dict(), "client": {"client_id": client_id}, "cleanup": cleanup}
 
@@ -742,6 +954,11 @@ class Supervisor:
             handle = self._kernel_handle
             assert handle is not None
             worker_cleanup: list[dict[str, Any]] = []
+            surface_cleanup: list[dict[str, Any]] = []
+            if self._current_runtime is not None:
+                surface_cleanup = self._close_runtime_terminal_surfaces(
+                    self._current_runtime.runtime_id, timeout=timeout,
+                )
             if self._current_runtime is not None and self._plugin_workers is not None:
                 worker_cleanup = self._plugin_workers.teardown_runtime(
                     self._current_runtime.runtime_id, trace_id=trace_id, timeout=timeout,
@@ -781,6 +998,21 @@ class Supervisor:
             cleanup = {"resource": ResourceRef("kernel", kernel_id).to_dict(), "result": "stopped"}
             if worker_cleanup:
                 cleanup["plugin_workers"] = worker_cleanup
+            if surface_cleanup:
+                cleanup["terminal_surfaces"] = surface_cleanup
+            failed_surfaces = [item for item in surface_cleanup if item["result"] == "failed"]
+            if failed_surfaces:
+                failure = self._failure(
+                    trace_id=trace_id, layer="client", operation="stop_kernel",
+                    reason="cleanup_incomplete",
+                    message="Kernel stopped, but terminal-surface cleanup was incomplete",
+                    retryable=True, scope="client",
+                    resource=ResourceRef("surface", failed_surfaces[0]["surface_id"]),
+                    details={"kernel_state": "off", "terminal_surfaces": surface_cleanup},
+                )
+                self._emit_failure(failure)
+                self._complete_operation(operation, "failed", resource=failure.resource, failure=failure, cleanup=cleanup)
+                raise SupervisorError(503, failure)
             failed_workers = [item for item in worker_cleanup if item["result"] == "failed"]
             if failed_workers:
                 failure = self._failure(
@@ -853,6 +1085,26 @@ class Supervisor:
                 resource=ResourceRef("notebook_runtime", runtime_id),
             )
             worker_cleanup: list[dict[str, Any]] = []
+            surface_cleanup = self._close_runtime_terminal_surfaces(runtime_id, timeout=timeout)
+            failed_surfaces = [item for item in surface_cleanup if item["result"] == "failed"]
+            if failed_surfaces:
+                cleanup = {
+                    "resource": ResourceRef("notebook_runtime", runtime_id).to_dict(),
+                    "kernel_id": kernel_id,
+                    "result": "failed",
+                    "terminal_surfaces": surface_cleanup,
+                }
+                failure = self._failure(
+                    trace_id=trace_id, layer="client", operation="restart_notebook",
+                    reason="cleanup_incomplete",
+                    message="Full restart stopped because terminal-surface cleanup was incomplete",
+                    retryable=True, scope="client",
+                    resource=ResourceRef("surface", failed_surfaces[0]["surface_id"]),
+                    details={"teardown_completed": False, "terminal_surfaces": surface_cleanup},
+                )
+                self._emit_failure(failure)
+                self._complete_operation(operation, "failed", resource=failure.resource, failure=failure, cleanup=cleanup)
+                raise SupervisorError(503, failure)
             if self._plugin_workers is not None:
                 worker_cleanup = self._plugin_workers.teardown_runtime(
                     runtime_id, trace_id=trace_id, timeout=timeout,
@@ -929,6 +1181,8 @@ class Supervisor:
             }
             if worker_cleanup:
                 cleanup["plugin_workers"] = worker_cleanup
+            if surface_cleanup:
+                cleanup["terminal_surfaces"] = surface_cleanup
             with self._state_lock:
                 self._current_runtime = None
 
@@ -1034,6 +1288,7 @@ class Supervisor:
     def close(self) -> None:
         with self._state_lock:
             kernel = self._current_kernel
+            runtime = self._current_runtime
         if kernel is not None and kernel.state == "on":
             try:
                 self.stop_kernel(kernel_id=kernel.kernel_id, trace_id=new_id("trace"))
@@ -1044,6 +1299,12 @@ class Supervisor:
                         handle.stop(timeout=1.0)
                     except Exception:
                         pass
+        if runtime is not None:
+            self._close_runtime_terminal_surfaces(runtime.runtime_id, timeout=1.0)
+            if self._plugin_workers is not None:
+                self._plugin_workers.teardown_runtime(
+                    runtime.runtime_id, trace_id=new_id("trace"), timeout=1.0,
+                )
 
     def _require_live_kernel(self, kernel_id: str, trace_id: str, operation: str) -> tuple[KernelResource, KernelHandle]:
         if (
@@ -1244,10 +1505,14 @@ class Supervisor:
             surfaces = [surface for surface in self._surfaces.values() if surface.client_id == client_id]
             for surface in surfaces:
                 self._surfaces.pop(surface.surface_id, None)
-                self._surface_requests.pop(surface.surface_id, None)
         if client is None:
             return
         for surface in surfaces:
+            if self._terminal_surfaces is not None:
+                try:
+                    self._terminal_surfaces.close(surface.surface_id, timeout=5.0)
+                except TerminalSurfaceError:
+                    pass
             surface_payload: dict[str, Any] = {
                 "surface_id": surface.surface_id,
                 "client_id": client_id,
@@ -1280,6 +1545,34 @@ class Supervisor:
             resource=ResourceRef("client", client_id),
             payload=payload,
         )
+
+    def _close_runtime_terminal_surfaces(
+        self, runtime_id: str, *, timeout: float,
+    ) -> list[dict[str, Any]]:
+        if self._terminal_surfaces is None:
+            return []
+        with self._state_lock:
+            surfaces = [
+                surface for surface in self._surfaces.values()
+                if surface.runtime_id == runtime_id
+            ]
+        cleanup: list[dict[str, Any]] = []
+        for surface in surfaces:
+            try:
+                cleanup.append(self._terminal_surfaces.close(surface.surface_id, timeout=timeout))
+            except TerminalSurfaceError as exc:
+                item: dict[str, Any] = {
+                    "surface_id": surface.surface_id,
+                    "result": "failed",
+                    "reason": exc.reason,
+                    "message": str(exc),
+                }
+                if exc.diagnostics is not None:
+                    item["process"] = exc.diagnostics.to_dict()
+                if exc.details:
+                    item["details"] = exc.details
+                cleanup.append(item)
+        return cleanup
 
     def _retire_cleaned_clients(
         self,

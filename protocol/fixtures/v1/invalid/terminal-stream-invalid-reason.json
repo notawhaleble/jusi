@@ -1,0 +1,10 @@
+{
+  "protocol_version": 1,
+  "kind": "failure",
+  "surface_id": "surf_fixture",
+  "attachment_id": "attach_fixture_1",
+  "operation": "stream",
+  "reason": "kernel_died",
+  "message": "Wrong taxonomy for this channel",
+  "retryable": false
+}

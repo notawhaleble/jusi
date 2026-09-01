@@ -78,3 +78,40 @@ descriptor contains only generic capabilities and a relative WebSocket endpoint
 using subprotocol `jusi.terminal.v1`; it never exposes a target process command,
 environment, or authentication data to the frontend. Terminal bytes and attach
 control belong to the dedicated stream described by ADR 0016, not SSE.
+
+`schema/v1/terminal-stream.schema.json` closes every JSON text control on that
+WebSocket. The client begins with `attach`, naming the surface, a fresh
+`attachment_id`, the next output byte cursor it expects, and the actual terminal
+geometry. The server sends `attached` only after it has accepted that cursor and
+applied and verified those rows and columns at the target PTY. `resize` and
+`resized` share a fresh `resize_id`; the acknowledgement echoes the exact
+geometry that was applied. Rows and columns are integers from 1 through 65535.
+
+Cursors are canonical decimal strings in the inclusive uint64 range
+`0..18446744073709551615`. A cursor names the next byte to consume, so replay
+starting at cursor `N` begins with byte `N`. Strings preserve all uint64 values
+across JSON implementations, including Lua runtimes whose numbers cannot
+represent every uint64 exactly. An unavailable retained cursor yields the typed
+`cursor_expired` failure; it never silently attaches at a newer position.
+
+Server-to-client terminal output uses binary WebSocket frames with this fixed
+10-byte header followed by uninterpreted terminal bytes:
+
+| Offset | Size | Meaning |
+| --- | ---: | --- |
+| 0 | 1 | framing version, exactly `1` |
+| 1 | 1 | frame type, exactly `1` (terminal output) |
+| 2 | 8 | starting byte cursor, unsigned big-endian uint64 |
+| 10 | remaining | raw PTY output bytes |
+
+The next cursor after consuming a frame is its starting cursor plus the raw
+payload byte length. Client-to-server binary WebSocket frames contain only raw
+PTY input bytes and have no Jusi header. Neither direction decodes UTF-8 or ANSI.
+Empty output payloads are valid framing-wise, though implementations need not
+emit them.
+
+Stream failures are closed JSON controls with operation `attach`, `resize`, or
+`stream` and one of `busy`, `cursor_expired`, `not_found`,
+`protocol_violation`, or `channel_closed`. They describe this attachment only;
+they do not alter kernel state. The first protocol version permits one active
+input attachment per surface, so a competing attach fails with `busy`.

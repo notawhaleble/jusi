@@ -1,0 +1,13 @@
+{
+  "server_output": {
+    "version": 1,
+    "type": 1,
+    "starting_cursor": "4294967297",
+    "payload_hex": "1b5b33316dff001b5b306d",
+    "frame_hex": "010100000001000000011b5b33316dff001b5b306d"
+  },
+  "client_input": {
+    "payload_hex": "00ff1b5b41",
+    "frame_hex": "00ff1b5b41"
+  }
+}

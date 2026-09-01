@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import struct
 from typing import Any
 
 
@@ -26,7 +27,7 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
     "restart_notebook": ("runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"),
 }
 LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
-OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events"}
+OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events"}
 EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
 RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
@@ -34,6 +35,13 @@ FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "u
 FAILURE_SCOPES = {"request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor"}
 WORKER_OPERATIONS = {"execute", "followup", "complete", "editor_action"}
 WORKER_FAILURE_REASONS = {"invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error"}
+TERMINAL_STREAM_KINDS = {"attach", "attached", "resize", "resized", "failure"}
+TERMINAL_STREAM_FAILURE_REASONS = {"busy", "cursor_expired", "not_found", "protocol_violation", "channel_closed"}
+TERMINAL_STREAM_FAILURE_OPERATIONS = {"attach", "resize", "stream"}
+TERMINAL_OUTPUT_FRAME_VERSION = 1
+TERMINAL_OUTPUT_FRAME_TYPE = 1
+TERMINAL_OUTPUT_HEADER_SIZE = 10
+UINT64_MAX = (1 << 64) - 1
 
 
 def _required_strings(value: dict[str, Any], fields: tuple[str, ...], context: str) -> None:
@@ -218,6 +226,73 @@ def _validate_event_payload(data: dict[str, Any]) -> None:
 
 class ProtocolValidationError(ValueError):
     pass
+
+
+def _validate_terminal_cursor(value: object, context: str) -> str:
+    if not isinstance(value, str) or re.fullmatch(r"0|[1-9][0-9]{0,19}", value) is None:
+        raise ProtocolValidationError(f"{context} must be a canonical unsigned decimal string")
+    if int(value) > UINT64_MAX:
+        raise ProtocolValidationError(f"{context} exceeds uint64")
+    return value
+
+
+def _validate_terminal_geometry(data: dict[str, Any], context: str) -> None:
+    for field in ("rows", "columns"):
+        value = data[field]
+        if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 65535:
+            raise ProtocolValidationError(f"{context}.{field} must be an integer from 1 through 65535")
+
+
+def validate_terminal_stream_control(data: object) -> dict[str, Any]:
+    """Validate one JSON text control from either side of jusi.terminal.v1."""
+    if not isinstance(data, dict) or data.get("protocol_version") != PROTOCOL_VERSION:
+        raise ProtocolValidationError("Terminal stream control has an invalid envelope")
+    kind = data.get("kind")
+    if kind not in TERMINAL_STREAM_KINDS:
+        raise ProtocolValidationError("Terminal stream control kind is unsupported")
+    common = {"protocol_version", "kind", "surface_id", "attachment_id"}
+    for field in ("surface_id", "attachment_id"):
+        if not _bounded_string(data.get(field), 3, 128):
+            raise ProtocolValidationError(f"{field} length is invalid")
+    if kind in {"attach", "attached"}:
+        if set(data) != common | {"cursor", "rows", "columns"}:
+            raise ProtocolValidationError(f"Terminal stream {kind} fields are invalid")
+        _validate_terminal_cursor(data["cursor"], "cursor")
+        _validate_terminal_geometry(data, kind)
+    elif kind in {"resize", "resized"}:
+        if set(data) != common | {"resize_id", "rows", "columns"}:
+            raise ProtocolValidationError(f"Terminal stream {kind} fields are invalid")
+        if not _bounded_string(data["resize_id"], 3, 128):
+            raise ProtocolValidationError("resize_id length is invalid")
+        _validate_terminal_geometry(data, kind)
+    else:
+        fields = common | {"operation", "reason", "message", "retryable"}
+        if set(data) != fields:
+            raise ProtocolValidationError("Terminal stream failure fields are invalid")
+        if data["operation"] not in TERMINAL_STREAM_FAILURE_OPERATIONS:
+            raise ProtocolValidationError("Terminal stream failure operation is unsupported")
+        if data["reason"] not in TERMINAL_STREAM_FAILURE_REASONS:
+            raise ProtocolValidationError("Terminal stream failure reason is unsupported")
+        if not _bounded_string(data["message"], 1, 1000) or not isinstance(data["retryable"], bool):
+            raise ProtocolValidationError("Terminal stream failure body is invalid")
+    return dict(data)
+
+
+def encode_terminal_output_frame(starting_cursor: int, payload: bytes) -> bytes:
+    if not isinstance(starting_cursor, int) or isinstance(starting_cursor, bool) or not 0 <= starting_cursor <= UINT64_MAX:
+        raise ProtocolValidationError("Terminal output starting cursor must fit uint64")
+    if not isinstance(payload, bytes):
+        raise ProtocolValidationError("Terminal output payload must be bytes")
+    return struct.pack(">BBQ", TERMINAL_OUTPUT_FRAME_VERSION, TERMINAL_OUTPUT_FRAME_TYPE, starting_cursor) + payload
+
+
+def decode_terminal_output_frame(frame: object) -> tuple[int, bytes]:
+    if not isinstance(frame, bytes) or len(frame) < TERMINAL_OUTPUT_HEADER_SIZE:
+        raise ProtocolValidationError("Terminal output frame is shorter than its header")
+    version, frame_type, cursor = struct.unpack(">BBQ", frame[:TERMINAL_OUTPUT_HEADER_SIZE])
+    if version != TERMINAL_OUTPUT_FRAME_VERSION or frame_type != TERMINAL_OUTPUT_FRAME_TYPE:
+        raise ProtocolValidationError("Terminal output frame version or type is unsupported")
+    return cursor, frame[TERMINAL_OUTPUT_HEADER_SIZE:]
 
 
 def validate_command(data: object, expected_kind: str) -> dict[str, Any]:

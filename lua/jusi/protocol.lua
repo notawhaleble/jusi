@@ -24,13 +24,17 @@ local command_fields = {
   restart_notebook = { "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name" },
 }
 local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
-local operations = set({ "service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "interrupt", "cleanup", "inspect", "connect_events" })
+local operations = set({ "service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events" })
 local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
 local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
 local worker_operations = set({ "execute", "followup", "complete", "editor_action" })
 local worker_failure_reasons = set({ "invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error" })
+local terminal_stream_kinds = set({ "attach", "attached", "resize", "resized", "failure" })
+local terminal_stream_failure_reasons = set({ "busy", "cursor_expired", "not_found", "protocol_violation", "channel_closed" })
+local terminal_stream_failure_operations = set({ "attach", "resize", "stream" })
+local uint64_max_decimal = "18446744073709551615"
 
 local function exact_fields(value, required, optional)
   for _, field in ipairs(required) do
@@ -53,6 +57,36 @@ end
 
 local function null(value)
   return value == nil or value == vim.NIL
+end
+
+local function valid_terminal_cursor(value)
+  if type(value) ~= "string" or (value ~= "0" and not value:match("^[1-9][0-9]*$")) or #value > 20 then return false end
+  return #value < 20 or value <= uint64_max_decimal
+end
+
+local function valid_terminal_geometry(message)
+  for _, field in ipairs({ "rows", "columns" }) do
+    local value = message[field]
+    if type(value) ~= "number" or value % 1 ~= 0 or value < 1 or value > 65535 then return false end
+  end
+  return true
+end
+
+local function uint64_bytes_to_decimal(bytes)
+  local decimal = { 0 }
+  for index = 1, #bytes do
+    local carry = bytes:byte(index)
+    for digit = #decimal, 1, -1 do
+      local value = decimal[digit] * 256 + carry
+      decimal[digit] = value % 10
+      carry = math.floor(value / 10)
+    end
+    while carry > 0 do
+      table.insert(decimal, 1, carry % 10)
+      carry = math.floor(carry / 10)
+    end
+  end
+  return table.concat(decimal)
 end
 
 local function validate_client(client)
@@ -242,6 +276,46 @@ function M.validate_command(command, expected_kind)
     end
   end
   return true
+end
+
+function M.validate_terminal_stream_control(message)
+  if type(message) ~= "table" or message.protocol_version ~= 1 or not terminal_stream_kinds[message.kind] then
+    return false, "invalid terminal stream control envelope"
+  end
+  if not bounded_string(message.surface_id, 3, 128) or not bounded_string(message.attachment_id, 3, 128) then
+    return false, "invalid terminal stream identity"
+  end
+  local common = { "protocol_version", "kind", "surface_id", "attachment_id" }
+  if message.kind == "attach" or message.kind == "attached" then
+    local ok, err = exact_fields(message, vim.list_extend(vim.deepcopy(common), { "cursor", "rows", "columns" }))
+    if not ok then return false, err end
+    if not valid_terminal_cursor(message.cursor) then return false, "invalid terminal stream cursor" end
+    if not valid_terminal_geometry(message) then return false, "invalid terminal geometry" end
+  elseif message.kind == "resize" or message.kind == "resized" then
+    local ok, err = exact_fields(message, vim.list_extend(vim.deepcopy(common), { "resize_id", "rows", "columns" }))
+    if not ok then return false, err end
+    if not bounded_string(message.resize_id, 3, 128) then return false, "invalid terminal resize identity" end
+    if not valid_terminal_geometry(message) then return false, "invalid terminal geometry" end
+  else
+    local ok, err = exact_fields(message, vim.list_extend(vim.deepcopy(common), { "operation", "reason", "message", "retryable" }))
+    if not ok then return false, err end
+    if not terminal_stream_failure_operations[message.operation]
+        or not terminal_stream_failure_reasons[message.reason]
+        or not bounded_string(message.message, 1, 1000)
+        or type(message.retryable) ~= "boolean" then
+      return false, "invalid terminal stream failure"
+    end
+  end
+  return true
+end
+
+function M.decode_terminal_output_frame(frame)
+  if type(frame) ~= "string" or #frame < 10 then return nil, "terminal output frame is shorter than its header" end
+  if frame:byte(1) ~= 1 or frame:byte(2) ~= 1 then return nil, "unsupported terminal output frame version or type" end
+  return {
+    cursor = uint64_bytes_to_decimal(frame:sub(3, 10)),
+    data = frame:sub(11),
+  }
 end
 
 function M.validate_event(event)

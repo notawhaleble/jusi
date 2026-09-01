@@ -7,11 +7,14 @@ import pytest
 
 from jusi.protocol import (
     ProtocolValidationError,
+    decode_terminal_output_frame,
+    encode_terminal_output_frame,
     validate_command,
     validate_event,
     validate_health_response,
     validate_plugin_catalog,
     validate_plugin_kernel_message,
+    validate_terminal_stream_control,
     validate_plugin_worker_message,
 )
 
@@ -85,6 +88,10 @@ def test_python_consumes_shared_event_fixtures() -> None:
 
     assert validate_event(load_json(fixture_root / "valid" / "client-created.json"))["kind"] == "client.created"
     assert validate_event(load_json(fixture_root / "valid" / "client-closed.json"))["kind"] == "client.closed"
+    terminal_failure = validate_event(
+        load_json(fixture_root / "valid" / "failure-terminal-surface.json")
+    )
+    assert terminal_failure["operation"] == "run_terminal_surface"
     invalid_client = load_json(fixture_root / "invalid" / "client-created-missing-worker.json")
     with pytest.raises(ProtocolValidationError, match="fields"):
         validate_event(invalid_client)
@@ -104,6 +111,36 @@ def test_python_consumes_shared_event_fixtures() -> None:
 def test_python_consumes_shared_close_client_command() -> None:
     command = load_json(ROOT / "protocol" / "fixtures" / "v1" / "valid" / "close-client.json")
     assert validate_command(command, "close_client")["client_id"] == "client_123"
+
+
+def test_python_consumes_shared_terminal_stream_controls() -> None:
+    fixture_root = ROOT / "protocol" / "fixtures" / "v1"
+    for kind in ("attach", "attached", "resize", "resized", "failure"):
+        message = load_json(fixture_root / "valid" / f"terminal-stream-{kind}.json")
+        assert validate_terminal_stream_control(message)["kind"] == kind
+
+    for name, error in (
+        ("terminal-stream-cursor-overflow.json", "uint64"),
+        ("terminal-stream-invalid-geometry.json", "rows"),
+        ("terminal-stream-invalid-reason.json", "reason"),
+    ):
+        with pytest.raises(ProtocolValidationError, match=error):
+            validate_terminal_stream_control(load_json(fixture_root / "invalid" / name))
+
+
+def test_python_consumes_shared_terminal_binary_framing_vector() -> None:
+    vector = load_json(ROOT / "protocol" / "fixtures" / "v1" / "scenarios" / "terminal-stream-framing.json")
+    output = vector["server_output"]
+    payload = bytes.fromhex(output["payload_hex"])
+    frame = bytes.fromhex(output["frame_hex"])
+    assert encode_terminal_output_frame(int(output["starting_cursor"]), payload) == frame
+    assert decode_terminal_output_frame(frame) == (int(output["starting_cursor"]), payload)
+    assert bytes.fromhex(vector["client_input"]["frame_hex"]) == bytes.fromhex(vector["client_input"]["payload_hex"])
+
+    with pytest.raises(ProtocolValidationError, match="shorter"):
+        decode_terminal_output_frame(b"\x01\x01")
+    with pytest.raises(ProtocolValidationError, match="unsupported"):
+        decode_terminal_output_frame(b"\x02\x01" + b"\x00" * 8)
 
 
 def test_python_consumes_shared_health_fixtures() -> None:

@@ -37,6 +37,10 @@ Updated: 2026-09-01
 - `close_client` is an explicit idempotent HTTP/controller operation. It stops only the exact worker, emits `client.closed`, reports `already_absent` on a repeated close, and leaves the kernel on. Fatal worker startup/control failures use typed core failures scoped to the client.
 - The internal POSIX terminal broker now proves the ADR 0016 geometry gate before protocol exposure: it sizes and verifies the target PTY before spawning the application, establishes a controlling terminal in an isolated launcher, preserves raw terminal bytes, verifies later resize, and performs bounded idempotent process-group cleanup with kill escalation.
 - Protocol v1 now has one closed terminal-surface resource and lifecycle shared by JSON Schema, Python, and Lua. A `terminal_interactive` worker must return exactly one typed private `terminal_surface.create` request before its client and surface publish atomically; launch argv, cwd, and environment never enter health, events, or Lua. Client cleanup retires its surface first.
+- Terminal surface attachment is now implemented end to end: a dedicated WebSocket subprotocol carries closed attach/resize/failure controls, cursor-framed raw target output, and raw frontend input. The target process is spawned only after verified first-attachment geometry; bounded replay, single-writer ownership, slow-consumer fencing, and explicit cursor expiry do not use the supervisor operation lane.
+- The repository `jusi terminal-bridge` resolves the relative surface endpoint against the configured local or remote service URL and relays opaque bytes and verified resize controls inside a native Neovim terminal job. Health reconciliation projects existing surfaces without duplicating jobs. Automatic bridge restart is deferred until consumed-cursor persistence exists.
+- Unexpected target terminal-process death emits a typed `client/run_terminal_surface/channel_closed` core failure with process diagnostics, retires only the owning surface/client/worker, and leaves kernel truth unchanged.
+- A test-only `terminal_fixture` exact plugin now proves the complete Neovim path through fresh discovery, kernel attestation/handoff, worker isolation, target PTY, WebSocket bridge, first-draw geometry, opaque input/output, explicit client close, and kernel survival. It is outside production packaging and is discovered only through an explicit test `PYTHONPATH`.
 - Backend-only plugins expose generic terminal or web surfaces. SQL/VisiData, shell, terminal text, and browser content remain plugin-owned; frontend core manages native surfaces, input/geometry, and versioned generic actions. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
@@ -60,16 +64,15 @@ Implemented:
 Deferred:
 
 - remote supervisors and `checking`
-- richer window/focus policy and interactive PTY clients
-- input, interrupt, completion, rich media, PTY clients, and durable event storage
+- richer terminal window/focus policy, automatic reattachment, and multiple observers
+- kernel interrupt, completion, input requests, rich media, and durable event storage
 
 ## Next Boundary
 
-ADR 0016 establishes the target-side PTY/per-surface bridge boundary.
-Incident 0003 preserves the legacy VisiData geometry failure that its handshake
-and tests must address. Surface identity is implemented; WebSocket attachment,
-stream cursors, and bridge integration have not begun.
+ADR 0016's first terminal surface slice and its development exact-plugin
+fixture are implemented and automatically verified. This is a review and
+manual-test checkpoint before choosing one bounded next direction:
 
-1. bind the proven target PTY broker to the terminal surface at geometry-gated WebSocket attachment
-2. specify byte framing, bounded cursor replay, resize acknowledgement, and continuity failure atomically
-3. design the remote-safe web-surface contract after the terminal boundary is established
+1. persist consumed terminal cursors and implement explicit bridge reattachment
+2. design the remote-safe web-surface contract
+3. add the first real SQL/VisiData 1.0 plugin against the established generic surface

@@ -1,0 +1,153 @@
+local M = {}
+local InteractiveTerminals = {}
+InteractiveTerminals.__index = InteractiveTerminals
+
+local function default_launch(options)
+  local previous_window = vim.api.nvim_get_current_win()
+  local notebook_window = vim.fn.bufwinid(options.notebook_buf)
+  if notebook_window ~= -1 then
+    vim.api.nvim_set_current_win(notebook_window)
+  end
+  vim.cmd("botright " .. tostring(options.height) .. "split")
+  local window = vim.api.nvim_get_current_win()
+  local buf = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_win_set_buf(window, buf)
+  vim.bo[buf].bufhidden = "hide"
+  vim.bo[buf].swapfile = false
+  vim.api.nvim_buf_set_name(buf, "jusi://terminal/" .. options.surface.surface_id)
+  vim.b[buf].jusi_role = "interactive_terminal"
+  vim.b[buf].jusi_notebook_id = options.notebook_id
+  vim.b[buf].jusi_cell_id = options.client.cell_id
+  vim.b[buf].jusi_client_id = options.surface.client_id
+  vim.b[buf].jusi_surface_id = options.surface.surface_id
+  local job_id
+  vim.api.nvim_buf_call(buf, function()
+    job_id = vim.fn.jobstart(options.command, {
+      term = true,
+      on_exit = options.on_exit,
+    })
+  end)
+  if vim.api.nvim_win_is_valid(previous_window) then
+    vim.api.nvim_set_current_win(previous_window)
+  end
+  if type(job_id) ~= "number" or job_id <= 0 then
+    pcall(vim.api.nvim_buf_delete, buf, { force = true })
+    error("could not start terminal bridge: " .. tostring(job_id))
+  end
+  return { buf = buf, window = window, job_id = job_id }
+end
+
+function InteractiveTerminals:_failure(reason, message, surface)
+  if self.on_failure then
+    self.on_failure({
+      trace_id = "",
+      layer = "frontend_transport",
+      operation = "attach_terminal_surface",
+      reason = reason,
+      message = message,
+      retryable = true,
+      scope = "transport",
+      resource = { kind = "surface", id = surface.surface_id },
+    })
+  end
+end
+
+function InteractiveTerminals:open(surface, client)
+  if self.surfaces[surface.surface_id] then
+    return self.surfaces[surface.surface_id]
+  end
+  if surface.kind ~= "terminal" or not client then
+    self:_failure("protocol_violation", "terminal surface has no authoritative client", surface)
+    return nil
+  end
+  local command = vim.deepcopy(self.command)
+  table.insert(command, self.base_url)
+  table.insert(command, surface.surface_id)
+  local record = { surface = surface, client = client, closed = false }
+  local ok, launched = pcall(self.launch, {
+    command = command,
+    height = self.height,
+    notebook_buf = self.notebook_buf,
+    notebook_id = self.notebook_id,
+    surface = surface,
+    client = client,
+    on_exit = function(_, exit_code)
+      if not record.closed and exit_code ~= 0 then
+        self:_failure("channel_closed", "terminal bridge exited with code " .. tostring(exit_code), surface)
+      end
+    end,
+  })
+  if not ok then
+    self:_failure("channel_closed", tostring(launched), surface)
+    return nil
+  end
+  record.buf = launched.buf
+  record.window = launched.window
+  record.job_id = launched.job_id
+  self.surfaces[surface.surface_id] = record
+  return record
+end
+
+function InteractiveTerminals:close_surface(surface_id)
+  local record = self.surfaces[surface_id]
+  if not record then
+    return false
+  end
+  self.surfaces[surface_id] = nil
+  record.closed = true
+  if record.job_id then
+    pcall(vim.fn.jobstop, record.job_id)
+  end
+  if record.buf and vim.api.nvim_buf_is_valid(record.buf) then
+    pcall(vim.api.nvim_buf_delete, record.buf, { force = true })
+  end
+  return true
+end
+
+function InteractiveTerminals:reconcile(surfaces, clients)
+  for surface_id, _ in pairs(self.surfaces) do
+    if not surfaces[surface_id] then
+      self:close_surface(surface_id)
+    end
+  end
+  for surface_id, surface in pairs(surfaces) do
+    if not self.surfaces[surface_id] then
+      self:open(surface, clients[surface.client_id])
+    end
+  end
+end
+
+function InteractiveTerminals:buffer_for_cell(cell_id)
+  for _, record in pairs(self.surfaces) do
+    if record.client.cell_id == cell_id and record.buf and vim.api.nvim_buf_is_valid(record.buf) then
+      return record.buf
+    end
+  end
+  return nil
+end
+
+function InteractiveTerminals:close()
+  for _, surface_id in ipairs(vim.tbl_keys(self.surfaces)) do
+    self:close_surface(surface_id)
+  end
+end
+
+function M.new(options)
+  vim.validate("base_url", options.base_url, "string")
+  vim.validate("command", options.command, "table")
+  assert(#options.command > 0, "terminal bridge command must not be empty")
+  return setmetatable({
+    base_url = options.base_url:gsub("/+$", ""),
+    command = vim.deepcopy(options.command),
+    height = options.height or 12,
+    notebook_buf = options.notebook_buf,
+    notebook_id = options.notebook_id,
+    on_failure = options.on_failure,
+    launch = options.launch or default_launch,
+    surfaces = {},
+  }, InteractiveTerminals)
+end
+
+M.InteractiveTerminals = InteractiveTerminals
+
+return M

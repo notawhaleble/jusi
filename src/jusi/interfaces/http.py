@@ -2,15 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import queue
 from typing import Any
 
 import tornado.web
+import tornado.websocket
 from tornado.iostream import StreamClosedError
 
 from jusi.application.events import EventCursorExpired
 from jusi.application.supervisor import Supervisor, SupervisorError, new_id
+from jusi.application.terminal_surfaces import (
+    TerminalAttachment,
+    TerminalChunk,
+    TerminalStreamFailure,
+    TerminalSurfaceError,
+)
 from jusi.domain.models import Failure, ResourceRef
-from jusi.protocol import ProtocolValidationError, validate_command
+from jusi.protocol import (
+    ProtocolValidationError,
+    encode_terminal_output_frame,
+    validate_command,
+    validate_terminal_stream_control,
+)
 
 
 class BaseHandler(tornado.web.RequestHandler):
@@ -265,12 +278,165 @@ class EventsHandler(BaseHandler):
             return
 
 
+class TerminalSurfaceHandler(tornado.websocket.WebSocketHandler):
+    def initialize(self, supervisor: Supervisor) -> None:
+        self.supervisor = supervisor
+        self.surface_id = ""
+        self.attachment_id = ""
+        self.attachment: TerminalAttachment | None = None
+        self._pump_task: asyncio.Task[None] | None = None
+
+    def select_subprotocol(self, subprotocols: list[str]) -> str | None:
+        return "jusi.terminal.v1" if "jusi.terminal.v1" in subprotocols else None
+
+    def open(self, surface_id: str) -> None:
+        self.surface_id = surface_id
+        if self.selected_subprotocol != "jusi.terminal.v1":
+            self.close(code=1002, reason="jusi.terminal.v1 subprotocol is required")
+
+    async def on_message(self, message: str | bytes) -> None:
+        if isinstance(message, bytes):
+            if self.attachment is None:
+                await self._failure("attach", "protocol_violation", "Terminal input arrived before attachment")
+                return
+            try:
+                await asyncio.to_thread(
+                    self.supervisor.write_terminal_surface,
+                    self.surface_id,
+                    self.attachment_id,
+                    message,
+                )
+            except TerminalSurfaceError as exc:
+                await self._failure("stream", self._wire_reason(exc.reason), str(exc))
+            return
+        try:
+            control = validate_terminal_stream_control(json.loads(message))
+        except (json.JSONDecodeError, ProtocolValidationError) as exc:
+            await self._failure("attach" if self.attachment is None else "stream", "protocol_violation", str(exc))
+            return
+        if control["surface_id"] != self.surface_id:
+            await self._failure("attach", "protocol_violation", "surface_id does not match the WebSocket URL")
+            return
+        if self.attachment is None:
+            if control["kind"] != "attach":
+                await self._failure("attach", "protocol_violation", "First terminal control must be attach")
+                return
+            self.attachment_id = control["attachment_id"]
+            try:
+                attachment, _ = await asyncio.to_thread(
+                    self.supervisor.attach_terminal_surface,
+                    self.surface_id,
+                    attachment_id=self.attachment_id,
+                    rows=control["rows"],
+                    cols=control["columns"],
+                    after_cursor=int(control["cursor"]),
+                )
+            except TerminalSurfaceError as exc:
+                await self._failure("attach", self._wire_reason(exc.reason), str(exc))
+                return
+            self.attachment = attachment
+            await self.write_message(json.dumps({
+                "protocol_version": 1,
+                "kind": "attached",
+                "surface_id": self.surface_id,
+                "attachment_id": self.attachment_id,
+                "cursor": control["cursor"],
+                "rows": control["rows"],
+                "columns": control["columns"],
+            }, separators=(",", ":")))
+            self._pump_task = asyncio.create_task(self._pump())
+            return
+        if control["attachment_id"] != self.attachment_id:
+            await self._failure("stream", "protocol_violation", "attachment_id is not authoritative")
+            return
+        if control["kind"] != "resize":
+            await self._failure("stream", "protocol_violation", "Only resize is valid after attachment")
+            return
+        try:
+            await asyncio.to_thread(
+                self.supervisor.resize_terminal_surface,
+                self.surface_id,
+                self.attachment_id,
+                rows=control["rows"],
+                cols=control["columns"],
+            )
+        except TerminalSurfaceError as exc:
+            await self._failure("resize", self._wire_reason(exc.reason), str(exc))
+            return
+        await self.write_message(json.dumps({
+            **control,
+            "kind": "resized",
+        }, separators=(",", ":")))
+
+    def on_close(self) -> None:
+        if self._pump_task is not None:
+            self._pump_task.cancel()
+        if self.attachment_id:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._detach())
+            except RuntimeError:
+                pass
+
+    async def _detach(self) -> None:
+        try:
+            await asyncio.to_thread(
+                self.supervisor.detach_terminal_surface,
+                self.surface_id,
+                self.attachment_id,
+            )
+        except TerminalSurfaceError:
+            # Surface retirement may win the race with WebSocket close.
+            return
+
+    async def _pump(self) -> None:
+        assert self.attachment is not None
+        while True:
+            try:
+                item = await asyncio.to_thread(self.attachment.chunks.get, True, 0.5)
+            except queue.Empty:
+                if self.ws_connection is None:
+                    return
+                continue
+            if isinstance(item, TerminalStreamFailure):
+                await self._failure("stream", self._wire_reason(item.reason), item.message)
+                return
+            assert isinstance(item, TerminalChunk)
+            try:
+                await self.write_message(encode_terminal_output_frame(item.cursor, item.data), binary=True)
+            except tornado.websocket.WebSocketClosedError:
+                return
+
+    async def _failure(self, operation: str, reason: str, message: str) -> None:
+        attachment_id = self.attachment_id or "att_unset"
+        payload = {
+            "protocol_version": 1,
+            "kind": "failure",
+            "surface_id": self.surface_id,
+            "attachment_id": attachment_id,
+            "operation": operation,
+            "reason": reason,
+            "message": message[:1000] or "Terminal stream failed",
+            "retryable": reason in {"busy", "cursor_expired", "channel_closed"},
+        }
+        try:
+            validate_terminal_stream_control(payload)
+            await self.write_message(json.dumps(payload, separators=(",", ":")))
+        except tornado.websocket.WebSocketClosedError:
+            return
+
+    @staticmethod
+    def _wire_reason(reason: str) -> str:
+        return reason if reason in {"busy", "cursor_expired", "not_found", "protocol_violation", "channel_closed"} else "channel_closed"
+
+
 def make_application(supervisor: Supervisor) -> tornado.web.Application:
     handler_args = {"supervisor": supervisor}
     return tornado.web.Application(
         [
             (r"/v1/health", HealthHandler, handler_args),
             (r"/v1/events", EventsHandler, handler_args),
+            (r"/v1/surfaces/([^/]+)/terminal", TerminalSurfaceHandler, handler_args),
             (r"/v1/kernels", KernelsHandler, handler_args),
             (r"/v1/kernels/([^/]+)", KernelHandler, handler_args),
             (r"/v1/kernels/([^/]+)/executions", ExecutionsHandler, handler_args),

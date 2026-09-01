@@ -23,10 +23,10 @@ def _validate_geometry(rows: int, cols: int) -> None:
         or isinstance(rows, bool)
         or not isinstance(cols, int)
         or isinstance(cols, bool)
-        or not 1 <= rows <= 1000
-        or not 1 <= cols <= 1000
+        or not 1 <= rows <= 65535
+        or not 1 <= cols <= 65535
     ):
-        raise ValueError("terminal geometry must be integers between 1 and 1000")
+        raise ValueError("terminal geometry must be integers between 1 and 65535")
 
 
 def _set_geometry(fd: int, *, rows: int, cols: int) -> None:
@@ -48,6 +48,20 @@ class PosixTerminalHandle:
     @property
     def pid(self) -> int | None:
         return self._process.pid
+
+    @property
+    def running(self) -> bool:
+        return not self._closed and self._process.poll() is None
+
+    @property
+    def diagnostics(self) -> ProcessDiagnostics:
+        self._process.poll()
+        code = self._process.returncode
+        return ProcessDiagnostics(
+            pid=self._process.pid,
+            exit_code=code if code is not None and code >= 0 else None,
+            signal=-code if code is not None and code < 0 else None,
+        )
 
     def read(self, *, timeout: float, maximum: int = 65536) -> bytes:
         if timeout < 0 or maximum < 1:
@@ -114,18 +128,11 @@ class PosixTerminalHandle:
         return result
 
     def _error(self, message: str, reason: str) -> TerminalBrokerError:
-        self._process.poll()
-        code = self._process.returncode
-        diagnostics = ProcessDiagnostics(
-            pid=self._process.pid,
-            exit_code=code if code is not None and code >= 0 else None,
-            signal=-code if code is not None and code < 0 else None,
-        )
         return TerminalBrokerError(
             message,
             reason=reason,
             retryable=reason in {"channel_closed", "cleanup_incomplete"},
-            diagnostics=diagnostics,
+            diagnostics=self.diagnostics,
         )
 
 

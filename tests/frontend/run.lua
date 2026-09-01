@@ -52,6 +52,36 @@ assert(surface_closed_ok, surface_closed_error)
 local invalid_surface = read_json("protocol/fixtures/v1/invalid/surface-created-missing-transport.json")
 local invalid_surface_ok = protocol.validate_event(invalid_surface)
 assert(not invalid_surface_ok, "surface transport descriptor is required")
+local terminal_failure = read_json("protocol/fixtures/v1/valid/failure-terminal-surface.json")
+local terminal_failure_ok, terminal_failure_error = protocol.validate_event(terminal_failure)
+assert(terminal_failure_ok, terminal_failure_error)
+assert(terminal_failure.operation == "run_terminal_surface")
+
+for _, kind in ipairs({ "attach", "attached", "resize", "resized", "failure" }) do
+  local control = read_json("protocol/fixtures/v1/valid/terminal-stream-" .. kind .. ".json")
+  local control_ok, control_error = protocol.validate_terminal_stream_control(control)
+  assert(control_ok, control_error)
+end
+for _, name in ipairs({
+  "terminal-stream-cursor-overflow.json",
+  "terminal-stream-invalid-geometry.json",
+  "terminal-stream-invalid-reason.json",
+}) do
+  local invalid_control = read_json("protocol/fixtures/v1/invalid/" .. name)
+  local invalid_control_ok = protocol.validate_terminal_stream_control(invalid_control)
+  assert(not invalid_control_ok, "invalid terminal stream control must be rejected: " .. name)
+end
+local function from_hex(value)
+  return (value:gsub("..", function(pair) return string.char(tonumber(pair, 16)) end))
+end
+local framing = read_json("protocol/fixtures/v1/scenarios/terminal-stream-framing.json")
+local decoded_frame, decoded_error = protocol.decode_terminal_output_frame(from_hex(framing.server_output.frame_hex))
+assert(decoded_frame, decoded_error)
+assert(decoded_frame.cursor == framing.server_output.starting_cursor, "terminal output cursor must preserve uint64 precision")
+assert(decoded_frame.data == from_hex(framing.server_output.payload_hex), "terminal output bytes must remain unchanged")
+assert(from_hex(framing.client_input.frame_hex) == from_hex(framing.client_input.payload_hex), "client binary frames are raw input")
+assert(not protocol.decode_terminal_output_frame("\1\1"), "short terminal output frame must be rejected")
+assert(not protocol.decode_terminal_output_frame("\2\1" .. string.rep("\0", 8)), "unsupported output frame header must be rejected")
 
 local health = read_json("protocol/fixtures/v1/valid/health-response.json")
 local health_ok, health_error = protocol.validate_health_response(health)
