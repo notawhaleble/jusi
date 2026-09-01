@@ -1,6 +1,6 @@
 # ADR 0016: Interactive Terminal Surfaces Use A Target-Side PTY And A Jusi Bridge
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-01
 
 ## Context

@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0015 are active.
+- The foundation review is accepted; ADRs 0001-0016 are active.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -63,11 +63,9 @@ Deferred:
 
 ## Next Boundary
 
-ADR 0016 proposes the target-side PTY/per-surface bridge boundary for review.
+ADR 0016 establishes the target-side PTY/per-surface bridge boundary.
 Incident 0003 preserves the legacy VisiData geometry failure that its handshake
 and tests must address. No terminal transport implementation has begun.
-
-If accepted:
 
 1. specify the terminal surface, attach, geometry, cursor, and failure contract atomically
 2. prove worker-owned terminal bytes, input, and geometry without routing the stream through the request/response control channel
