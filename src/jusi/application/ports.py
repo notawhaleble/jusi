@@ -166,3 +166,49 @@ class PluginWorkerHandle(Protocol):
 
 class PluginWorkerFactory(Protocol):
     def start(self, spec: PluginWorkerSpec, *, timeout: float) -> PluginWorkerHandle: ...
+
+
+@dataclass(frozen=True)
+class TerminalLaunchSpec:
+    argv: tuple[str, ...]
+    cwd: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
+
+
+class TerminalBrokerError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: str,
+        retryable: bool,
+        diagnostics: ProcessDiagnostics | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.layer = "client"
+        self.reason = reason
+        self.retryable = retryable
+        self.diagnostics = diagnostics
+
+
+class TerminalHandle(Protocol):
+    @property
+    def pid(self) -> int | None: ...
+
+    def read(self, *, timeout: float, maximum: int = 65536) -> bytes: ...
+
+    def write(self, data: bytes) -> None: ...
+
+    def resize(self, *, rows: int, cols: int) -> None: ...
+
+    def stop(self, *, timeout: float) -> str: ...
+
+
+class TerminalBroker(Protocol):
+    def start(
+        self,
+        spec: TerminalLaunchSpec,
+        *,
+        rows: int,
+        cols: int,
+    ) -> TerminalHandle: ...

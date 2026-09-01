@@ -35,6 +35,7 @@ Updated: 2026-09-01
 - Exact-plugin clients are durable within their notebook runtime. Ordinary operation results never decide client lifetime; only explicit close, fatal client/worker loss, or owning-runtime cleanup ends one.
 - A validated exact-plugin handoff now starts the catalog-selected worker, creates a protocol-visible client identity, delivers the private payload only to that worker, and leaves the client active after the initiating execution. Health and ordered events expose client lifecycle without exposing plugin application data.
 - `close_client` is an explicit idempotent HTTP/controller operation. It stops only the exact worker, emits `client.closed`, reports `already_absent` on a repeated close, and leaves the kernel on. Fatal worker startup/control failures use typed core failures scoped to the client.
+- The internal POSIX terminal broker now proves the ADR 0016 geometry gate before protocol exposure: it sizes and verifies the target PTY before spawning the application, establishes a controlling terminal in an isolated launcher, preserves raw terminal bytes, verifies later resize, and performs bounded idempotent process-group cleanup with kill escalation.
 - Backend-only plugins expose generic terminal or web surfaces. SQL/VisiData, shell, terminal text, and browser content remain plugin-owned; frontend core manages native surfaces, input/geometry, and versioned generic actions. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
@@ -67,6 +68,6 @@ ADR 0016 establishes the target-side PTY/per-surface bridge boundary.
 Incident 0003 preserves the legacy VisiData geometry failure that its handshake
 and tests must address. No terminal transport implementation has begun.
 
-1. specify the terminal surface, attach, geometry, cursor, and failure contract atomically
-2. prove worker-owned terminal bytes, input, and geometry without routing the stream through the request/response control channel
+1. specify the terminal surface, typed worker launch request, attach, geometry, cursor, and failure contract atomically
+2. bind the proven target PTY broker to that surface without routing bytes through the worker request/response channel
 3. design the remote-safe web-surface contract after the terminal boundary is established
