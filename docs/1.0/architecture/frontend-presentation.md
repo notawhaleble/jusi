@@ -62,6 +62,8 @@ does not change the bridge executable's local ownership.
 
 Authoritative health reconciliation creates missing projections and removes
 stale ones without duplicating existing terminal jobs. A `surface.closed` or
-session teardown stops only that bridge job and deletes its buffer. Automatic
-reattachment after a bridge failure is deferred until the frontend can persist
-the exact consumed byte cursor; it must never resume from a guessed position.
+session teardown stops only that bridge job and deletes its buffer. The running
+bridge reconnects its own WebSocket from its exact in-memory consumed cursor;
+ordinary transport loss does not change surface, client, worker, or kernel
+lifetime. Frontend core does not restart a dead bridge process because it cannot
+atomically infer the cursor from Neovim's terminal state.

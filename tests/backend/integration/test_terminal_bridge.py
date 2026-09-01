@@ -15,6 +15,7 @@ from jusi.infrastructure.terminal_bridge import (
     OUTPUT_HEADER,
     TerminalBridge,
     TerminalBridgeError,
+    TerminalSurfaceRejected,
     terminal_websocket_url,
 )
 
@@ -70,6 +71,55 @@ class FakeTerminalEndpoint(tornado.websocket.WebSocketHandler):
                 )
             )
             self.resized.set()
+
+
+class ReconnectingTerminalEndpoint(tornado.websocket.WebSocketHandler):
+    attaches: list[dict[str, object]]
+    attempts: int
+    replayed: asyncio.Event
+    expire_replay: bool
+
+    def check_origin(self, origin: str) -> bool:
+        return True
+
+    def select_subprotocol(self, subprotocols: list[str]) -> str | None:
+        return "jusi.terminal.v1" if "jusi.terminal.v1" in subprotocols else None
+
+    def on_message(self, message: str | bytes) -> None:
+        assert isinstance(message, str)
+        value = json.loads(message)
+        assert value["kind"] == "attach"
+        self.attaches.append(value)
+        type(self).attempts += 1
+        attempt = type(self).attempts
+        if attempt == 2 and self.expire_replay:
+            self.write_message(json.dumps({
+                "protocol_version": 1,
+                "kind": "failure",
+                "surface_id": value["surface_id"],
+                "attachment_id": value["attachment_id"],
+                "operation": "attach",
+                "reason": "cursor_expired",
+                "message": "requested bytes are no longer retained",
+                "retryable": True,
+            }))
+            return
+        self.write_message(json.dumps({
+            "protocol_version": 1,
+            "kind": "attached",
+            "surface_id": value["surface_id"],
+            "attachment_id": value["attachment_id"],
+            "rows": value["rows"],
+            "columns": value["columns"],
+            "cursor": value["cursor"],
+        }))
+        if attempt == 1:
+            self.write_message(OUTPUT_HEADER.pack(1, 1, 0) + b"abc", binary=True)
+            asyncio.get_running_loop().call_later(0.01, self.close)
+        else:
+            assert value["cursor"] == "3"
+            self.write_message(OUTPUT_HEADER.pack(1, 1, 3) + b"def", binary=True)
+            self.replayed.set()
 
 
 def test_terminal_websocket_url_is_target_relative() -> None:
@@ -182,3 +232,77 @@ def test_output_cursor_gaps_are_rejected_without_guessing() -> None:
         os.close(output_write)
     assert os.read(output_read, 65536) == b"abc"
     os.close(output_read)
+
+
+def test_bridge_reattaches_in_process_from_exact_consumed_cursor() -> None:
+    asyncio.run(_reconnect_round_trip(expire=False))
+
+
+def test_bridge_stops_when_exact_replay_cursor_has_expired() -> None:
+    with pytest.raises(TerminalSurfaceRejected, match="cursor_expired"):
+        asyncio.run(_reconnect_round_trip(expire=True))
+
+
+async def _reconnect_round_trip(*, expire: bool) -> None:
+    input_read, input_write = os.pipe()
+    output_read, output_write = os.pipe()
+    error_read, error_write = os.pipe()
+    ReconnectingTerminalEndpoint.attaches = []
+    ReconnectingTerminalEndpoint.attempts = 0
+    ReconnectingTerminalEndpoint.replayed = asyncio.Event()
+    ReconnectingTerminalEndpoint.expire_replay = expire
+    application = tornado.web.Application(
+        [(r"/v1/surfaces/surf_reconnect/terminal", ReconnectingTerminalEndpoint)]
+    )
+    sockets = tornado.netutil.bind_sockets(0, address="127.0.0.1")
+    server = tornado.httpserver.HTTPServer(application)
+    server.add_sockets(sockets)
+    port = sockets[0].getsockname()[1]
+    bridge = TerminalBridge(
+        f"http://127.0.0.1:{port}",
+        "surf_reconnect",
+        stdin_fd=input_read,
+        stdout_fd=output_write,
+        stderr_fd=error_write,
+        geometry=lambda: os.terminal_size((80, 24)),
+        install_signal_handler=False,
+        reconnect_min_delay=0.01,
+        reconnect_max_delay=0.02,
+    )
+    task = asyncio.create_task(bridge.run())
+    caught: BaseException | None = None
+    try:
+        if expire:
+            try:
+                await asyncio.wait_for(task, timeout=2)
+            except BaseException as exc:
+                caught = exc
+        else:
+            await asyncio.wait_for(ReconnectingTerminalEndpoint.replayed.wait(), timeout=2)
+            os.close(input_write)
+            input_write = -1
+            await asyncio.wait_for(task, timeout=2)
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        server.stop()
+        await server.close_all_connections()
+        for fd in (input_read, input_write, output_write, error_write):
+            if fd >= 0:
+                os.close(fd)
+    output = os.read(output_read, 65536)
+    diagnostics = os.read(error_read, 65536)
+    os.close(output_read)
+    os.close(error_read)
+    assert output == (b"abc" if expire else b"abcdef")
+    assert [item["cursor"] for item in ReconnectingTerminalEndpoint.attaches] == ["0", "3"]
+    assert (
+        ReconnectingTerminalEndpoint.attaches[0]["attachment_id"]
+        != ReconnectingTerminalEndpoint.attaches[1]["attachment_id"]
+    )
+    assert b"retrying from byte 3" in diagnostics
+    if not expire:
+        assert b"transport reconnected" in diagnostics
+    if caught is not None:
+        raise caught

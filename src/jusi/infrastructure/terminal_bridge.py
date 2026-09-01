@@ -28,6 +28,16 @@ class TerminalBridgeError(RuntimeError):
     pass
 
 
+class TerminalBridgeReconnect(TerminalBridgeError):
+    pass
+
+
+class TerminalSurfaceRejected(TerminalBridgeError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"terminal surface rejected transport: {reason}")
+        self.reason = reason
+
+
 def terminal_websocket_url(base_url: str, surface_id: str) -> str:
     parsed = urlsplit(base_url)
     if parsed.scheme not in {"http", "https", "ws", "wss"} or not parsed.netloc:
@@ -55,10 +65,14 @@ class TerminalBridge:
         stderr_fd: int = 2,
         geometry: Callable[[], os.terminal_size] | None = None,
         install_signal_handler: bool = True,
+        reconnect_min_delay: float = 0.05,
+        reconnect_max_delay: float = 2.0,
     ) -> None:
+        if reconnect_min_delay <= 0 or reconnect_max_delay < reconnect_min_delay:
+            raise ValueError("terminal reconnect delays must be positive and ordered")
         self.url = terminal_websocket_url(base_url, surface_id)
         self.surface_id = surface_id
-        self.attachment_id = f"att_{uuid.uuid4().hex}"
+        self.attachment_id = ""
         self.stdin_fd = stdin_fd
         self.stdout_fd = stdout_fd
         self.stderr_fd = stderr_fd
@@ -69,29 +83,12 @@ class TerminalBridge:
         self._last_cursor = 0
         self._resize_task: asyncio.Task[None] | None = None
         self._pending_resizes: dict[str, tuple[int, int]] = {}
+        self._reconnect_min_delay = reconnect_min_delay
+        self._reconnect_max_delay = reconnect_max_delay
+        self._attachment_succeeded = False
 
     async def run(self) -> None:
         self._write_lock = asyncio.Lock()
-        size = self._read_geometry()
-        request = HTTPRequest(self.url, connect_timeout=10.0, request_timeout=0.0)
-        connection = await websocket_connect(request, subprotocols=[SUBPROTOCOL])
-        if connection.selected_subprotocol != SUBPROTOCOL:
-            connection.close()
-            raise TerminalBridgeError("terminal endpoint did not select jusi.terminal.v1")
-        self._connection = connection
-        await self._send_control(
-            {
-                "protocol_version": 1,
-                "kind": "attach",
-                "surface_id": self.surface_id,
-                "attachment_id": self.attachment_id,
-                "rows": size.lines,
-                "columns": size.columns,
-                "cursor": str(self._last_cursor),
-            }
-        )
-        await self._wait_attached(size)
-
         loop = asyncio.get_running_loop()
         signal_installed = False
         if self._install_signal_handler and hasattr(signal, "SIGWINCH"):
@@ -101,6 +98,71 @@ class TerminalBridge:
             except (NotImplementedError, RuntimeError):
                 signal_installed = False
 
+        delay = self._reconnect_min_delay
+        disconnected = False
+        try:
+            while True:
+                self._attachment_succeeded = False
+                try:
+                    keep_running = await self._run_connection(
+                        self._read_geometry(), announce_reconnected=disconnected,
+                    )
+                    if not keep_running:
+                        return
+                    disconnected = True
+                except TerminalSurfaceRejected as exc:
+                    if exc.reason not in {"busy", "channel_closed"}:
+                        raise
+                    disconnected = True
+                except TerminalBridgeReconnect:
+                    disconnected = True
+                except HTTPClientError as exc:
+                    if exc.code and 400 <= exc.code < 500 and exc.code not in {408, 409, 429}:
+                        raise TerminalBridgeError(f"terminal endpoint rejected connection: HTTP {exc.code}") from exc
+                    disconnected = True
+                except (OSError, WebSocketError):
+                    disconnected = True
+                if disconnected:
+                    if self._attachment_succeeded:
+                        delay = self._reconnect_min_delay
+                    self._write_diagnostic(
+                        f"[Jusi terminal transport disconnected; retrying from byte {self._last_cursor}]"
+                    )
+                    await asyncio.sleep(delay)
+                    delay = min(self._reconnect_max_delay, max(delay * 2, self._reconnect_min_delay))
+        finally:
+            if signal_installed:
+                loop.remove_signal_handler(signal.SIGWINCH)
+            await self._close_connection()
+
+    async def _run_connection(
+        self, size: os.terminal_size, *, announce_reconnected: bool,
+    ) -> bool:
+        self.attachment_id = f"att_{uuid.uuid4().hex}"
+        self._pending_resizes = {}
+        request = HTTPRequest(self.url, connect_timeout=10.0, request_timeout=0.0)
+        connection = await websocket_connect(request, subprotocols=[SUBPROTOCOL])
+        if connection.selected_subprotocol != SUBPROTOCOL:
+            connection.close()
+            raise TerminalBridgeError("terminal endpoint did not select jusi.terminal.v1")
+        self._connection = connection
+        try:
+            await self._send_control({
+                "protocol_version": 1,
+                "kind": "attach",
+                "surface_id": self.surface_id,
+                "attachment_id": self.attachment_id,
+                "rows": size.lines,
+                "columns": size.columns,
+                "cursor": str(self._last_cursor),
+            })
+            await self._wait_attached(size)
+            self._attachment_succeeded = True
+            if announce_reconnected:
+                self._write_diagnostic("[Jusi terminal transport reconnected]")
+        except BaseException:
+            await self._close_connection()
+            raise
         input_task = asyncio.create_task(self._relay_input())
         output_task = asyncio.create_task(self._relay_output())
         try:
@@ -112,13 +174,18 @@ class TerminalBridge:
             await asyncio.gather(*pending, return_exceptions=True)
             for task in done:
                 task.result()
+            return output_task in done
         finally:
-            if signal_installed:
-                loop.remove_signal_handler(signal.SIGWINCH)
-            if self._resize_task is not None:
-                self._resize_task.cancel()
-                await asyncio.gather(self._resize_task, return_exceptions=True)
-            connection.close()
+            await self._close_connection()
+
+    async def _close_connection(self) -> None:
+        if self._resize_task is not None:
+            self._resize_task.cancel()
+            await asyncio.gather(self._resize_task, return_exceptions=True)
+            self._resize_task = None
+        self._pending_resizes = {}
+        if self._connection is not None:
+            self._connection.close()
             self._connection = None
 
     async def send_resize(self) -> None:
@@ -202,7 +269,7 @@ class TerminalBridge:
         while True:
             message = await connection.read_message()
             if message is None:
-                raise TerminalBridgeError("terminal WebSocket closed while the surface was attached")
+                raise TerminalBridgeReconnect("terminal WebSocket closed while the surface was attached")
             if isinstance(message, bytes):
                 self._accept_output(message)
                 continue
@@ -267,7 +334,7 @@ class TerminalBridge:
             return kind
         if kind == "failure":
             reason = value.get("reason", "failure")
-            raise TerminalBridgeError(f"terminal surface rejected transport: {reason}")
+            raise TerminalSurfaceRejected(reason)
         raise TerminalBridgeError(f"unknown terminal control frame: {kind}")
 
     def _write_diagnostic(self, message: str) -> None:

@@ -139,10 +139,27 @@ The initial implementation now proves:
 - the same relative surface descriptor is resolved against either a local or
   remote configured service URL
 
-The contract supports exact reattachment, but automatic bridge restart and
-frontend cursor persistence are intentionally deferred. A new bridge currently
-starts from cursor zero and therefore succeeds only while the complete stream
-remains retained; otherwise it receives `cursor_expired` rather than guessing.
+The bridge performs exact transport reattachment within its own process. It
+advances its cursor only after writing a complete output frame to the native
+terminal, retains that cursor in memory across WebSocket loss, and reconnects
+with a fresh attachment identity. A transient `busy` response is retried because
+server-side detach may still be completing. `cursor_expired`, `not_found`, and
+protocol violations are terminal: the bridge reports them and exits rather
+than replaying from zero.
+
+This does not make the bridge process durable. If that process or its native
+terminal job dies, frontend core has no atomic way to reconstruct which bytes
+Neovim consumed. It therefore reports the transport failure and does not
+silently launch a replacement. No cursor file is used: persisting before a
+terminal write could lose output, while persisting after it could duplicate
+output after a crash.
+
+Input is intentionally not replayed after a disconnect. Bytes still waiting in
+the local terminal descriptor are sent after reattachment, but once a binary
+WebSocket write has completed the bridge cannot know whether the target PTY
+consumed it before transport loss. Replaying such bytes could duplicate a shell
+command or transaction action, so the first protocol provides exact output
+continuity and at-most-once input across an ambiguous disconnect.
 
 These remain permanent regression requirements:
 

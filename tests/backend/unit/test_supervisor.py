@@ -168,6 +168,7 @@ class FakeTerminalSurfaces:
         self.prepared: dict[str, tuple[object, object]] = {}
         self.closed: list[str] = []
         self.on_fatal = None
+        self.detached: list[tuple[str, str]] = []
 
     def set_fatal_handler(self, handler) -> None:  # type: ignore[no-untyped-def]
         self.on_fatal = handler
@@ -178,6 +179,9 @@ class FakeTerminalSurfaces:
     def close(self, surface_id: str, *, timeout: float) -> dict:
         self.closed.append(surface_id)
         return {"surface_id": surface_id, "result": "stopped"}
+
+    def detach(self, surface_id: str, attachment_id: str) -> None:
+        self.detached.append((surface_id, attachment_id))
 
 
 def plugin_entry() -> dict:
@@ -759,6 +763,39 @@ def test_kernel_stop_closes_target_surface_before_its_plugin_worker() -> None:
     worker_factory.handles[0].stop = stop_worker  # type: ignore[method-assign]
     supervisor.stop_kernel(kernel_id=started["kernel"]["kernel_id"], trace_id="trace_stop")
     assert order[:2] == ["surface", "worker"]
+
+
+def test_terminal_transport_detach_changes_no_authoritative_resource_lifetime() -> None:
+    handoff = PluginHandoff(
+        plugin_id="exact_sql", plugin_version="1.0.0",
+        family_id="sql", magic_name="sql", payload={},
+    )
+    worker_factory = FakePluginWorkerFactory(
+        operation_result=PluginWorkerOperationResult(
+            {}, (TerminalSurfaceRequest("terminal_main", ("vd",)),),
+        ),
+    )
+    terminal_surfaces = FakeTerminalSurfaces()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[interactive_plugin_entry()]),
+        PluginWorkerManager(worker_factory),
+        terminal_surfaces,  # type: ignore[arg-type]
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    supervisor.execute(
+        kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+        code="%%sql", trace_id="trace_execute",
+    )
+    before = supervisor.health()
+    surface_id = before["surfaces"][0]["surface_id"]
+    supervisor.detach_terminal_surface(surface_id, "att_lost")
+    after = supervisor.health()
+    assert terminal_surfaces.detached == [(surface_id, "att_lost")]
+    assert after["kernel"] == before["kernel"]
+    assert after["clients"] == before["clients"]
+    assert after["surfaces"] == before["surfaces"]
+    assert worker_factory.handles[0].stop_count == 0
 
 
 @pytest.mark.parametrize(
