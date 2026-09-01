@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from jupyter_client import KernelManager
 
@@ -25,6 +25,7 @@ from jusi.protocol import ProtocolValidationError, validate_plugin_kernel_messag
 
 MAX_STDERR_BYTES = 16 * 1024
 MAX_PLUGIN_CONTROL_BYTES = 1024 * 1024
+MAX_OUTPUT_EVENT_BYTES = 16 * 1024
 ADAPTER_ATTESTATION_MIME = "application/vnd.jusi.adapters-ready.v1+json"
 PLUGIN_HANDOFF_MIME = "application/vnd.jusi.handoff.v1+json"
 
@@ -34,6 +35,21 @@ def _plugin_control_size(value: object) -> int:
         return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
     except (TypeError, ValueError) as exc:
         raise ProtocolValidationError("Plugin control message is not JSON-serializable") from exc
+
+
+def _text_chunks(value: str, *, limit: int = MAX_OUTPUT_EVENT_BYTES) -> Iterator[str]:
+    """Split UTF-8 text without changing the byte stream when chunks are joined."""
+    encoded = value.encode("utf-8")
+    if not encoded:
+        yield ""
+        return
+    start = 0
+    while start < len(encoded):
+        end = min(start + limit, len(encoded))
+        while end < len(encoded) and encoded[end] & 0xC0 == 0x80:
+            end -= 1
+        yield encoded[start:end].decode("utf-8")
+        start = end
 
 
 def _load_kernel_adapters(client: Any, adapters: tuple[KernelAdapterSpec, ...], *, timeout: float) -> None:
@@ -237,17 +253,19 @@ class ManagedJupyterKernel:
             handoffs: list[PluginHandoff] = []
             handoff_errors: list[str] = []
 
+            def emit_output(output_kind: str, media_type: str, value: object) -> None:
+                for chunk in _text_chunks(str(value)):
+                    on_output(KernelOutput(output_kind, media_type, chunk))
+
             def output_hook(message: dict[str, Any]) -> None:
                 message_type = message.get("msg_type") or message.get("header", {}).get("msg_type", "")
                 content = message.get("content", {})
                 if message_type == "stream":
                     name = str(content.get("name", "stdout"))
-                    on_output(
-                        KernelOutput(
-                            output_kind="stderr" if name == "stderr" else "stdout",
-                            media_type="text/x-ansi",
-                            data=str(content.get("text", "")),
-                        )
+                    emit_output(
+                        "stderr" if name == "stderr" else "stdout",
+                        "text/x-ansi",
+                        content.get("text", ""),
                     )
                 elif message_type in {"execute_result", "display_data"}:
                     output_kind = "result" if message_type == "execute_result" else "display"
@@ -272,12 +290,12 @@ class ManagedJupyterKernel:
                                     handoff_errors.append(str(exc))
                                 continue
                             if isinstance(value, str):
-                                on_output(KernelOutput(output_kind, str(media_type), value))
+                                emit_output(output_kind, str(media_type), value)
                 elif message_type == "error":
                     traceback = content.get("traceback", [])
                     text = "\n".join(str(line) for line in traceback) if isinstance(traceback, list) else str(traceback)
                     if text:
-                        on_output(KernelOutput("stderr", "text/x-ansi", text))
+                        emit_output("stderr", "text/x-ansi", text)
 
             try:
                 reply = self._client.execute_interactive(

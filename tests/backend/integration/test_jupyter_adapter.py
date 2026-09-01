@@ -10,6 +10,7 @@ import pytest
 from jusi.application.ports import KernelAdapterError, KernelAdapterSpec
 import jusi.infrastructure.jupyter_kernel as jupyter_kernel
 from jusi.infrastructure.jupyter_kernel import (
+    MAX_OUTPUT_EVENT_BYTES,
     MAX_PLUGIN_CONTROL_BYTES,
     MAX_STDERR_BYTES,
     ManagedJupyterKernel,
@@ -121,6 +122,34 @@ def test_output_before_timeout_is_delivered_incrementally() -> None:
     assert captured.value.reason == "timeout"
     assert [output.data for output in outputs] == ["before timeout\n"]
     assert manager.is_alive()
+    kernel.stop(timeout=1)
+
+
+def test_large_text_output_is_utf8_safe_and_byte_bounded() -> None:
+    payload = "x" * (MAX_OUTPUT_EVENT_BYTES - 1) + "界" + "\u001b[31mred\u001b[0m"
+
+    class LargeOutputClient(FakeClient):
+        def execute_interactive(self, code: str, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["output_hook"]({
+                "msg_type": "stream",
+                "content": {"name": "stdout", "text": payload},
+            })
+            return {"content": {"status": "ok"}}
+
+    stderr_file = tempfile.NamedTemporaryFile(delete=False)
+    kernel = ManagedJupyterKernel(
+        FakeManager(), LargeOutputClient(), stderr_file, stderr_file.name,  # type: ignore[arg-type]
+    )
+    outputs = []
+
+    result = kernel.execute("large_output()", timeout=1, on_output=outputs.append)
+
+    assert result.outcome == "succeeded"
+    assert len(outputs) == 2
+    assert all(len(output.data.encode("utf-8")) <= MAX_OUTPUT_EVENT_BYTES for output in outputs)
+    assert "".join(output.data for output in outputs) == payload
+    assert all(output.output_kind == "stdout" for output in outputs)
+    assert all(output.media_type == "text/x-ansi" for output in outputs)
     kernel.stop(timeout=1)
 
 

@@ -23,6 +23,10 @@ Terminal presentation does not determine kernel ownership or lifecycle.
 - SSE resumption uses the last observed event identifier or cursor. The frontend does not fill gaps by guessing state.
 - The SSE adapter emits an immediate comment to confirm that the stream is open. Comments carry no resource truth and consume no event sequence.
 - Before opening SSE, the frontend inspects health for the supervisor identity, authoritative kernel snapshot, and retained event window. ADR 0008 defines when to replay and when to replace stale frontend state from that snapshot.
+- Consecutive `execution.output` events are ordered terminal writes. Their data
+  must be concatenated without inserting separators; the service may split one
+  kernel text message at a UTF-8-safe boundary to keep retained events bounded,
+  as specified by ADR 0018.
 
 The initial workflow fixture is `fixtures/v1/scenarios/walking-skeleton.json`; `fixtures/v1/scenarios/event-payloads.json` covers every initial event kind. Concrete valid and invalid envelopes under `fixtures/v1/` are consumed by both Python and Lua conformance tests.
 

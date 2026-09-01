@@ -18,6 +18,8 @@ stderr, results, and tracebacks retain their media contract, an ordinary Python
 exception does not kill the kernel, and a generated large markdown-like text
 surrogate is accepted before a subsequent execution. The surrogate is not the
 unrecovered Incident 0001 input and must not be described as its reproduction.
+It also verifies that a 40 KiB Unicode/ANSI stream is divided into UTF-8-safe,
+16 KiB-or-smaller events whose ordered concatenation is exact.
 
 `terminal_surface_spec.lua` explicitly enables the test-only exact plugin under
 `tests/fixtures/terminal_plugin`. It proves the complete native Neovim path,

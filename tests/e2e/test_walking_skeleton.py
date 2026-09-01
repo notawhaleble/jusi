@@ -295,6 +295,22 @@ def test_real_kernel_text_streams_errors_large_body_and_survives(tmp_path: Path)
         )
         assert large_result["execution"]["outcome"] == "succeeded"
 
+        large_output_text = "x" * (40 * 1024) + "界" + "\x1b[35mviolet\x1b[0m"
+        large_output_result = request_json(
+            base_url,
+            f"/v1/kernels/{kernel_id}/executions",
+            method="POST",
+            payload=command(
+                "execute",
+                "trace_text_large_output",
+                kernel_id=kernel_id,
+                notebook_id="nb_text_reliability",
+                cell_id="cell_text_large_output",
+                code=f"print({large_output_text!r}, end='')",
+            ),
+        )
+        assert large_output_result["execution"]["outcome"] == "succeeded"
+
         survivor_result = request_json(
             base_url,
             f"/v1/kernels/{kernel_id}/executions",
@@ -355,6 +371,10 @@ def test_real_kernel_text_streams_errors_large_body_and_survives(tmp_path: Path)
         assert "\x1b[" in error_outputs[0]["data"]
 
         assert outputs_for("trace_text_large")[-1]["data"] == str(len(markdown_like))
+        large_output_events = outputs_for("trace_text_large_output")
+        assert len(large_output_events) == 3
+        assert all(len(item["data"].encode("utf-8")) <= 16 * 1024 for item in large_output_events)
+        assert "".join(item["data"] for item in large_output_events) == large_output_text
         assert outputs_for("trace_text_survivor")[-1]["data"] == "42"
         assert [event["sequence"] for event in observed] == list(range(1, len(observed) + 1))
     finally:

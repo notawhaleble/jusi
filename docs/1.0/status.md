@@ -4,11 +4,12 @@ Updated: 2026-09-02
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0016 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
 - Jupyter stdout, stderr, display, result, and traceback messages now enter the ordered event log as they arrive instead of being retained until execution completion. Output already observed remains available if the execution later times out or the kernel dies.
+- ADR 0018 bounds each ordinary text-output event to 16 KiB of UTF-8 while preserving exact ordered concatenation. This makes retained output memory finite without parsing ANSI or turning SSE into the sustained interactive stream.
 - Python and Lua consume shared command and event fixtures, including unchanged ANSI-bearing text.
 - The Neovim frontend has a pure Lua symbolic-format parser, model-owned cell identities, extmark anchors, locally spliced structural reconciliation, and an executable 10,000-line/1,000-cell performance harness.
 - `.vipynb` remains the canonical extension with Neovim filetype `jusi`; legacy `##` notebooks are detected and rejected without mutation until explicit conversion exists.
@@ -46,6 +47,7 @@ Updated: 2026-09-02
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - A real-kernel text reliability scenario proves pre-response SSE delivery, ordered ANSI stdout/stderr/result media, ANSI traceback preservation, survival after an ordinary execution error, and successful execution of a generated roughly quarter-megabyte markdown-like body. It does not reproduce or explain Incident 0001.
+- The same scenario proves a 40 KiB Unicode/ANSI output is split into byte-bounded SSE records and reconstructs exactly; frontend coverage deliberately splits an ANSI escape sequence across writes and lets Neovim consume it.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
 - The archival tag `legacy/0.x-pre-1.0-2026-08-31` and detached sibling worktree `/Users/niku/Documents/dev/jusi-0.x` preserve the audited backend snapshot.
 
@@ -74,6 +76,7 @@ Deferred:
 ADR 0016's terminal slice, exact reattachment, and development plugin fixture
 are implemented and automatically verified. Web work is out of the near-term
 path. Incremental ordinary output, realistic ANSI/error streams, kernel survival,
-and a large-body surrogate are now automatically verified. The remaining text
-reliability boundary is explicit output pressure/retention policy; after that,
-begin the first real SQL/VisiData plugin against the accepted terminal surface.
+large-body input, and bounded exact output are now automatically verified. The
+next implementation boundary is the first real SQL/VisiData plugin against the
+accepted terminal surface, beginning with a dependency/runtime audit and a
+minimal read-only query path rather than importing the 0.x plugin wholesale.
