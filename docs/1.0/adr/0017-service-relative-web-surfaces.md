@@ -1,7 +1,17 @@
 # ADR 0017: Web Clients Use Service-Relative Surfaces And A Renderer Adapter
 
-- Status: proposed
+- Status: deferred
 - Date: 2026-09-01
+
+## Deferral
+
+Deferred on 2026-09-02 before any schema or implementation work. Web rendering
+is secondary to Jusi's text and terminal workflows, and its intended product
+model is not settled. Possible directions include conventional rich output,
+the separate `jusi-neovim` browser-as-editor environment, and a deeper
+web-as-text model rendered through ordinary Neovim buffers. The reverse-proxy
+and renderer-adapter design below is retained only as investigated evidence; it
+is not an accepted 1.0 commitment or a near-term implementation plan.
 
 ## Context
 
@@ -30,7 +40,7 @@ For a remote kernel target, a plugin-owned loopback URL is not reachable from
 the user's browser. Publishing that URL would also leak backend topology and
 make plugins invent SSH, Docker, and host-rewriting behavior again.
 
-## Proposed Decision
+## Investigated Design
 
 A durable browser-backed plugin presentation is a Jusi `web` surface. It is not
 an `open_url` action and is not selected from plugin identity. The public

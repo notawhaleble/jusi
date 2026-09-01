@@ -1,10 +1,10 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-01
+Updated: 2026-09-02
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0016 are active. ADR 0017 proposes the remote-safe web-surface boundary and is not yet accepted or implemented.
+- The foundation review is accepted; ADRs 0001-0016 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -41,7 +41,7 @@ Updated: 2026-09-01
 - The repository `jusi terminal-bridge` resolves the relative surface endpoint against the configured local or remote service URL and relays opaque bytes and verified resize controls inside a native Neovim terminal job. Health reconciliation projects existing surfaces without duplicating jobs. The running bridge now survives WebSocket loss by reattaching with a fresh identity from its exact in-memory consumed cursor; expired continuity ends visibly without guessed replay. A dead bridge process is not silently recreated.
 - Unexpected target terminal-process death emits a typed `client/run_terminal_surface/channel_closed` core failure with process diagnostics, retires only the owning surface/client/worker, and leaves kernel truth unchanged.
 - A test-only `terminal_fixture` exact plugin now proves the complete Neovim path through fresh discovery, kernel attestation/handoff, worker isolation, target PTY, WebSocket bridge, first-draw geometry, opaque input/output, explicit client close, and kernel survival. It is outside production packaging and is discovered only through an explicit test `PYTHONPATH`.
-- Backend-only plugins expose generic terminal or web surfaces. SQL/VisiData, shell, terminal text, and browser content remain plugin-owned; frontend core manages native surfaces, input/geometry, and versioned generic actions. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
+- Backend-only terminal plugins expose generic terminal surfaces. SQL/VisiData, shell, and terminal text remain plugin-owned; frontend core manages native surfaces and generic input/geometry. Web surfaces remain a conceptual later family only. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
@@ -70,8 +70,8 @@ Deferred:
 ## Next Boundary
 
 ADR 0016's terminal slice, exact reattachment, and development plugin fixture
-are implemented and automatically verified. Proposed ADR 0017 is the current
-review boundary before any web proxy, schema, or frontend renderer code begins.
-After that decision, the next implementation boundary is either its smallest
-HTTP-only web-surface proof or the first real SQL/VisiData plugin against the
-accepted terminal surface.
+are implemented and automatically verified. Web work is out of the near-term
+path. The next boundary stays with text and terminal scenarios: harden ordinary
+execution output and failure behavior against realistic streams and larger cell
+bodies, then begin the first real SQL/VisiData plugin against the accepted
+terminal surface.
