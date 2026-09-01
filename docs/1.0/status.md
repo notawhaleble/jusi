@@ -4,7 +4,7 @@ Updated: 2026-09-01
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0016 are active.
+- The foundation review is accepted; ADRs 0001-0016 are active. ADR 0017 proposes the remote-safe web-surface boundary and is not yet accepted or implemented.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -69,9 +69,9 @@ Deferred:
 
 ## Next Boundary
 
-ADR 0016's first terminal surface slice and its development exact-plugin
-fixture are implemented and automatically verified. This is a review and
-manual-test checkpoint before choosing one bounded next direction:
-
-1. design the remote-safe web-surface contract
-2. add the first real SQL/VisiData 1.0 plugin against the established generic surface
+ADR 0016's terminal slice, exact reattachment, and development plugin fixture
+are implemented and automatically verified. Proposed ADR 0017 is the current
+review boundary before any web proxy, schema, or frontend renderer code begins.
+After that decision, the next implementation boundary is either its smallest
+HTTP-only web-surface proof or the first real SQL/VisiData plugin against the
+accepted terminal surface.
