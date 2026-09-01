@@ -48,6 +48,7 @@ Updated: 2026-09-02
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - A real-kernel text reliability scenario proves pre-response SSE delivery, ordered ANSI stdout/stderr/result media, ANSI traceback preservation, survival after an ordinary execution error, and successful execution of a generated roughly quarter-megabyte markdown-like body. It does not reproduce or explain Incident 0001.
 - The same scenario proves a 40 KiB Unicode/ANSI output is split into byte-bounded SSE records and reconstructs exactly; frontend coverage deliberately splits an ANSI escape sequence across writes and lets Neovim consume it.
+- The SQL/VisiData migration audit preserves family alias routing, provider-owned VisiData/database behavior, durable clients, and generic terminal presentation while retiring 0.x handler/runtime/frontend-config machinery. The clean `jusi-sql` and `jusi-sqlite` repositories remain untouched and still target the incompatible 0.x contract.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
 - The archival tag `legacy/0.x-pre-1.0-2026-08-31` and detached sibling worktree `/Users/niku/Documents/dev/jusi-0.x` preserve the audited backend snapshot.
 
@@ -77,6 +78,7 @@ ADR 0016's terminal slice, exact reattachment, and development plugin fixture
 are implemented and automatically verified. Web work is out of the near-term
 path. Incremental ordinary output, realistic ANSI/error streams, kernel survival,
 large-body input, and bounded exact output are now automatically verified. The
-next implementation boundary is the first real SQL/VisiData plugin against the
-accepted terminal surface, beginning with a dependency/runtime audit and a
-minimal read-only query path rather than importing the 0.x plugin wholesale.
+SQL/VisiData audit exposed the missing runtime-configuration authority as the
+next review boundary. ADR 0019 proposes a private target-side snapshot loaded on
+every start/restart. No SQL or configuration implementation should begin until
+that ownership and lifetime are accepted or revised.
