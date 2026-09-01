@@ -10,6 +10,7 @@ from jusi.application.ports import (
     KernelAdapterSpec,
     KernelFactory,
     KernelHandle,
+    KernelOutput,
     PluginCatalogDiscovery,
     PluginCatalogDiscoveryError,
     PluginWorkerError,
@@ -389,7 +390,23 @@ class Supervisor:
                 payload=execution.to_dict(),
             )
             try:
-                result = handle.execute(code, timeout=timeout)
+                def publish_output(output: KernelOutput) -> None:
+                    self.events.append(
+                        trace_id=trace_id,
+                        layer="execution",
+                        operation="execute",
+                        kind="execution.output",
+                        resource=execution_ref,
+                        payload={
+                            "execution_id": execution.execution_id,
+                            "client_id": execution.client_id,
+                            "output_kind": output.output_kind,
+                            "media_type": output.media_type,
+                            "data": output.data,
+                        },
+                    )
+
+                result = handle.execute(code, timeout=timeout, on_output=publish_output)
             except KernelAdapterError as exc:
                 kernel_failure = self._failure(
                     trace_id=trace_id,
@@ -761,22 +778,6 @@ class Supervisor:
                         resource=ResourceRef("surface", surface.surface_id),
                         payload=surface.to_dict(),
                     )
-
-            for output in result.outputs:
-                self.events.append(
-                    trace_id=trace_id,
-                    layer="execution",
-                    operation="execute",
-                    kind="execution.output",
-                    resource=execution_ref,
-                    payload={
-                        "execution_id": execution.execution_id,
-                        "client_id": execution.client_id,
-                        "output_kind": output.output_kind,
-                        "media_type": output.media_type,
-                        "data": output.data,
-                    },
-                )
 
             if result.outcome == "succeeded":
                 execution.complete("succeeded")

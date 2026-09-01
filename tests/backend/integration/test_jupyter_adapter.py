@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import queue
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -54,13 +55,14 @@ def test_jupyter_adapter_preserves_ansi_and_result_media() -> None:
     client = FakeClient()
     kernel = ManagedJupyterKernel(manager, client, stderr_file, stderr_path)  # type: ignore[arg-type]
 
-    result = kernel.execute("1 + 1", timeout=1)
+    outputs = []
+    result = kernel.execute("1 + 1", timeout=1, on_output=outputs.append)
 
     assert result.outcome == "succeeded"
-    assert result.outputs[0].media_type == "text/x-ansi"
-    assert result.outputs[0].data == "\u001b[32mhello\u001b[0m\n"
-    assert result.outputs[1].media_type == "text/plain"
-    assert result.outputs[1].data == "2"
+    assert outputs[0].media_type == "text/x-ansi"
+    assert outputs[0].data == "\u001b[32mhello\u001b[0m\n"
+    assert outputs[1].media_type == "text/plain"
+    assert outputs[1].data == "2"
 
     kernel.stop(timeout=1)
     assert manager.shutdown_calls == [(False, False)]
@@ -85,14 +87,39 @@ def test_execution_error_preserves_ansi_traceback_without_killing_kernel() -> No
     client = ErrorClient()
     kernel = ManagedJupyterKernel(manager, client, stderr_file, stderr_path)  # type: ignore[arg-type]
 
-    result = kernel.execute("raise ValueError('bad value')", timeout=1)
+    outputs = []
+    result = kernel.execute("raise ValueError('bad value')", timeout=1, on_output=outputs.append)
 
     assert result.outcome == "failed"
     assert result.error_name == "ValueError"
     assert result.error_value == "bad value"
-    assert result.outputs[0].output_kind == "stderr"
-    assert result.outputs[0].media_type == "text/x-ansi"
-    assert result.outputs[0].data == "\u001b[31mValueError\u001b[0m\nbad value"
+    assert outputs[0].output_kind == "stderr"
+    assert outputs[0].media_type == "text/x-ansi"
+    assert outputs[0].data == "\u001b[31mValueError\u001b[0m\nbad value"
+    assert manager.is_alive()
+    kernel.stop(timeout=1)
+
+
+def test_output_before_timeout_is_delivered_incrementally() -> None:
+    class TimeoutClient(FakeClient):
+        def execute_interactive(self, code: str, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs["output_hook"]({
+                "msg_type": "stream",
+                "content": {"name": "stdout", "text": "before timeout\n"},
+            })
+            raise queue.Empty
+
+    stderr_file = tempfile.NamedTemporaryFile(delete=False)
+    manager = FakeManager()
+    kernel = ManagedJupyterKernel(manager, TimeoutClient(), stderr_file, stderr_file.name)  # type: ignore[arg-type]
+    outputs = []
+
+    with pytest.raises(KernelAdapterError) as captured:
+        kernel.execute("slow()", timeout=0.1, on_output=outputs.append)
+
+    assert captured.value.layer == "execution"
+    assert captured.value.reason == "timeout"
+    assert [output.data for output in outputs] == ["before timeout\n"]
     assert manager.is_alive()
     kernel.stop(timeout=1)
 
@@ -118,8 +145,9 @@ def test_execution_captures_structured_handoff_without_rendering_it() -> None:
 
     stderr_file = tempfile.NamedTemporaryFile(delete=False)
     kernel = ManagedJupyterKernel(FakeManager(), HandoffClient(), stderr_file, stderr_file.name)  # type: ignore[arg-type]
-    result = kernel.execute("%%fixture", timeout=1)
-    assert result.outputs == ()
+    outputs = []
+    result = kernel.execute("%%fixture", timeout=1, on_output=outputs.append)
+    assert outputs == []
     assert result.handoffs[0].plugin_id == "fixture_provider"
     assert result.handoffs[0].payload == {"value": 7}
     kernel.stop(timeout=1)
@@ -148,7 +176,7 @@ def test_execution_rejects_oversized_plugin_handoff_without_killing_kernel() -> 
     manager = FakeManager()
     kernel = ManagedJupyterKernel(manager, OversizedHandoffClient(), stderr_file, stderr_file.name)  # type: ignore[arg-type]
     with pytest.raises(KernelAdapterError) as captured:
-        kernel.execute("%%fixture", timeout=1)
+        kernel.execute("%%fixture", timeout=1, on_output=lambda output: None)
     assert captured.value.layer == "protocol"
     assert captured.value.reason == "protocol_violation"
     assert captured.value.details["errors"] == ["Plugin handoff exceeds the size limit"]
@@ -166,7 +194,7 @@ def test_dead_kernel_reports_process_and_bounded_stderr_then_cleans_up() -> None
     kernel = ManagedJupyterKernel(manager, client, stderr_file, stderr_path)  # type: ignore[arg-type]
 
     with pytest.raises(KernelAdapterError) as captured:
-        kernel.execute("large body", timeout=1)
+        kernel.execute("large body", timeout=1, on_output=lambda output: None)
 
     diagnostics = captured.value.diagnostics
     assert captured.value.layer == "kernel"
@@ -281,9 +309,10 @@ def load_ipython_extension(ipython):
         "python3", timeout=8, adapters=(adapter,),
     )
     try:
-        result = kernel.execute("fixture_adapter_loaded + 1", timeout=5)
+        outputs = []
+        result = kernel.execute("fixture_adapter_loaded + 1", timeout=5, on_output=outputs.append)
         assert result.outcome == "succeeded"
-        assert any(output.data == "42" for output in result.outputs)
+        assert any(output.data == "42" for output in outputs)
     finally:
         kernel.stop(timeout=5)
 

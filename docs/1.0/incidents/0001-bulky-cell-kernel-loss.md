@@ -39,5 +39,9 @@ A minimized fixture must either execute successfully or fail with a structured, 
 The walking skeleton now captures bounded kernel stderr, PID, exit code/signal,
 execution payload byte/line counts, trace/resource identities, and ordered
 kernel-to-execution causal failures. Cleanup tests verify that diagnostic files
-and channels are still released after shutdown failure. The original input has
-not been recovered or minimized, so the incident remains open and cause unknown.
+and channels are still released after shutdown failure. A generated roughly
+quarter-megabyte markdown-like text surrogate now executes through the real
+HTTP/Jupyter/SSE path, followed by another successful execution on the same
+kernel. This is coverage of payload size and content shape, not a reproduction
+or explanation of the incident. The original input has not been recovered or
+minimized, so the incident remains open and cause unknown.

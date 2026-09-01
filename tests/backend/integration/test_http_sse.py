@@ -19,9 +19,10 @@ from jusi.interfaces.http import make_application
 class FakeKernel:
     pid = 2468
 
-    def execute(self, code: str, *, timeout: float) -> KernelExecutionResult:
+    def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
         assert code == "1 + 1"
-        return KernelExecutionResult("succeeded", (KernelOutput("result", "text/plain", "2"),))
+        on_output(KernelOutput("result", "text/plain", "2"))
+        return KernelExecutionResult("succeeded")
 
     def stop(self, *, timeout: float) -> None:
         return None

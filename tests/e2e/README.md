@@ -12,6 +12,13 @@ The first black-box test does not require Neovim:
 
 The test must assert event order, trace correlation, distinct resource identities, terminal `on`/`off` kernel state, and cleanup of every process it created.
 
+The real-kernel text reliability scenario additionally verifies that stdout is
+observable over SSE before the execute HTTP request completes, ANSI stdout,
+stderr, results, and tracebacks retain their media contract, an ordinary Python
+exception does not kill the kernel, and a generated large markdown-like text
+surrogate is accepted before a subsequent execution. The surrogate is not the
+unrecovered Incident 0001 input and must not be described as its reproduction.
+
 `terminal_surface_spec.lua` explicitly enables the test-only exact plugin under
 `tests/fixtures/terminal_plugin`. It proves the complete native Neovim path,
 including first-draw geometry, opaque input/output, explicit client close, and

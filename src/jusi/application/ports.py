@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from jusi.domain.models import ProcessDiagnostics
 
@@ -16,7 +16,6 @@ class KernelOutput:
 @dataclass(frozen=True)
 class KernelExecutionResult:
     outcome: str
-    outputs: tuple[KernelOutput, ...] = field(default_factory=tuple)
     error_name: str = ""
     error_value: str = ""
     handoffs: tuple[PluginHandoff, ...] = field(default_factory=tuple)
@@ -73,7 +72,13 @@ class KernelHandle(Protocol):
     @property
     def pid(self) -> int | None: ...
 
-    def execute(self, code: str, *, timeout: float) -> KernelExecutionResult: ...
+    def execute(
+        self,
+        code: str,
+        *,
+        timeout: float,
+        on_output: Callable[[KernelOutput], None],
+    ) -> KernelExecutionResult: ...
 
     def stop(self, *, timeout: float) -> None: ...
 

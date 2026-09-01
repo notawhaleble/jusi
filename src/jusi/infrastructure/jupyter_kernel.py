@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from jupyter_client import KernelManager
 
@@ -223,12 +223,17 @@ class ManagedJupyterKernel:
         pid = getattr(provisioner, "pid", None)
         return int(pid) if isinstance(pid, int) and pid > 0 else None
 
-    def execute(self, code: str, *, timeout: float) -> KernelExecutionResult:
+    def execute(
+        self,
+        code: str,
+        *,
+        timeout: float,
+        on_output: Callable[[KernelOutput], None],
+    ) -> KernelExecutionResult:
         with self._lock:
             if self._closed or not self._is_alive():
                 raise self._kernel_died("Kernel is not alive before execution")
 
-            outputs: list[KernelOutput] = []
             handoffs: list[PluginHandoff] = []
             handoff_errors: list[str] = []
 
@@ -237,7 +242,7 @@ class ManagedJupyterKernel:
                 content = message.get("content", {})
                 if message_type == "stream":
                     name = str(content.get("name", "stdout"))
-                    outputs.append(
+                    on_output(
                         KernelOutput(
                             output_kind="stderr" if name == "stderr" else "stdout",
                             media_type="text/x-ansi",
@@ -267,12 +272,12 @@ class ManagedJupyterKernel:
                                     handoff_errors.append(str(exc))
                                 continue
                             if isinstance(value, str):
-                                outputs.append(KernelOutput(output_kind, str(media_type), value))
+                                on_output(KernelOutput(output_kind, str(media_type), value))
                 elif message_type == "error":
                     traceback = content.get("traceback", [])
                     text = "\n".join(str(line) for line in traceback) if isinstance(traceback, list) else str(traceback)
                     if text:
-                        outputs.append(KernelOutput("stderr", "text/x-ansi", text))
+                        on_output(KernelOutput("stderr", "text/x-ansi", text))
 
             try:
                 reply = self._client.execute_interactive(
@@ -314,10 +319,9 @@ class ManagedJupyterKernel:
                     },
                 )
             if content.get("status") == "ok":
-                return KernelExecutionResult("succeeded", tuple(outputs), handoffs=tuple(handoffs))
+                return KernelExecutionResult("succeeded", handoffs=tuple(handoffs))
             return KernelExecutionResult(
                 "failed",
-                tuple(outputs),
                 error_name=str(content.get("ename", "")),
                 error_value=str(content.get("evalue", "")),
                 handoffs=tuple(handoffs),

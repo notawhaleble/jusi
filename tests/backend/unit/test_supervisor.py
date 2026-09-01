@@ -30,17 +30,22 @@ class FakeKernel:
         self,
         result: KernelExecutionResult | None = None,
         stop_error: KernelAdapterError | None = None,
+        outputs: tuple[KernelOutput, ...] | None = None,
     ) -> None:
-        self.result = result or KernelExecutionResult(
-            "succeeded",
-            (KernelOutput("result", "text/plain", "2"),),
+        self.result = result or KernelExecutionResult("succeeded")
+        self.outputs = (
+            (KernelOutput("result", "text/plain", "2"),)
+            if outputs is None
+            else outputs
         )
         self.stopped = False
         self.stop_error = stop_error
 
-    def execute(self, code: str, *, timeout: float) -> KernelExecutionResult:
+    def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
         assert code
         assert timeout > 0
+        for output in self.outputs:
+            on_output(output)
         return self.result
 
     def stop(self, *, timeout: float) -> None:
@@ -878,7 +883,8 @@ def test_discovery_failure_prevents_kernel_start_and_publishes_no_runtime() -> N
 
 def test_observed_kernel_death_turns_kernel_off_and_attempts_cleanup() -> None:
     class DeadKernel(FakeKernel):
-        def execute(self, code: str, *, timeout: float) -> KernelExecutionResult:
+        def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
+            on_output(KernelOutput("stdout", "text/x-ansi", "before death\n"))
             raise KernelAdapterError(
                 "kernel exited",
                 layer="kernel",
@@ -907,6 +913,17 @@ def test_observed_kernel_death_turns_kernel_off_and_attempts_cleanup() -> None:
         "code_bytes": len(code.encode("utf-8")),
         "code_line_count": 2,
     }
+    execution_events = [
+        event for event in supervisor.events.events_after(0)
+        if event["trace_id"] == "trace_execute"
+    ]
+    assert [event["kind"] for event in execution_events[:4]] == [
+        "operation.started",
+        "execution.started",
+        "execution.output",
+        "failure.occurred",
+    ]
+    assert execution_events[2]["payload"]["data"] == "before death\n"
     assert supervisor.health()["kernel"]["state"] == "off"
     assert kernel.stopped
     death_events = supervisor.events.events_after(0)
