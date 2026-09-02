@@ -78,8 +78,55 @@ function FakeTransport:request(method, path, payload, _, callback)
       kernel = { kernel_id = "krn_runtime", state = "off" },
       cleanup = { result = "stopped" },
     }, nil)
+  elseif payload.kind == "close_client" then
+    callback({
+      ok = true,
+      client_id = payload.client_id,
+      cleanup = { result = "stopped" },
+    }, nil)
   end
   return {}
+end
+
+local function test_close_client_uses_focused_projection_identity()
+  local original_notify = vim.notify
+  vim.notify = function() end
+  local ok, failure = xpcall(function()
+    local notebook_buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(notebook_buf, 0, -1, false, { "╭──", "%%sql main", "select 1", "╰──" })
+    vim.api.nvim_win_set_buf(0, notebook_buf)
+    local transport = FakeTransport.new()
+    local session = jusi.connect({ buf = notebook_buf, transport = transport })
+    local cell_id = session.model:cell_at_row(1).id
+    session.controller.clients.cli_sql = {
+      client_id = "cli_sql",
+      cell_id = cell_id,
+    }
+    local client_buf = vim.api.nvim_create_buf(false, true)
+    local terminal_lines = {}
+    for _ = 1, 20 do
+      table.insert(terminal_lines, "terminal row")
+    end
+    vim.api.nvim_buf_set_lines(client_buf, 0, -1, false, terminal_lines)
+    vim.b[client_buf].jusi_role = "interactive_terminal"
+    vim.b[client_buf].jusi_notebook_id = session.model.notebook_id
+    vim.b[client_buf].jusi_cell_id = cell_id
+    vim.b[client_buf].jusi_client_id = "cli_sql"
+    vim.api.nvim_win_set_buf(0, client_buf)
+    vim.api.nvim_win_set_cursor(0, { 12, 0 })
+
+    jusi.close_client()
+
+    equal(transport.requests[2].method, "DELETE")
+    equal(transport.requests[2].path, "/v1/clients/cli_sql")
+    equal(transport.requests[2].payload.client_id, "cli_sql")
+    vim.api.nvim_buf_delete(client_buf, { force = true })
+    equal(jusi._destroy_session(notebook_buf), true)
+  end, debug.traceback)
+  vim.notify = original_notify
+  if not ok then
+    error(failure)
+  end
 end
 
 local function event(sequence, kind, payload)
@@ -211,6 +258,7 @@ end
 
 function M.run()
   test_explicit_command_workflow()
+  test_close_client_uses_focused_projection_identity()
   test_vipynb_filetype_and_legacy_connection_guard()
 end
 

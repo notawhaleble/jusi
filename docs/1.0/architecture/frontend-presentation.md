@@ -60,6 +60,11 @@ previous mode when it exits. This is a byte-transport requirement, not a focus
 policy: automatic surface creation continues to leave focus in the notebook,
 while a user may explicitly enter or focus the client terminal.
 
+Commands invoked from a client projection resolve that projection's exact
+client identity. Its terminal cursor is application-owned geometry and must
+never be interpreted as a notebook-text row. Commands invoked from the notebook
+may instead resolve through the model cell under the notebook cursor.
+
 `terminal_bridge_command` defaults to `{ "jusi", "terminal-bridge" }`. When a
 local `service_command` ends in `serve`, setup derives the bridge command from
 the same executable unless explicitly overridden. Remote service placement

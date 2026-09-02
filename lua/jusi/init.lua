@@ -346,36 +346,42 @@ function M.stop_kernel(buf)
 end
 
 function M.close_client(buf, row, requested_client_id)
-  local session = require_session(buf)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
   if not session then
     return nil
   end
   local client_id = requested_client_id
   if client_id == nil or client_id == "" then
-    local cursor_row = row
-    if cursor_row == nil then
-      cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
-    end
-    local cell = session.model:cell_at_row(cursor_row)
-    if not cell then
-      notify("cursor is not inside a cell", vim.log.levels.ERROR)
-      return nil
-    end
-    local matches = {}
-    for id, client in pairs(session.controller.clients) do
-      if client.cell_id == cell.id then
-        table.insert(matches, id)
+    local projected_client_id = vim.b[context_buf].jusi_client_id
+    if type(projected_client_id) == "string" and projected_client_id ~= "" then
+      client_id = projected_client_id
+    else
+      local cursor_row = row
+      if cursor_row == nil then
+        cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
       end
+      local cell = session.model:cell_at_row(cursor_row)
+      if not cell then
+        notify("cursor is not inside a cell", vim.log.levels.ERROR)
+        return nil
+      end
+      local matches = {}
+      for id, client in pairs(session.controller.clients) do
+        if client.cell_id == cell.id then
+          table.insert(matches, id)
+        end
+      end
+      if #matches ~= 1 then
+        notify(
+          #matches == 0 and "cell has no active plugin client"
+            or "cell has multiple active clients; pass an explicit client_id to :JusiCloseClient",
+          vim.log.levels.ERROR
+        )
+        return nil
+      end
+      client_id = matches[1]
     end
-    if #matches ~= 1 then
-      notify(
-        #matches == 0 and "cell has no active plugin client"
-          or "cell has multiple active clients; pass an explicit client_id to :JusiCloseClient",
-        vim.log.levels.ERROR
-      )
-      return nil
-    end
-    client_id = matches[1]
   end
   return session.controller:close_client(client_id, function(response, failure)
     if failure then

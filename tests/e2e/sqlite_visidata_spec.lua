@@ -74,7 +74,8 @@ function M.run()
     assert(terminal_text(record.buf):find("FileExistsError", 1, true) == nil,
       "isolated VisiData fixture attempted to persist user state:\n" .. terminal_text(record.buf))
 
-    jusi.close_client(buf, 1)
+    vim.api.nvim_set_current_win(record.window)
+    jusi.close_client()
     wait_for(5000, function()
       return next(session.controller.clients) == nil
         and next(session.controller.surfaces) == nil
