@@ -321,8 +321,15 @@ def jusi_kernel_adapter_v1():
         "families": [{"family_id": "fixture", "magic_name": "fixture"}],
     }
 
+_runtime_config = {}
+
+def configure_jusi_runtime_v1(config):
+    global _runtime_config
+    _runtime_config = config
+
 def load_ipython_extension(ipython):
     ipython.user_ns["fixture_adapter_loaded"] = 41
+    ipython.user_ns["fixture_adapter_config"] = _runtime_config
 """,
         encoding="utf-8",
     )
@@ -335,13 +342,23 @@ def load_ipython_extension(ipython):
         families=(("fixture", "fixture"),),
     )
     kernel = jupyter_kernel.ManagedJupyterKernelFactory().start(
-        "python3", timeout=8, adapters=(adapter,),
+        "python3",
+        timeout=8,
+        adapters=(adapter,),
+        configuration={"sql": {"main": {"provider": "sqlite"}}},
     )
     try:
         outputs = []
         result = kernel.execute("fixture_adapter_loaded + 1", timeout=5, on_output=outputs.append)
         assert result.outcome == "succeeded"
         assert any(output.data == "42" for output in outputs)
+        outputs = []
+        kernel.execute(
+            "fixture_adapter_config['sql']['main']['provider']",
+            timeout=5,
+            on_output=outputs.append,
+        )
+        assert any(output.data == "'sqlite'" for output in outputs)
     finally:
         kernel.stop(timeout=5)
 

@@ -32,6 +32,7 @@ dependencies = [
   "jupyter_client>=8,<9",
   "ipykernel>=6,<7",
   "tornado>=6,<7",
+  "tomli>=2,<3; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]

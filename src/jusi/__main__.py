@@ -13,6 +13,7 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser = subparsers.add_parser("serve", help="start the Jusi HTTP/SSE service")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8765)
+    serve_parser.add_argument("--config")
     bridge_parser = subparsers.add_parser(
         "terminal-bridge", help="attach the local terminal to one Jusi terminal surface"
     )
@@ -29,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command != "serve":
         parser.print_help()
         return 2
-    asyncio.run(serve(args.host, args.port))
+    asyncio.run(serve(args.host, args.port, config_path=args.config))
     return 0
 
 

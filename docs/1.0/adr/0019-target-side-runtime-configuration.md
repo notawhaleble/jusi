@@ -1,6 +1,6 @@
 # ADR 0019: Configuration Is A Target-Side Runtime Snapshot
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-09-02
 
 ## Context
@@ -16,10 +16,17 @@ sources, but the 1.0 service currently has no configuration port or snapshot.
 Implementing SQL before resolving this would either hard-code a test alias or
 reintroduce frontend-owned configuration.
 
-## Proposed Decision
+## Decision
 
 - The authoritative service loads configuration on the kernel target. Neovim
   neither reads nor transmits backend/plugin configuration.
+- The file should describe only capabilities and routing relevant to that
+  target. In particular, a shared remote host should not receive unrelated
+  local-machine configuration merely because one Neovim instance knows it.
+- Literal credentials are permitted for compatibility but discouraged. Exact
+  providers should support resolving secrets from their worker environment or
+  another target-side secret facility, so the TOML can contain a reference or
+  non-secret connection description instead of the secret value.
 - The initial canonical file remains `~/.jusi/jusi.toml` to preserve the user's
   established configuration. `jusi serve --config PATH` provides an explicit
   target-side override for tests and alternate deployments. A missing default
@@ -67,6 +74,9 @@ reintroduce frontend-owned configuration.
   snapshot exists.
 - A later secret-provider integration may replace literal credentials in TOML
   without changing frontend or public protocol ownership.
+- A shared host is not made private by this design. Its administrator and
+  processes with the same OS authority may be able to inspect kernel/worker
+  environments and memory; deployment permissions remain part of target setup.
 
 ## Rejected Alternatives
 

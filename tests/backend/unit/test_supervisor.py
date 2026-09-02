@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 
 import pytest
@@ -14,6 +15,7 @@ from jusi.application.ports import (
     PluginWorkerOperationResult,
     PluginWorkerSpec,
     PluginHandoff,
+    RuntimeConfigurationError,
     TerminalSurfaceRequest,
 )
 from jusi.application.plugin_workers import PluginWorkerManager
@@ -60,12 +62,14 @@ class FakeFactory:
         self.kernel = kernel or FakeKernel()
         self.error = error
         self.start_count = 0
+        self.configurations: list[dict] = []
 
-    def start(self, kernel_name: str, *, timeout: float, adapters=()) -> FakeKernel:
+    def start(self, kernel_name: str, *, timeout: float, adapters=(), configuration=None) -> FakeKernel:  # type: ignore[no-untyped-def]
         assert kernel_name == "python3"
         assert timeout > 0
         self.start_count += 1
         self.adapters = adapters
+        self.configurations.append(dict(configuration or {}))
         if self.error is not None:
             raise self.error
         return self.kernel
@@ -77,12 +81,13 @@ class SequenceFactory(FakeFactory):
         self.index = 0
         super().__init__(kernels[0])
 
-    def start(self, kernel_name: str, *, timeout: float, adapters=()) -> FakeKernel:
+    def start(self, kernel_name: str, *, timeout: float, adapters=(), configuration=None) -> FakeKernel:  # type: ignore[no-untyped-def]
         assert kernel_name == "python3"
         assert timeout > 0
         kernel = self.kernels[self.index]
         self.index += 1
         self.adapters = adapters
+        self.configurations.append(dict(configuration or {}))
         return kernel
 
 
@@ -112,6 +117,17 @@ class FakeDiscovery:
             },
             process=ProcessDiagnostics(pid=9000 + len(self.calls), exit_code=0),
         )
+
+
+class SequenceConfiguration:
+    def __init__(self, values: list[dict]) -> None:
+        self.values = values
+        self.calls = 0
+
+    def load(self) -> dict:
+        value = self.values[self.calls]
+        self.calls += 1
+        return value
 
 
 def make_supervisor(factory: FakeFactory, discovery: FakeDiscovery | None = None) -> Supervisor:
@@ -278,10 +294,12 @@ def test_health_does_not_wait_for_slow_kernel_start_io() -> None:
     release = threading.Event()
 
     class BlockingFactory(FakeFactory):
-        def start(self, kernel_name: str, *, timeout: float, adapters=()) -> FakeKernel:
+        def start(self, kernel_name: str, *, timeout: float, adapters=(), configuration=None) -> FakeKernel:  # type: ignore[no-untyped-def]
             entered.set()
             assert release.wait(timeout=2)
-            return super().start(kernel_name, timeout=timeout, adapters=adapters)
+            return super().start(
+                kernel_name, timeout=timeout, adapters=adapters, configuration=configuration,
+            )
 
     supervisor = make_supervisor(BlockingFactory())
     start_errors: list[BaseException] = []
@@ -982,6 +1000,82 @@ def test_full_restart_replaces_runtime_discovery_kernel_and_notebook_identity() 
         "operation.completed",
     ]
     assert [event["payload"]["state"] for event in restart_events if event["kind"] == "kernel.state_changed"] == ["off", "on"]
+
+
+def test_full_restart_reloads_private_target_configuration_snapshot() -> None:
+    factory = SequenceFactory([FakeKernel(), FakeKernel()])
+    configuration = SequenceConfiguration([
+        {"sql": {"main": {"provider": "sqlite", "token": "first-secret"}}},
+        {"sql": {"main": {"provider": "sqlite", "token": "second-secret"}}},
+    ])
+    supervisor = Supervisor(
+        factory,
+        FakeDiscovery(),
+        runtime_configuration=configuration,
+    )
+
+    started = supervisor.start_kernel(
+        notebook_id="nb_old", kernel_name="python3", trace_id="trace_start",
+    )
+    restarted = supervisor.restart_notebook(
+        runtime_id=started["runtime"]["runtime_id"],
+        kernel_id=started["kernel"]["kernel_id"],
+        notebook_id="nb_old",
+        next_notebook_id="nb_new",
+        kernel_name="python3",
+        trace_id="trace_restart",
+    )
+
+    assert configuration.calls == 2
+    assert factory.configurations[0]["sql"]["main"]["token"] == "first-secret"
+    assert factory.configurations[1]["sql"]["main"]["token"] == "second-secret"
+    public_state = json.dumps({
+        "started": started,
+        "restarted": restarted,
+        "health": supervisor.health(),
+        "events": supervisor.events.events_after(0),
+    })
+    assert "first-secret" not in public_state
+    assert "second-secret" not in public_state
+
+
+def test_configuration_failure_is_redacted_and_prevents_discovery_and_spawn() -> None:
+    class BrokenConfiguration:
+        def load(self) -> dict:
+            raise RuntimeConfigurationError(
+                "Runtime configuration is not valid TOML",
+                path="/target/config/jusi.toml",
+                line=7,
+                column=19,
+            )
+
+    factory = FakeFactory()
+    discovery = FakeDiscovery()
+    supervisor = Supervisor(
+        factory,
+        discovery,
+        runtime_configuration=BrokenConfiguration(),
+    )
+
+    with pytest.raises(SupervisorError) as captured:
+        supervisor.start_kernel(
+            notebook_id="nb_config", kernel_name="python3", trace_id="trace_config",
+        )
+
+    failure = captured.value.failure
+    assert captured.value.status_code == 400
+    assert failure.layer == "service"
+    assert failure.operation == "start_kernel"
+    assert failure.reason == "invalid_request"
+    assert failure.resource.resource_id == "nb_config"
+    assert failure.details == {
+        "path": "/target/config/jusi.toml",
+        "line": 7,
+        "column": 19,
+    }
+    assert discovery.calls == []
+    assert factory.start_count == 0
+    assert supervisor.health()["kernel"] is None
 
 
 def test_restart_discovery_failure_after_teardown_leaves_kernel_off_without_stale_runtime() -> None:

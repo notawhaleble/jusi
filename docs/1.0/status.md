@@ -4,7 +4,7 @@ Updated: 2026-09-02
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0019 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -49,6 +49,9 @@ Updated: 2026-09-02
 - A real-kernel text reliability scenario proves pre-response SSE delivery, ordered ANSI stdout/stderr/result media, ANSI traceback preservation, survival after an ordinary execution error, and successful execution of a generated roughly quarter-megabyte markdown-like body. It does not reproduce or explain Incident 0001.
 - The same scenario proves a 40 KiB Unicode/ANSI output is split into byte-bounded SSE records and reconstructs exactly; frontend coverage deliberately splits an ANSI escape sequence across writes and lets Neovim consume it.
 - The SQL/VisiData migration audit preserves family alias routing, provider-owned VisiData/database behavior, durable clients, and generic terminal presentation while retiring 0.x handler/runtime/frontend-config machinery. The clean `jusi-sql` and `jusi-sqlite` repositories remain untouched and still target the incompatible 0.x contract.
+- ADR 0019 is accepted with the shared-host qualification: runtime configuration is target-side and should contain only capabilities/routing relevant to that target; providers should normally resolve credentials from their worker environment or another target-side secret mechanism.
+- `jusi serve` now snapshots bounded data-only TOML from target-side `~/.jusi/jusi.toml` on every kernel start/restart, with `--config PATH` for an explicit target file. Missing defaults are empty; missing explicit files and malformed/oversized/unsupported data fail the runtime operation without stopping the service, discovery, or spawning a kernel. Contents remain absent from public state and diagnostics.
+- Kernel adapters may receive that private frozen snapshot through `configure_jusi_runtime_v1` before their IPython extension loads and readiness attests. A real-kernel test verifies delivery; restart and redaction tests verify fresh generations without exposing values.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
 - The archival tag `legacy/0.x-pre-1.0-2026-08-31` and detached sibling worktree `/Users/niku/Documents/dev/jusi-0.x` preserve the audited backend snapshot.
 
@@ -78,7 +81,8 @@ ADR 0016's terminal slice, exact reattachment, and development plugin fixture
 are implemented and automatically verified. Web work is out of the near-term
 path. Incremental ordinary output, realistic ANSI/error streams, kernel survival,
 large-body input, and bounded exact output are now automatically verified. The
-SQL/VisiData audit exposed the missing runtime-configuration authority as the
-next review boundary. ADR 0019 proposes a private target-side snapshot loaded on
-every start/restart. No SQL or configuration implementation should begin until
-that ownership and lifetime are accepted or revised.
+SQL/VisiData audit exposed the missing runtime-configuration authority; ADR 0019
+is accepted and its core loader/snapshot/adapter boundary is implemented. The
+next boundary is a central read-only SQL/SQLite/VisiData development fixture
+through the real generic plugin and terminal paths, without changing the clean
+external 0.x plugin repositories.

@@ -90,7 +90,27 @@ class KernelFactory(Protocol):
         *,
         timeout: float,
         adapters: tuple[KernelAdapterSpec, ...] = (),
+        configuration: dict[str, Any] | None = None,
     ) -> KernelHandle: ...
+
+
+class RuntimeConfigurationError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        path: str,
+        line: int | None = None,
+        column: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.path = path
+        self.line = line
+        self.column = column
+
+
+class RuntimeConfigurationLoader(Protocol):
+    def load(self) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)

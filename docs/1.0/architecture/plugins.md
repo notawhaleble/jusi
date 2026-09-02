@@ -114,6 +114,13 @@ the standard IPython `load_ipython_extension(ipython)` hook. One aggregate,
 closed attestation must exactly match catalog plugin version and family claims
 before the supervisor publishes kernel state `on`.
 
+Before the IPython extension hook, an adapter may expose
+`configure_jusi_runtime_v1(configuration)`. Core supplies the freshly loaded,
+private target-side configuration snapshot from ADR 0019. This call is an
+in-process backend initialization boundary, not public protocol; its contents
+must never enter the adapter manifest, handoff metadata, presentation output,
+health, events, or diagnostics. Family code interprets its own section.
+
 Execution adapters emit exact-provider control through
 `application/vnd.jusi.handoff.v1+json`. Core captures at most one record,
 removes it from renderable outputs, and validates it against the current

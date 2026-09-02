@@ -19,6 +19,7 @@ The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-co
 - [notebook format](docs/1.0/notebook-format.md)
 - [state and resource model](docs/1.0/state-model.md)
 - [failure taxonomy](docs/1.0/failure-taxonomy.md)
+- [target-side configuration](docs/1.0/configuration.md)
 - [architecture overview](docs/1.0/architecture/overview.md)
 - [current status](docs/1.0/status.md)
 - [shared protocol](protocol/README.md)
@@ -26,7 +27,7 @@ The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-co
 
 ## Current Boundary
 
-The implemented slice includes service readiness, fresh plugin-catalog discovery, kernel start, execution and ordered results, idempotent kernel stop, full notebook-runtime restart, the backend-independent notebook model, and a replaceable headless-Neovim transport/controller binding. Plugin workers, kernel adapters, rich media, and interactive transports remain deferred. Existing 0.x reconnect, healthcheck, prepared-client, stdio, and process-oriented terminal-attachment behavior is not part of 1.0.
+The implemented slice includes service readiness, fresh plugin-catalog discovery, isolated exact-plugin workers, attested kernel adapters, target-side runtime-configuration snapshots, incremental ordered text output, generic interactive terminal surfaces, idempotent kernel stop, full notebook-runtime restart, the backend-independent notebook model, and a replaceable headless-Neovim transport/controller binding. Web/rich presentation is deferred. Existing 0.x reconnect, healthcheck, prepared-client, stdio, and process-oriented terminal-attachment behavior is not part of 1.0.
 
 ## Current Manual Workflow
 
@@ -35,6 +36,10 @@ Start the service in a regular terminal:
 ```sh
 .venv/bin/jusi serve
 ```
+
+This uses target-side `~/.jusi/jusi.toml` when present. Use
+`.venv/bin/jusi serve --config /path/to/jusi.toml` for an explicit path; Neovim
+does not read or upload backend configuration.
 
 With this repository installed as a Neovim plugin, open a `.vipynb` buffer containing 1.0
 cell delimiters and use:

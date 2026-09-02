@@ -29,9 +29,10 @@ class FakeKernel:
 
 
 class FakeFactory:
-    def start(self, kernel_name: str, *, timeout: float, adapters=()) -> FakeKernel:
+    def start(self, kernel_name: str, *, timeout: float, adapters=(), configuration=None) -> FakeKernel:  # type: ignore[no-untyped-def]
         assert kernel_name == "python3"
         assert adapters == ()
+        assert configuration == {}
         return FakeKernel()
 
 

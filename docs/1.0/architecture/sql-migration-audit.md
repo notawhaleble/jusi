@@ -73,3 +73,8 @@ repositories remain unchanged.
 The first slice is deliberately read-only. Transaction policy and mutation
 confirmation belong to the SQL family/provider design, not the core walking
 skeleton.
+
+For shared remote targets, the runtime TOML should contain only that target's
+capability/routing configuration. Provider secrets should normally be resolved
+from the target worker environment or a provider-owned secret facility rather
+than copied from the user's local machine into TOML.

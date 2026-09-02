@@ -14,6 +14,8 @@ from jusi.application.ports import (
     PluginCatalogDiscovery,
     PluginCatalogDiscoveryError,
     PluginWorkerError,
+    RuntimeConfigurationError,
+    RuntimeConfigurationLoader,
 )
 from jusi.application.plugin_workers import PluginWorkerManager, PluginWorkerSelectionError
 from jusi.application.terminal_surfaces import TerminalSurfaceError, TerminalSurfaceManager
@@ -48,6 +50,7 @@ class Supervisor:
         plugin_discovery: PluginCatalogDiscovery,
         plugin_workers: PluginWorkerManager | None = None,
         terminal_surfaces: TerminalSurfaceManager | None = None,
+        runtime_configuration: RuntimeConfigurationLoader | None = None,
     ) -> None:
         self.supervisor_id = new_id("sup")
         self.events = EventLog(self.supervisor_id)
@@ -55,6 +58,7 @@ class Supervisor:
         self._plugin_discovery = plugin_discovery
         self._plugin_workers = plugin_workers
         self._terminal_surfaces = terminal_surfaces
+        self._runtime_configuration = runtime_configuration
         if terminal_surfaces is not None:
             terminal_surfaces.set_fatal_handler(self.terminal_surface_failed)
         self._operation_lock = threading.RLock()
@@ -63,6 +67,7 @@ class Supervisor:
         self._kernel_handle: KernelHandle | None = None
         self._known_kernel_ids: set[str] = set()
         self._current_runtime: NotebookRuntime | None = None
+        self._current_configuration: dict[str, Any] | None = None
         self._known_runtime_ids: set[str] = set()
         self._clients: dict[str, ClientResource] = {}
         self._known_client_ids: set[str] = set()
@@ -266,6 +271,12 @@ class Supervisor:
                     raise SupervisorError(503, failure)
             with self._state_lock:
                 self._current_runtime = None
+                self._current_configuration = None
+            configuration = self._load_configuration(
+                trace_id=trace_id,
+                operation=operation,
+                notebook_id=notebook_id,
+            )
             runtime_id = new_id("run")
             discovery_id = new_id("dsc")
             with self._state_lock:
@@ -294,7 +305,10 @@ class Supervisor:
                 self._known_kernel_ids.add(kernel_id)
             try:
                 handle = self._kernel_factory.start(
-                    kernel_name, timeout=timeout, adapters=self._kernel_adapter_specs(discovery.catalog),
+                    kernel_name,
+                    timeout=timeout,
+                    adapters=self._kernel_adapter_specs(discovery.catalog),
+                    configuration=configuration,
                 )
             except KernelAdapterError as exc:
                 failure = self._failure(
@@ -333,6 +347,7 @@ class Supervisor:
                 self._current_kernel = kernel
                 self._kernel_handle = handle
                 self._current_runtime = runtime
+                self._current_configuration = configuration
             self.events.append(
                 trace_id=trace_id,
                 layer="kernel",
@@ -1186,6 +1201,15 @@ class Supervisor:
                 cleanup["terminal_surfaces"] = surface_cleanup
             with self._state_lock:
                 self._current_runtime = None
+                self._current_configuration = None
+
+            configuration = self._load_configuration(
+                trace_id=trace_id,
+                operation=operation,
+                notebook_id=next_notebook_id,
+                cleanup=cleanup,
+                teardown_completed=True,
+            )
 
             next_runtime_id = new_id("run")
             discovery_id = new_id("dsc")
@@ -1216,7 +1240,10 @@ class Supervisor:
 
             try:
                 next_handle = self._kernel_factory.start(
-                    kernel_name, timeout=timeout, adapters=self._kernel_adapter_specs(discovery.catalog),
+                    kernel_name,
+                    timeout=timeout,
+                    adapters=self._kernel_adapter_specs(discovery.catalog),
+                    configuration=configuration,
                 )
             except KernelAdapterError as exc:
                 failure = self._failure(
@@ -1265,6 +1292,7 @@ class Supervisor:
                 self._current_kernel = next_kernel
                 self._kernel_handle = next_handle
                 self._current_runtime = next_runtime
+                self._current_configuration = configuration
             self.events.append(
                 trace_id=trace_id,
                 layer="kernel",
@@ -1392,6 +1420,48 @@ class Supervisor:
             details=details or {},
             caused_by_failure_id=caused_by_failure_id,
         )
+
+    def _load_configuration(
+        self,
+        *,
+        trace_id: str,
+        operation: Operation,
+        notebook_id: str,
+        cleanup: dict[str, Any] | None = None,
+        teardown_completed: bool | None = None,
+    ) -> dict[str, Any]:
+        if self._runtime_configuration is None:
+            return {}
+        try:
+            return self._runtime_configuration.load()
+        except RuntimeConfigurationError as exc:
+            details: dict[str, Any] = {"path": exc.path}
+            if exc.line is not None:
+                details["line"] = exc.line
+            if exc.column is not None:
+                details["column"] = exc.column
+            if teardown_completed is not None:
+                details["teardown_completed"] = teardown_completed
+            failure = self._failure(
+                trace_id=trace_id,
+                layer="service",
+                operation=operation.kind,
+                reason="invalid_request",
+                message=str(exc),
+                retryable=False,
+                scope="request",
+                resource=ResourceRef("notebook", notebook_id),
+                details=details,
+            )
+            self._emit_failure(failure)
+            self._complete_operation(
+                operation,
+                "failed",
+                resource=failure.resource,
+                failure=failure,
+                cleanup=cleanup,
+            )
+            raise SupervisorError(400, failure) from exc
 
     def _discovery_failure(
         self,

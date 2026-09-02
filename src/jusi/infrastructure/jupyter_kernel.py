@@ -52,25 +52,36 @@ def _text_chunks(value: str, *, limit: int = MAX_OUTPUT_EVENT_BYTES) -> Iterator
         start = end
 
 
-def _load_kernel_adapters(client: Any, adapters: tuple[KernelAdapterSpec, ...], *, timeout: float) -> None:
+def _load_kernel_adapters(
+    client: Any,
+    adapters: tuple[KernelAdapterSpec, ...],
+    configuration: dict[str, Any],
+    *,
+    timeout: float,
+) -> None:
     modules = [adapter.module for adapter in adapters]
     source = "\n".join([
         "import importlib as _jusi_importlib",
+        "import json as _jusi_json",
         "from IPython.display import display as _jusi_display",
         f"_jusi_modules = {json.dumps(modules)}",
+        f"_jusi_runtime_config = _jusi_json.loads({json.dumps(json.dumps(configuration, ensure_ascii=False))})",
         "_jusi_adapters = []",
         "for _jusi_module_name in _jusi_modules:",
         "    _jusi_module = _jusi_importlib.import_module(_jusi_module_name)",
         "    _jusi_factory = getattr(_jusi_module, 'jusi_kernel_adapter_v1')",
         "    _jusi_manifest = dict(_jusi_factory())",
         "    _jusi_manifest['module'] = _jusi_module_name",
+        "    _jusi_configure = getattr(_jusi_module, 'configure_jusi_runtime_v1', None)",
+        "    if callable(_jusi_configure):",
+        "        _jusi_configure(dict(_jusi_runtime_config))",
         "    _jusi_loader = getattr(_jusi_module, 'load_ipython_extension', None)",
         "    if callable(_jusi_loader):",
         "        _jusi_loader(get_ipython())",
         "    _jusi_adapters.append(_jusi_manifest)",
         f"_jusi_display({{{ADAPTER_ATTESTATION_MIME!r}: {{'protocol_version': 1, 'kind': 'plugin.adapters_ready', 'adapters': _jusi_adapters}}}}, raw=True)",
-        "del _jusi_importlib, _jusi_display, _jusi_modules, _jusi_adapters",
-        "del _jusi_module_name, _jusi_module, _jusi_factory, _jusi_manifest, _jusi_loader",
+        "del _jusi_importlib, _jusi_json, _jusi_display, _jusi_modules, _jusi_runtime_config, _jusi_adapters",
+        "del _jusi_module_name, _jusi_module, _jusi_factory, _jusi_manifest, _jusi_configure, _jusi_loader",
     ])
     attestations: list[object] = []
     errors: list[str] = []
@@ -176,6 +187,7 @@ class ManagedJupyterKernelFactory(KernelFactory):
         *,
         timeout: float,
         adapters: tuple[KernelAdapterSpec, ...] = (),
+        configuration: dict[str, Any] | None = None,
     ):
         stderr_file = tempfile.NamedTemporaryFile(prefix="jusi-kernel-", suffix=".stderr", delete=False)
         stderr_path = stderr_file.name
@@ -187,7 +199,7 @@ class ManagedJupyterKernelFactory(KernelFactory):
             client.start_channels()
             client.wait_for_ready(timeout=timeout)
             if adapters:
-                _load_kernel_adapters(client, adapters, timeout=timeout)
+                _load_kernel_adapters(client, adapters, dict(configuration or {}), timeout=timeout)
             return ManagedJupyterKernel(manager, client, stderr_file, stderr_path)
         except Exception as exc:
             kernel_was_started = bool(manager.has_kernel)
