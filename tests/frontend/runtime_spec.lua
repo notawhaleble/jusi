@@ -88,7 +88,7 @@ function FakeTransport:request(method, path, payload, _, callback)
   return {}
 end
 
-local function test_close_client_uses_focused_projection_identity()
+local function test_client_commands_use_focused_projection_identity()
   local original_notify = vim.notify
   vim.notify = function() end
   local ok, failure = xpcall(function()
@@ -115,11 +115,19 @@ local function test_close_client_uses_focused_projection_identity()
     vim.api.nvim_win_set_buf(0, client_buf)
     vim.api.nvim_win_set_cursor(0, { 12, 0 })
 
+    session.controller.kernel_id = "krn_runtime"
+    session.controller.kernel_state = "on"
+    jusi.execute()
+    equal(transport.requests[2].method, "POST")
+    equal(transport.requests[2].path, "/v1/kernels/krn_runtime/executions")
+    equal(transport.requests[2].payload.cell_id, cell_id)
+    equal(transport.requests[2].payload.code, "%%sql main\nselect 1")
+
     jusi.close_client()
 
-    equal(transport.requests[2].method, "DELETE")
-    equal(transport.requests[2].path, "/v1/clients/cli_sql")
-    equal(transport.requests[2].payload.client_id, "cli_sql")
+    equal(transport.requests[3].method, "DELETE")
+    equal(transport.requests[3].path, "/v1/clients/cli_sql")
+    equal(transport.requests[3].payload.client_id, "cli_sql")
     vim.api.nvim_buf_delete(client_buf, { force = true })
     equal(jusi._destroy_session(notebook_buf), true)
   end, debug.traceback)
@@ -258,7 +266,7 @@ end
 
 function M.run()
   test_explicit_command_workflow()
-  test_close_client_uses_focused_projection_identity()
+  test_client_commands_use_focused_projection_identity()
   test_vipynb_filetype_and_legacy_connection_guard()
 end
 

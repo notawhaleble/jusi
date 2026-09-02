@@ -92,6 +92,7 @@ function M.run()
     wait_for(3000, function()
       return terminal_text(replacement.buf):find("initial=", 1, true) ~= nil
     end, "replacement target application did not start")
+    vim.api.nvim_set_current_win(replacement.window)
     vim.api.nvim_chan_send(replacement.job_id, "\x03")
     wait_for(5000, function()
       return next(session.controller.clients) == nil
@@ -103,6 +104,23 @@ function M.run()
     assert(vim.iter(notifications):any(function(message)
       return message:find("client/run_terminal_surface/channel_closed", 1, true) ~= nil
     end), vim.inspect(notifications))
+
+    assert(vim.api.nvim_get_current_buf() == buf,
+      "focused terminal exit did not return to the notebook buffer")
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    assert(session.model:cell_at_row(1) ~= nil,
+      "focused terminal exit invalidated the notebook cell model")
+    jusi.execute()
+    wait_for(10000, function()
+      return next(session.interactive.surfaces) ~= nil
+    end, "notebook execution after focused target exit did not create a new client")
+    local _, final_record = next(session.interactive.surfaces)
+    jusi.close_client(buf, 1, final_record.client.client_id)
+    wait_for(5000, function()
+      return next(session.controller.clients) == nil
+        and next(session.controller.surfaces) == nil
+        and next(session.interactive.surfaces) == nil
+    end, "final client cleanup did not converge")
 
     jusi.stop_service(buf)
     wait_for(8000, function()

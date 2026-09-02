@@ -57,6 +57,22 @@ local function require_session(buf)
   return session
 end
 
+local function cell_from_context(session, context_buf, row)
+  local projected_cell_id = vim.b[context_buf].jusi_cell_id
+  if type(projected_cell_id) == "string" and projected_cell_id ~= "" then
+    return session.model:cell_by_id(projected_cell_id)
+  end
+  local cursor_row = row
+  if cursor_row == nil then
+    local window = vim.fn.bufwinid(context_buf)
+    if window == -1 then
+      return nil
+    end
+    cursor_row = vim.api.nvim_win_get_cursor(window)[1] - 1
+  end
+  return session.model:cell_at_row(cursor_row)
+end
+
 local function accepts_native_notebook(buf)
   local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
   if notebook.parser.detect_format(lines) ~= "legacy_0_x" then
@@ -311,15 +327,12 @@ function M.restart(buf)
 end
 
 function M.execute(buf, row)
-  local session = require_session(buf)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
   if not session then
     return nil
   end
-  local cursor_row = row
-  if cursor_row == nil then
-    cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
-  end
-  local cell = session.model:cell_at_row(cursor_row)
+  local cell = cell_from_context(session, context_buf, row)
   if not cell then
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
@@ -357,11 +370,7 @@ function M.close_client(buf, row, requested_client_id)
     if type(projected_client_id) == "string" and projected_client_id ~= "" then
       client_id = projected_client_id
     else
-      local cursor_row = row
-      if cursor_row == nil then
-        cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
-      end
-      local cell = session.model:cell_at_row(cursor_row)
+      local cell = cell_from_context(session, context_buf, row)
       if not cell then
         notify("cursor is not inside a cell", vim.log.levels.ERROR)
         return nil
@@ -393,15 +402,12 @@ function M.close_client(buf, row, requested_client_id)
 end
 
 function M.open_output(buf, row)
-  local session = require_session(buf)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
   if not session then
     return nil
   end
-  local cursor_row = row
-  if cursor_row == nil then
-    cursor_row = vim.api.nvim_win_get_cursor(0)[1] - 1
-  end
-  local cell = session.model:cell_at_row(cursor_row)
+  local cell = cell_from_context(session, context_buf, row)
   if not cell then
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
