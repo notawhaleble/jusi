@@ -6,6 +6,17 @@ core Jusi or modifying the external 0.x `jusi-sql` and `jusi-sqlite` projects.
 
 It is discovered only when this directory is explicitly added to `PYTHONPATH`.
 
+The fixture deliberately keeps four process roles in separate import modules:
+
+- `jusi_sqlite_catalog`: data-only discovery metadata
+- `jusi_sqlite_kernel`: IPython adapter and `%%sql` handoff
+- `jusi_sqlite_worker`: isolated client worker and private launch payload
+- `jusi_sqlite_application`: SQLite query and VisiData terminal application
+
+Do not collapse these roles back into one import module. In particular, the
+worker and terminal application must not import IPython; fresh client startup
+is a user-visible path.
+
 The automated Neovim scenario creates its own database and config. For a manual
 run, create equivalents outside the repository:
 

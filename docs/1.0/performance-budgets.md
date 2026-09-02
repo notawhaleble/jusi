@@ -61,3 +61,21 @@ The benchmark currently enforces:
 - at most 12 scanned lines and two reconciled cells for its localized split/merge workload
 
 Service, event-burst, sequential-execution, and failure-cleanup benchmarks remain deferred beyond the notebook-model slice.
+
+## Interactive SQL Development Baseline
+
+The central SQLite/VisiData fixture is diagnostic rather than a production
+performance promise. On the 2026-09-02 reference development machine (macOS
+arm64, Python 3.9, Neovim 0.11.4, loopback service, warm kernel, eight fresh
+clients), splitting catalog, kernel, worker, and application imports changed:
+
+- `JusiExecute` to visible VisiData value: approximately 1.54 s median to
+  0.65 s median
+- command to published client/surface: approximately 204 ms to 54 ms
+- published surface to visible value: approximately 1.33 s to 0.59 s
+
+The removed cost was accidental repeated IPython import/initialization in the
+worker and terminal application. CI enforces the import boundaries instead of
+these machine-dependent elapsed times. Future SQL work should retain a
+diagnostic execute-to-first-draw benchmark and record warm/cold process and
+target conditions when changing this baseline.

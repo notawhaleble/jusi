@@ -24,6 +24,10 @@ repositories remain unchanged.
   required for the first slice.
 - Terminal geometry is supplied by the generic terminal surface. VisiData
   remains the terminal renderer for datasets; Neovim does not render SQL rows.
+- Catalog discovery, kernel adapter, plugin worker, and terminal application
+  must be separate import boundaries. The terminal application must not import
+  IPython merely because the kernel adapter does, and the worker must not load
+  either IPython or VisiData while establishing a client.
 - Full notebook restart reloads target configuration, rediscovers providers,
   imports adapters in a fresh kernel, and starts no stale SQL worker.
 
