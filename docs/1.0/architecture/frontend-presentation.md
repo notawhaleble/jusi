@@ -55,6 +55,11 @@ plugin-provided command, environment, or payload. Target bytes therefore flow
 through Neovim's terminal emulator, while plugin application state and the PTY
 remain at the target service.
 
+The bridge places its own Neovim-terminal stdin in raw mode and restores the
+previous mode when it exits. This is a byte-transport requirement, not a focus
+policy: automatic surface creation continues to leave focus in the notebook,
+while a user may explicitly enter or focus the client terminal.
+
 `terminal_bridge_command` defaults to `{ "jusi", "terminal-bridge" }`. When a
 local `service_command` ends in `serve`, setup derives the bridge command from
 the same executable unless explicitly overridden. Remote service placement

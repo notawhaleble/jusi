@@ -89,7 +89,10 @@ def run_application() -> int:
         value = os.read(sys.stdin.fileno(), 4096)
         if not value:
             return 0
-        os.write(sys.stdout.fileno(), b"\x1b[33m" + value + b"\x1b[0m")
+        if b"\x03" in value:
+            os.write(sys.stdout.fileno(), b"\r\ntarget received control-c and will exit\r\n")
+            return 7
+        os.write(sys.stdout.fileno(), b"\x1b[33mtarget:" + value + b"\x1b[0m")
 
 
 if __name__ == "__main__":

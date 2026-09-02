@@ -46,6 +46,12 @@ runtime. It is one replaceable transport adapter for one surface. The
 authoritative service, plugin worker, application, and PTY remain at the kernel
 target.
 
+The bridge owns the terminal mode of its local stdin while it runs. It saves
+that TTY's attributes, selects raw mode before reading input, and restores the
+attributes on every exit path. Consequently individual keys and control bytes
+are relayed immediately: the local line discipline must neither echo and buffer
+them until Enter nor turn Ctrl-C into a signal for the bridge process.
+
 The frontend never executes an attach command or environment supplied by a
 plugin or remote service. A surface descriptor contains only closed protocol
 data such as `surface_id`, `client_id`, kind, capabilities, relative endpoint,
@@ -171,6 +177,11 @@ These remain permanent regression requirements:
   stop.
 - Bridge/WebSocket loss must leave kernel state unchanged and produce explicit
   surface/transport observations.
+- Single keys and control bytes must cross the local bridge TTY immediately,
+  and the bridge must restore the prior TTY mode when it exits.
+- Killing only the bridge must retain the target application/client for an
+  explicit continuity decision; an observed target application exit must
+  retire that client while leaving the kernel unchanged.
 - Local and remote-loopback tests must use the same surface descriptor and
   bridge behavior; only the configured service URL differs.
 - Expired stream continuity must be detected, never guessed around.

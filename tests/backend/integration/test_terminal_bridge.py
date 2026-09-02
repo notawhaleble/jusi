@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import os
+import pty
+import termios
 
 import pytest
 import tornado.httpserver
@@ -160,6 +163,7 @@ async def _bridge_round_trip() -> None:
         stderr_fd=error_write,
         geometry=lambda: geometry[0],
         install_signal_handler=False,
+        manage_input_mode=False,
     )
     task = asyncio.create_task(bridge.run())
     try:
@@ -220,6 +224,7 @@ def test_output_cursor_gaps_are_rejected_without_guessing() -> None:
         stdout_fd=output_write,
         geometry=lambda: os.terminal_size((80, 24)),
         install_signal_handler=False,
+        manage_input_mode=False,
     )
     try:
         bridge._accept_output(OUTPUT_HEADER.pack(1, 1, 0) + b"abc")
@@ -268,6 +273,7 @@ async def _reconnect_round_trip(*, expire: bool) -> None:
         install_signal_handler=False,
         reconnect_min_delay=0.01,
         reconnect_max_delay=0.02,
+        manage_input_mode=False,
     )
     task = asyncio.create_task(bridge.run())
     caught: BaseException | None = None
@@ -306,3 +312,57 @@ async def _reconnect_round_trip(*, expire: bool) -> None:
         assert b"transport reconnected" in diagnostics
     if caught is not None:
         raise caught
+
+
+def test_bridge_forwards_single_keys_and_control_c_from_a_raw_tty_then_restores_it() -> None:
+    asyncio.run(_raw_tty_round_trip())
+
+
+async def _raw_tty_round_trip() -> None:
+    input_master, input_slave = pty.openpty()
+    output_read, output_write = os.pipe()
+    error_read, error_write = os.pipe()
+    original_mode = copy.deepcopy(termios.tcgetattr(input_slave))
+    FakeTerminalEndpoint.messages = []
+    FakeTerminalEndpoint.attached = asyncio.Event()
+    FakeTerminalEndpoint.resized = asyncio.Event()
+    application = tornado.web.Application(
+        [(r"/v1/surfaces/surf_test/terminal", FakeTerminalEndpoint)]
+    )
+    sockets = tornado.netutil.bind_sockets(0, address="127.0.0.1")
+    server = tornado.httpserver.HTTPServer(application)
+    server.add_sockets(sockets)
+    port = sockets[0].getsockname()[1]
+    bridge = TerminalBridge(
+        f"http://127.0.0.1:{port}",
+        "surf_test",
+        stdin_fd=input_slave,
+        stdout_fd=output_write,
+        stderr_fd=error_write,
+        geometry=lambda: os.terminal_size((80, 24)),
+        install_signal_handler=False,
+    )
+    task = asyncio.create_task(bridge.run())
+    try:
+        await asyncio.wait_for(FakeTerminalEndpoint.attached.wait(), timeout=2)
+        raw_mode = termios.tcgetattr(input_slave)
+        assert raw_mode[3] & (termios.ICANON | termios.ECHO | termios.ISIG) == 0
+        os.write(input_master, b"h\x03q")
+        deadline = asyncio.get_running_loop().time() + 2
+        received = b""
+        while received != b"h\x03q" and asyncio.get_running_loop().time() < deadline:
+            received = b"".join(
+                value for value in FakeTerminalEndpoint.messages if isinstance(value, bytes)
+            )
+            await asyncio.sleep(0.01)
+        assert received == b"h\x03q"
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert termios.tcgetattr(input_slave) == original_mode
+        server.stop()
+        await server.close_all_connections()
+        for fd in (input_master, input_slave, output_write, error_write):
+            os.close(fd)
+        os.close(output_read)
+        os.close(error_read)

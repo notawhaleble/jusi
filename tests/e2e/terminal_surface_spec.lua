@@ -13,7 +13,10 @@ end
 function M.run()
   local original_notify = vim.notify
   local original_pythonpath = vim.env.PYTHONPATH
-  vim.notify = function() end
+  local notifications = {}
+  vim.notify = function(message)
+    table.insert(notifications, tostring(message))
+  end
   vim.env.PYTHONPATH = vim.fn.getcwd() .. "/tests/fixtures/terminal_plugin"
     .. (original_pythonpath and (":" .. original_pythonpath) or "")
   jusi.setup({
@@ -57,12 +60,22 @@ function M.run()
     )
     assert(terminal_text(record.buf):find(expected_geometry, 1, true), terminal_text(record.buf))
 
-    vim.api.nvim_chan_send(record.job_id, "opaque-input")
+    vim.api.nvim_chan_send(record.job_id, "h")
     wait_for(3000, function()
-      return terminal_text(record.buf):find("opaque-input", 1, true) ~= nil
-    end, "terminal input did not round-trip through the target PTY")
+      return terminal_text(record.buf):find("target:h", 1, true) ~= nil
+    end, "single terminal key did not immediately round-trip through the target PTY")
 
-    jusi.close_client(buf, 1)
+    local first_client_id = record.client.client_id
+    local first_surface_id = record.surface.surface_id
+    vim.fn.jobstop(record.job_id)
+    wait_for(3000, function()
+      return vim.fn.jobwait({ record.job_id }, 0)[1] ~= -1
+    end, "frontend terminal bridge did not stop")
+    assert(session.controller.clients[first_client_id] ~= nil)
+    assert(session.controller.surfaces[first_surface_id] ~= nil)
+    assert(session.controller.kernel_state == "on")
+
+    jusi.close_client(buf, 1, first_client_id)
     wait_for(5000, function()
       return next(session.controller.clients) == nil
         and next(session.controller.surfaces) == nil
@@ -70,6 +83,26 @@ function M.run()
     end, "explicit client close did not retire the terminal surface")
     assert(session.controller.kernel_state == "on")
     assert(not vim.api.nvim_buf_is_valid(record.buf))
+
+    jusi.execute(buf, 1)
+    wait_for(10000, function()
+      return next(session.interactive.surfaces) ~= nil
+    end, "replacement interactive terminal surface was not projected")
+    local _, replacement = next(session.interactive.surfaces)
+    wait_for(3000, function()
+      return terminal_text(replacement.buf):find("initial=", 1, true) ~= nil
+    end, "replacement target application did not start")
+    vim.api.nvim_chan_send(replacement.job_id, "\x03")
+    wait_for(5000, function()
+      return next(session.controller.clients) == nil
+        and next(session.controller.surfaces) == nil
+        and next(session.interactive.surfaces) == nil
+    end, "target application exit did not retire its client and surface")
+    assert(session.controller.kernel_state == "on")
+    assert(not vim.api.nvim_buf_is_valid(replacement.buf))
+    assert(vim.iter(notifications):any(function(message)
+      return message:find("client/run_terminal_surface/channel_closed", 1, true) ~= nil
+    end), vim.inspect(notifications))
 
     jusi.stop_service(buf)
     wait_for(8000, function()

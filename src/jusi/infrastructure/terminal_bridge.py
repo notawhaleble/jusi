@@ -6,6 +6,8 @@ import os
 import signal
 import struct
 import sys
+import termios
+import tty
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -65,6 +67,7 @@ class TerminalBridge:
         stderr_fd: int = 2,
         geometry: Callable[[], os.terminal_size] | None = None,
         install_signal_handler: bool = True,
+        manage_input_mode: bool = True,
         reconnect_min_delay: float = 0.05,
         reconnect_max_delay: float = 2.0,
     ) -> None:
@@ -78,6 +81,7 @@ class TerminalBridge:
         self.stderr_fd = stderr_fd
         self._geometry = geometry or (lambda: os.get_terminal_size(self.stdin_fd))
         self._install_signal_handler = install_signal_handler
+        self._manage_input_mode = manage_input_mode
         self._connection: WebSocketClientConnection | None = None
         self._write_lock: asyncio.Lock | None = None
         self._last_cursor = 0
@@ -91,49 +95,71 @@ class TerminalBridge:
         self._write_lock = asyncio.Lock()
         loop = asyncio.get_running_loop()
         signal_installed = False
-        if self._install_signal_handler and hasattr(signal, "SIGWINCH"):
-            try:
-                loop.add_signal_handler(signal.SIGWINCH, self._schedule_resize)
-                signal_installed = True
-            except (NotImplementedError, RuntimeError):
-                signal_installed = False
-
-        delay = self._reconnect_min_delay
-        disconnected = False
+        saved_input_mode = self._enter_raw_input_mode()
         try:
-            while True:
-                self._attachment_succeeded = False
+            if self._install_signal_handler and hasattr(signal, "SIGWINCH"):
                 try:
-                    keep_running = await self._run_connection(
-                        self._read_geometry(), announce_reconnected=disconnected,
-                    )
-                    if not keep_running:
-                        return
-                    disconnected = True
-                except TerminalSurfaceRejected as exc:
-                    if exc.reason not in {"busy", "channel_closed"}:
-                        raise
-                    disconnected = True
-                except TerminalBridgeReconnect:
-                    disconnected = True
-                except HTTPClientError as exc:
-                    if exc.code and 400 <= exc.code < 500 and exc.code not in {408, 409, 429}:
-                        raise TerminalBridgeError(f"terminal endpoint rejected connection: HTTP {exc.code}") from exc
-                    disconnected = True
-                except (OSError, WebSocketError):
-                    disconnected = True
-                if disconnected:
-                    if self._attachment_succeeded:
-                        delay = self._reconnect_min_delay
-                    self._write_diagnostic(
-                        f"[Jusi terminal transport disconnected; retrying from byte {self._last_cursor}]"
-                    )
-                    await asyncio.sleep(delay)
-                    delay = min(self._reconnect_max_delay, max(delay * 2, self._reconnect_min_delay))
+                    loop.add_signal_handler(signal.SIGWINCH, self._schedule_resize)
+                    signal_installed = True
+                except (NotImplementedError, RuntimeError):
+                    signal_installed = False
+
+            delay = self._reconnect_min_delay
+            disconnected = False
+            try:
+                while True:
+                    self._attachment_succeeded = False
+                    try:
+                        keep_running = await self._run_connection(
+                            self._read_geometry(), announce_reconnected=disconnected,
+                        )
+                        if not keep_running:
+                            return
+                        disconnected = True
+                    except TerminalSurfaceRejected as exc:
+                        if exc.reason not in {"busy", "channel_closed"}:
+                            raise
+                        disconnected = True
+                    except TerminalBridgeReconnect:
+                        disconnected = True
+                    except HTTPClientError as exc:
+                        if exc.code and 400 <= exc.code < 500 and exc.code not in {408, 409, 429}:
+                            raise TerminalBridgeError(f"terminal endpoint rejected connection: HTTP {exc.code}") from exc
+                        disconnected = True
+                    except (OSError, WebSocketError):
+                        disconnected = True
+                    if disconnected:
+                        if self._attachment_succeeded:
+                            delay = self._reconnect_min_delay
+                        self._write_diagnostic(
+                            f"[Jusi terminal transport disconnected; retrying from byte {self._last_cursor}]"
+                        )
+                        await asyncio.sleep(delay)
+                        delay = min(self._reconnect_max_delay, max(delay * 2, self._reconnect_min_delay))
+            finally:
+                if signal_installed:
+                    loop.remove_signal_handler(signal.SIGWINCH)
+                await self._close_connection()
         finally:
-            if signal_installed:
-                loop.remove_signal_handler(signal.SIGWINCH)
-            await self._close_connection()
+            self._restore_input_mode(saved_input_mode)
+
+    def _enter_raw_input_mode(self) -> list[Any] | None:
+        if not self._manage_input_mode:
+            return None
+        try:
+            saved = termios.tcgetattr(self.stdin_fd)
+            tty.setraw(self.stdin_fd, termios.TCSANOW)
+        except (OSError, termios.error) as exc:
+            raise TerminalBridgeError("bridge stdin is not a usable terminal") from exc
+        return saved
+
+    def _restore_input_mode(self, saved: list[Any] | None) -> None:
+        if saved is None:
+            return
+        try:
+            termios.tcsetattr(self.stdin_fd, termios.TCSANOW, saved)
+        except (OSError, termios.error) as exc:
+            self._write_diagnostic(f"could not restore bridge terminal mode: {exc}")
 
     async def _run_connection(
         self, size: os.terminal_size, *, announce_reconnected: bool,

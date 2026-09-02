@@ -173,6 +173,9 @@ def run_application(payload_path: Path) -> int:
     columns, rows, error = _query_rows(payload)
     sheet = SequenceSheet(f"jusi-sql:{alias}", rows=rows)
     sheet.addColumn(*(ItemColumn(name, index) for index, name in enumerate(columns)))
+    # This central fixture must not read or persist user VisiData state. The
+    # production SQL plugin will own its target-side VisiData configuration.
+    vd.options.nothing = True
     vd.options.disp_menu = False
     vd.options.disp_status_fmt = "Jusi SQL {sheet.name}"
     if error:
