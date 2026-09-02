@@ -52,6 +52,8 @@ Updated: 2026-09-02
 - ADR 0019 is accepted with the shared-host qualification: runtime configuration is target-side and should contain only capabilities/routing relevant to that target; providers should normally resolve credentials from their worker environment or another target-side secret mechanism.
 - `jusi serve` now snapshots bounded data-only TOML from target-side `~/.jusi/jusi.toml` on every kernel start/restart, with `--config PATH` for an explicit target file. Missing defaults are empty; missing explicit files and malformed/oversized/unsupported data fail the runtime operation without stopping the service, discovery, or spawning a kernel. Contents remain absent from public state and diagnostics.
 - Kernel adapters may receive that private frozen snapshot through `configure_jusi_runtime_v1` before their IPython extension loads and readiness attests. A real-kernel test verifies delivery; restart and redaction tests verify fresh generations without exposing values.
+- A central test-only `sqlite` exact plugin now proves the first real SQL path without modifying or copying the external 0.x packages: target-side `[sql.main]` resolution, exact kernel handoff, isolated worker, private 0600 launch payload, read-only SQLite connection, real VisiData in the generic target PTY, native Neovim terminal projection, explicit client close, and kernel survival.
+- VisiData 3 is a test extra only; core Jusi has no mandatory SQL, SQLite-plugin, or VisiData dependency.
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
 - The archival tag `legacy/0.x-pre-1.0-2026-08-31` and detached sibling worktree `/Users/niku/Documents/dev/jusi-0.x` preserve the audited backend snapshot.
 
@@ -81,8 +83,8 @@ ADR 0016's terminal slice, exact reattachment, and development plugin fixture
 are implemented and automatically verified. Web work is out of the near-term
 path. Incremental ordinary output, realistic ANSI/error streams, kernel survival,
 large-body input, and bounded exact output are now automatically verified. The
-SQL/VisiData audit exposed the missing runtime-configuration authority; ADR 0019
-is accepted and its core loader/snapshot/adapter boundary is implemented. The
-next boundary is a central read-only SQL/SQLite/VisiData development fixture
-through the real generic plugin and terminal paths, without changing the clean
-external 0.x plugin repositories.
+ADR 0019 and the first central read-only SQL/SQLite/VisiData development fixture
+are implemented. This is now a manual review boundary. After it is exercised,
+the next decision is whether to migrate the shared `jusi-sql` family contract
+first or the exact `jusi-sqlite` provider alongside it; their clean 0.x
+repositories remain unchanged.

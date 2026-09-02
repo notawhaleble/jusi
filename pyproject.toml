@@ -38,6 +38,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
   "pytest>=8,<9",
+  "visidata>=3,<4",
 ]
 
 [project.urls]

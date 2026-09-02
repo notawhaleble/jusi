@@ -1,0 +1,2 @@
+[jusi.plugins.v1]
+sqlite = jusi_sqlite_fixture:catalog_entry

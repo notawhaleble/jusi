@@ -62,6 +62,8 @@ def test_service_kernel_execute_event_stop(tmp_path: Path) -> None:
     env["PYTHONPYCACHEPREFIX"] = str(tmp_path / "pycache")
     env["IPYTHONDIR"] = str(tmp_path / "ipython")
     env["JUPYTER_RUNTIME_DIR"] = str(tmp_path / "jupyter-runtime")
+    env["HOME"] = str(tmp_path / "home")
+    (tmp_path / "home").mkdir()
     process = subprocess.Popen(
         [sys.executable, "-m", "jusi", "serve", "--host", "127.0.0.1", "--port", "0"],
         cwd=ROOT,
@@ -175,6 +177,8 @@ def test_real_kernel_text_streams_errors_large_body_and_survives(tmp_path: Path)
     env["PYTHONPYCACHEPREFIX"] = str(tmp_path / "pycache")
     env["IPYTHONDIR"] = str(tmp_path / "ipython")
     env["JUPYTER_RUNTIME_DIR"] = str(tmp_path / "jupyter-runtime")
+    env["HOME"] = str(tmp_path / "home")
+    (tmp_path / "home").mkdir()
     process = subprocess.Popen(
         [sys.executable, "-m", "jusi", "serve", "--host", "127.0.0.1", "--port", "0"],
         cwd=ROOT,

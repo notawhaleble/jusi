@@ -27,6 +27,11 @@ including first-draw geometry, opaque input/output, explicit client close, and
 kernel survival. The fixture is never discovered by an ordinary service unless
 that directory is deliberately placed on `PYTHONPATH`.
 
+`sqlite_visidata_spec.lua` similarly opts into the test-only SQLite provider,
+passes an explicit target-side TOML file, executes `%%sql main` against a real
+temporary read-only SQLite database, observes the dataset in a real VisiData
+terminal, explicitly closes that client, and verifies the kernel remains on.
+
 The complementary headless-Neovim test exercises the Lua notebook model,
 HTTP/SSE transport, and controller against that real service and kernel without
 requiring the interactive UI:
