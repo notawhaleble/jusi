@@ -23,6 +23,8 @@ Terminal presentation does not determine kernel ownership or lifecycle.
 - SSE resumption uses the last observed event identifier or cursor. The frontend does not fill gaps by guessing state.
 - The SSE adapter emits an immediate comment to confirm that the stream is open. Comments carry no resource truth and consume no event sequence.
 - Before opening SSE, the frontend inspects health for the supervisor identity, authoritative kernel snapshot, and retained event window. ADR 0008 defines when to replay and when to replace stale frontend state from that snapshot.
+- Health includes any active execution identity. The `interrupt` command names
+  that exact execution and kernel; it never means “interrupt whatever is current.”
 - Consecutive `execution.output` events are ordered terminal writes. Their data
   must be concatenated without inserting separators; the service may split one
   kernel text message at a UTF-8-safe boundary to keep retained events bounded,

@@ -93,3 +93,11 @@ These invariants constrain implementation and protocol design. A change that vio
 57. Native window close hides a projection and does not end its execution artifact or backend client.
 58. `JusiClose` explicitly ends the current cell artifact and performs type-appropriate, idempotent cleanup while leaving an otherwise live kernel on.
 59. The initial frontend retains at most one current execution artifact per model cell; a new cell execution explicitly replaces any prior artifact.
+
+## Interruption
+
+60. Interrupt targets an exact active-work identity and never falls through to newer work on the same kernel, cell, or client.
+61. Interrupt control cannot wait behind the operation it is intended to interrupt.
+62. Successful execution interruption completes that execution as `interrupted`, leaves an otherwise live kernel `on`, and is not reported as an execution failure.
+63. Successful plugin interruption preserves its durable client/session; plugin close and interrupt are distinct operations.
+64. A plugin client is retired after interrupt only when separate evidence demonstrates fatal worker, channel, or session loss.

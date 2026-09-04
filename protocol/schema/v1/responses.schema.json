@@ -3,6 +3,21 @@
   "$id": "https://jusi.dev/protocol/v1/responses.schema.json",
   "title": "Jusi Protocol v1 HTTP Responses",
   "$defs": {
+    "execution": {
+      "type": "object",
+      "required": ["execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at"],
+      "properties": {
+        "execution_id": {"type": "string", "minLength": 3},
+        "kernel_id": {"type": "string", "minLength": 3},
+        "notebook_id": {"type": "string", "minLength": 1},
+        "cell_id": {"type": "string", "minLength": 1},
+        "client_id": {"type": ["string", "null"]},
+        "outcome": {"enum": ["running"]},
+        "started_at": {"type": "string", "format": "date-time"},
+        "completed_at": {"type": "null"}
+      },
+      "additionalProperties": false
+    },
     "surface": {
       "type": "object",
       "required": ["surface_id", "client_id", "runtime_id", "kind", "capabilities", "transport", "created_at"],
@@ -62,7 +77,7 @@
         "properties": {"status": {"const": "ready"}}
       },
       "then": {
-        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel", "runtime", "clients", "surfaces"]
+        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel", "runtime", "executions", "clients", "surfaces"]
       }
     }
   ],
@@ -87,6 +102,7 @@
           "additionalProperties": false
         },
         "clients": {"type": "array", "items": {"$ref": "#/$defs/client"}},
+        "executions": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/execution"}},
         "surfaces": {"type": "array", "items": {"$ref": "#/$defs/surface"}},
         "execution": {"type": "object"},
         "cleanup": {"type": "object"},

@@ -43,3 +43,9 @@ this lock boundary.
 - Future multi-runtime support must replace the single operation lock with
   resource-scoped serialization while retaining short authoritative-state
   publication.
+
+## Refinement
+
+ADR 0021 adds one deliberate exception: identity-scoped interrupt uses a
+separate bounded control path because queuing it behind execution would make it
+ineffective. Start, stop, restart, execution, and cleanup remain serialized.

@@ -178,6 +178,18 @@ local function test_controller_accepts_authoritative_surface_snapshot()
         },
       },
     },
+    executions = {
+      {
+        execution_id = "exe_active",
+        kernel_id = "krn_snapshot",
+        notebook_id = model.notebook_id,
+        cell_id = model:ordered_cells()[1].id,
+        client_id = vim.NIL,
+        outcome = "running",
+        started_at = "2026-09-01T08:00:02Z",
+        completed_at = vim.NIL,
+      },
+    },
     clients = { client },
     surfaces = { surface },
   })
@@ -185,6 +197,7 @@ local function test_controller_accepts_authoritative_surface_snapshot()
   controller:connect()
   equal(controller.clients.cli_snapshot.plugin_worker_id, "pwrk_snapshot")
   equal(controller.surfaces.srf_snapshot.client_id, "cli_snapshot")
+  equal(controller.executions.exe_active.outcome, "running")
   controller:close()
   model:detach()
 end
@@ -199,6 +212,7 @@ function FakeTransport.new(health)
     health = health or {
       ok = true,
       status = "ready",
+      executions = {},
       clients = {},
       surfaces = {},
       supervisor_id = "sup_test",
@@ -390,6 +404,7 @@ local function test_supervisor_replacement_resynchronizes_from_authoritative_sna
   local transport = FakeTransport.new({
     ok = true,
     status = "ready",
+    executions = {},
     clients = {},
     surfaces = {},
     supervisor_id = "sup_new",
@@ -432,6 +447,7 @@ local function test_expired_cursor_resynchronizes_but_replayable_cursor_does_not
   local health = {
     ok = true,
     status = "ready",
+    executions = {},
     clients = {},
     surfaces = {},
     supervisor_id = "sup_test",

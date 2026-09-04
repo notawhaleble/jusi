@@ -3,7 +3,7 @@
   "status": "ready",
   "supervisor_id": "sup_fixture_1",
   "earliest_event_sequence": 1,
-  "event_sequence": 4,
+  "event_sequence": 5,
   "kernel": {
     "kernel_id": "krn_fixture_1",
     "notebook_id": "nb_fixture_1",
@@ -23,7 +23,18 @@
       "plugins": []
     }
   },
-  "executions": [],
+  "executions": [
+    {
+      "execution_id": "exe_fixture_active_1",
+      "kernel_id": "krn_fixture_1",
+      "notebook_id": "nb_fixture_1",
+      "cell_id": "cell_fixture_1",
+      "client_id": null,
+      "outcome": "running",
+      "started_at": "2026-09-05T08:00:00Z",
+      "completed_at": null
+    }
+  ],
   "clients": [],
   "surfaces": []
 }

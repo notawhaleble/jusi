@@ -5,6 +5,7 @@
   "oneOf": [
     {"$ref": "#/$defs/start_kernel"},
     {"$ref": "#/$defs/execute"},
+    {"$ref": "#/$defs/interrupt"},
     {"$ref": "#/$defs/stop_kernel"},
     {"$ref": "#/$defs/close_client"},
     {"$ref": "#/$defs/restart_notebook"}
@@ -48,6 +49,21 @@
             "notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
             "cell_id": {"type": "string", "minLength": 1, "maxLength": 128},
             "code": {"type": "string"}
+          },
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "interrupt": {
+      "allOf": [
+        {"$ref": "#/$defs/base"},
+        {
+          "type": "object",
+          "required": ["kind", "kernel_id", "execution_id"],
+          "properties": {
+            "kind": {"const": "interrupt"},
+            "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128},
+            "execution_id": {"type": "string", "minLength": 3, "maxLength": 128}
           },
           "unevaluatedProperties": false
         }

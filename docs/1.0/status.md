@@ -1,10 +1,10 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-04
+Updated: 2026-09-05
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0020 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0021 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -44,6 +44,7 @@ Updated: 2026-09-04
 - Incident 0004 established that the bridge must own its local TTY mode as part of byte transport. It now selects raw input with guaranteed restoration, so single keys and Ctrl-C reach the target immediately instead of being echoed/buffered or signalling the bridge. Automatic surface creation still leaves focus in the notebook.
 - Cell-oriented commands use stored model identity when invoked from a Jusi projection and notebook cursor coordinates only from notebook text. Incident 0005 prevents terminal screen rows from being mistaken for notebook coordinates during asynchronous client cleanup.
 - `JusiExecute` reveals one current cell artifact without taking focus; it explicitly replaces prior cell-owned clients before a new execution. Native window close only hides an artifact, `JusiToggleFocus` reopens or navigates to/from it, and `JusiClose` performs the appropriate frontend-output or backend-client teardown while leaving the kernel on.
+- `JusiInterrupt` targets the exact active execution through a control path that does not wait behind execute. Active execution identity survives authoritative health resynchronization; successful interruption completes it as `interrupted`, keeps the kernel on, and permits subsequent execution. Plugin-specific interrupt remains distinct from close and will preserve a usable durable session when the generic concurrent client-operation path lands.
 - Unexpected target terminal-process death emits a typed `client/run_terminal_surface/channel_closed` core failure with process diagnostics, retires only the owning surface/client/worker, and leaves kernel truth unchanged.
 - A test-only `terminal_fixture` exact plugin now proves the complete Neovim path through fresh discovery, kernel attestation/handoff, worker isolation, target PTY, WebSocket bridge, first-draw geometry, opaque input/output, explicit client close, and kernel survival. It is outside production packaging and is discovered only through an explicit test `PYTHONPATH`.
 - Backend-only terminal plugins expose generic terminal surfaces. SQL/VisiData, shell, and terminal text remain plugin-owned; frontend core manages native surfaces and generic input/geometry. Web surfaces remain a conceptual later family only. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
@@ -62,7 +63,7 @@ Updated: 2026-09-04
 - The same walking skeleton has been exercised successfully in an interactive clean-config Neovim session.
 - The archival tag `legacy/0.x-pre-1.0-2026-08-31` and detached sibling worktree `/Users/niku/Documents/dev/jusi-0.x` preserve the audited backend snapshot.
 
-## Walking Skeleton Boundary
+## Completed Walking Skeleton
 
 Implemented:
 
@@ -80,17 +81,14 @@ Deferred:
 
 - remote supervisors and `checking`
 - dead-bridge replacement policy and multiple terminal observers
-- kernel interrupt, completion, input requests, rich media, and durable event storage
+- plugin interrupt, completion, input requests, rich media, and durable event storage
 
 ## Next Boundary
 
-ADR 0016's terminal slice, exact reattachment, and development plugin fixture
-are implemented and automatically verified. Web work is out of the near-term
-path. Incremental ordinary output, realistic ANSI/error streams, kernel survival,
-large-body input, and bounded exact output are now automatically verified. The
-ADR 0019 and the first central read-only SQL/SQLite/VisiData development fixture
-are implemented. ADR 0020's uniform execute/toggle-focus/close interaction is
-the current manual review boundary. After it is exercised, the next decision is
-whether to migrate the shared `jusi-sql` family contract first or the exact
-`jusi-sqlite` provider alongside it; their clean 0.x repositories remain
-unchanged.
+The original service/kernel walking skeleton is complete; current work is core
+operational completion. ADR 0021's kernel-execution interrupt is the current
+manual review boundary. The next dedicated slice is identified, follow-up-style
+Jupyter input requests without modal Neovim input. Generic durable-client
+operations—including concurrent plugin-specific interrupt—follow before any
+decision to migrate the shared `jusi-sql` family or an exact provider. Their
+clean 0.x repositories remain unchanged.

@@ -24,6 +24,7 @@ class FakeManager:
         self.shutdown_fails = shutdown_fails
         self.provisioner = SimpleNamespace(pid=9876, process=SimpleNamespace(poll=lambda: return_code))
         self.shutdown_calls: list[tuple[bool, bool]] = []
+        self.interrupt_calls = 0
 
     def is_alive(self) -> bool:
         return self.alive
@@ -32,6 +33,9 @@ class FakeManager:
         self.shutdown_calls.append((now, restart))
         if self.shutdown_fails:
             raise RuntimeError("shutdown failed")
+
+    def interrupt_kernel(self) -> None:
+        self.interrupt_calls += 1
 
 
 class FakeClient:
@@ -69,6 +73,41 @@ def test_jupyter_adapter_preserves_ansi_and_result_media() -> None:
     assert manager.shutdown_calls == [(False, False)]
     assert client.stopped
     assert not Path(stderr_path).exists()
+
+
+@pytest.mark.parametrize(("reply_status", "expected_outcome"), (("error", "interrupted"), ("ok", "succeeded")))
+def test_jupyter_interrupt_uses_control_path_while_execution_waits(
+    reply_status: str, expected_outcome: str,
+) -> None:
+    import threading
+
+    class BlockingClient(FakeClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.executing = threading.Event()
+            self.released = threading.Event()
+
+        def execute_interactive(self, code: str, **kwargs):  # type: ignore[no-untyped-def]
+            self.executing.set()
+            assert self.released.wait(2)
+            return {"content": {"status": reply_status, "ename": "KeyboardInterrupt", "evalue": ""}}
+
+    stderr_file = tempfile.NamedTemporaryFile(delete=False)
+    manager = FakeManager()
+    client = BlockingClient()
+    kernel = ManagedJupyterKernel(manager, client, stderr_file, stderr_file.name)  # type: ignore[arg-type]
+    results = []
+    thread = threading.Thread(target=lambda: results.append(kernel.execute("1 + 1", timeout=2, on_output=lambda _: None)))
+    thread.start()
+    assert client.executing.wait(1)
+
+    kernel.interrupt()
+    client.released.set()
+    thread.join(2)
+
+    assert manager.interrupt_calls == 1
+    assert results[0].outcome == expected_outcome
+    kernel.stop(timeout=1)
 
 
 def test_execution_error_preserves_ansi_traceback_without_killing_kernel() -> None:

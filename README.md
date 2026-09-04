@@ -48,6 +48,7 @@ cell delimiters and use:
 :JusiConnect
 :JusiStartKernel
 :JusiExecute
+:JusiInterrupt
 :JusiToggleFocus
 :JusiClose
 :JusiRestart

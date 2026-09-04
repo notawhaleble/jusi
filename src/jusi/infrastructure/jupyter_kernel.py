@@ -244,6 +244,9 @@ class ManagedJupyterKernel:
         self._stderr_path = stderr_path
         self._lock = threading.Lock()
         self._closed = False
+        self._control_lock = threading.Lock()
+        self._executing = False
+        self._interrupt_requested = threading.Event()
 
     @property
     def pid(self) -> int | None:
@@ -261,6 +264,9 @@ class ManagedJupyterKernel:
         with self._lock:
             if self._closed or not self._is_alive():
                 raise self._kernel_died("Kernel is not alive before execution")
+            with self._control_lock:
+                self._executing = True
+                self._interrupt_requested.clear()
 
             handoffs: list[PluginHandoff] = []
             handoff_errors: list[str] = []
@@ -318,6 +324,13 @@ class ManagedJupyterKernel:
                     output_hook=output_hook,
                 )
             except (queue.Empty, TimeoutError) as exc:
+                if self._finish_execution():
+                    raise KernelAdapterError(
+                        "Execution was interrupted",
+                        layer="execution",
+                        reason="interrupted",
+                        retryable=False,
+                    ) from exc
                 if not self._is_alive():
                     raise self._kernel_died("Kernel died while executing") from exc
                 raise KernelAdapterError(
@@ -327,6 +340,7 @@ class ManagedJupyterKernel:
                     retryable=True,
                 ) from exc
             except Exception as exc:
+                self._finish_execution()
                 if not self._is_alive():
                     raise self._kernel_died(f"Kernel died while executing: {exc}") from exc
                 raise KernelAdapterError(
@@ -337,6 +351,7 @@ class ManagedJupyterKernel:
                 ) from exc
 
             content = reply.get("content", {}) if isinstance(reply, dict) else {}
+            interrupt_requested = self._finish_execution()
             if handoff_errors or len(handoffs) > 1:
                 raise KernelAdapterError(
                     "Kernel emitted an invalid or ambiguous plugin handoff",
@@ -350,6 +365,12 @@ class ManagedJupyterKernel:
                 )
             if content.get("status") == "ok":
                 return KernelExecutionResult("succeeded", handoffs=tuple(handoffs))
+            if interrupt_requested:
+                return KernelExecutionResult(
+                    "interrupted",
+                    error_name=str(content.get("ename", "")),
+                    error_value=str(content.get("evalue", "")),
+                )
             return KernelExecutionResult(
                 "failed",
                 error_name=str(content.get("ename", "")),
@@ -381,6 +402,43 @@ class ManagedJupyterKernel:
             self._close_resources()
             if failure is not None:
                 raise failure from failure_cause
+
+    def interrupt(self) -> None:
+        # Execution holds `_lock` while waiting on Jupyter. Interrupt must be a
+        # separate control path or it could only run after execution returned.
+        if self._closed or not self._is_alive():
+            raise self._kernel_died("Kernel is not alive before interrupt")
+        try:
+            with self._control_lock:
+                if not self._executing:
+                    raise KernelAdapterError(
+                        "Kernel no longer has an active execution",
+                        layer="execution",
+                        reason="conflict",
+                        retryable=False,
+                    )
+                self._interrupt_requested.set()
+                self._manager.interrupt_kernel()
+        except KernelAdapterError:
+            raise
+        except Exception as exc:
+            self._interrupt_requested.clear()
+            if not self._is_alive():
+                raise self._kernel_died("Kernel died while interrupting execution") from exc
+            raise KernelAdapterError(
+                f"Kernel interrupt failed: {exc}",
+                layer="kernel",
+                reason="channel_closed",
+                retryable=True,
+                diagnostics=_diagnostics(self._manager, self._stderr_path),
+            ) from exc
+
+    def _finish_execution(self) -> bool:
+        with self._control_lock:
+            requested = self._interrupt_requested.is_set()
+            self._interrupt_requested.clear()
+            self._executing = False
+            return requested
 
     def _is_alive(self) -> bool:
         try:

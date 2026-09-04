@@ -39,6 +39,7 @@ function FakeTransport:request(method, path, payload, _, callback)
     callback({
       ok = true,
       status = "ready",
+      executions = {},
       clients = {},
       surfaces = {},
       supervisor_id = "sup_runtime",
@@ -59,6 +60,12 @@ function FakeTransport:request(method, path, payload, _, callback)
     }, nil)
   elseif payload.kind == "execute" then
     callback({ ok = true, execution = { execution_id = "exe_runtime", outcome = "succeeded" } }, nil)
+  elseif payload.kind == "interrupt" then
+    callback({
+      ok = true,
+      execution = { execution_id = payload.execution_id, outcome = "running" },
+      interrupt = { result = "requested" },
+    }, nil)
   elseif payload.kind == "restart_notebook" then
     callback({
       ok = true,
@@ -119,15 +126,25 @@ local function test_client_commands_use_focused_projection_identity()
     equal(transport.requests[2].payload.cell_id, cell_id)
     equal(transport.requests[2].payload.code, "%%sql main\nselect 1")
 
+    session.controller.executions.exe_active = {
+      execution_id = "exe_active",
+      cell_id = cell_id,
+      outcome = "running",
+    }
+    jusi.interrupt()
+    equal(transport.requests[3].path, "/v1/kernels/krn_runtime/executions/exe_active/interrupt")
+    equal(transport.requests[3].payload.execution_id, "exe_active")
+    session.controller.executions.exe_active.outcome = "interrupted"
+
     session.controller.clients.cli_sql = {
       client_id = "cli_sql",
       cell_id = cell_id,
     }
     jusi.close()
 
-    equal(transport.requests[3].method, "DELETE")
-    equal(transport.requests[3].path, "/v1/clients/cli_sql")
-    equal(transport.requests[3].payload.client_id, "cli_sql")
+    equal(transport.requests[4].method, "DELETE")
+    equal(transport.requests[4].path, "/v1/clients/cli_sql")
+    equal(transport.requests[4].payload.client_id, "cli_sql")
 
     session.controller.clients.cli_sql = nil
     session.controller.clients.cli_replaced = {
@@ -135,10 +152,10 @@ local function test_client_commands_use_focused_projection_identity()
       cell_id = cell_id,
     }
     jusi.execute()
-    equal(transport.requests[4].path, "/v1/clients/cli_replaced")
-    equal(transport.requests[4].payload.kind, "close_client")
-    equal(transport.requests[5].path, "/v1/kernels/krn_runtime/executions")
-    equal(transport.requests[5].payload.cell_id, cell_id)
+    equal(transport.requests[5].path, "/v1/clients/cli_replaced")
+    equal(transport.requests[5].payload.kind, "close_client")
+    equal(transport.requests[6].path, "/v1/kernels/krn_runtime/executions")
+    equal(transport.requests[6].payload.cell_id, cell_id)
     vim.api.nvim_buf_delete(client_buf, { force = true })
     equal(jusi._destroy_session(notebook_buf), true)
   end, debug.traceback)
@@ -176,6 +193,7 @@ local function test_explicit_command_workflow()
     jusi.setup({ output_height = 5 })
     equal(vim.fn.exists(":JusiConnect"), 2)
     equal(vim.fn.exists(":JusiExecute"), 2)
+    equal(vim.fn.exists(":JusiInterrupt"), 2)
     equal(vim.fn.exists(":JusiServiceStart"), 2)
     equal(vim.fn.exists(":JusiServiceStop"), 2)
     equal(vim.fn.exists(":JusiRestart"), 2)

@@ -24,6 +24,7 @@ The first commands are:
 - `:JusiServiceStop`
 - `:JusiStartKernel`
 - `:JusiExecute`
+- `:JusiInterrupt`
 - `:JusiToggleFocus`
 - `:JusiClose`
 - `:JusiRestart`

@@ -386,6 +386,35 @@ function M.execute(buf, row)
   end)
 end
 
+function M.interrupt(buf, row)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
+  if not session then
+    return nil
+  end
+  local cell = cell_from_context(session, context_buf, row)
+  if not cell then
+    notify("cursor is not inside a cell", vim.log.levels.ERROR)
+    return nil
+  end
+  local execution_id
+  for id, execution in pairs(session.controller.executions) do
+    if execution.cell_id == cell.id and execution.outcome == "running" then
+      execution_id = id
+      break
+    end
+  end
+  if not execution_id then
+    notify("cell has no active execution", vim.log.levels.WARN)
+    return nil
+  end
+  return session.controller:interrupt(execution_id, function(_, failure)
+    if failure then
+      notify(failure_text(failure), vim.log.levels.ERROR)
+    end
+  end)
+end
+
 function M.stop_kernel(buf)
   local session = require_session(buf)
   if not session then
@@ -520,6 +549,9 @@ local function create_commands()
   end, {})
   vim.api.nvim_create_user_command("JusiExecute", function()
     M.execute()
+  end, {})
+  vim.api.nvim_create_user_command("JusiInterrupt", function()
+    M.interrupt()
   end, {})
   vim.api.nvim_create_user_command("JusiStopKernel", function()
     M.stop_kernel()

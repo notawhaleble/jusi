@@ -19,6 +19,7 @@ end
 local command_fields = {
   start_kernel = { "notebook_id", "kernel_name" },
   execute = { "kernel_id", "notebook_id", "cell_id", "code" },
+  interrupt = { "kernel_id", "execution_id" },
   stop_kernel = { "kernel_id" },
   close_client = { "client_id" },
   restart_notebook = { "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name" },
@@ -104,6 +105,18 @@ local function validate_client(client)
     seen[capability] = true
   end
   if not ({ noninteractive = true, request_response = true, terminal_interactive = true })[client.interaction] then return false, "invalid client interaction" end
+  return true
+end
+
+local function validate_active_execution(execution)
+  local fields = { "execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at" }
+  local ok, err = exact_fields(execution, fields)
+  if not ok then return false, err end
+  for _, field in ipairs({ "execution_id", "kernel_id", "notebook_id", "cell_id", "started_at" }) do
+    if not nonempty_string(execution[field]) then return false, "invalid execution identity" end
+  end
+  if not null(execution.client_id) and not bounded_string(execution.client_id, 3, 128) then return false, "invalid execution client identity" end
+  if execution.outcome ~= "running" or not null(execution.completed_at) then return false, "health execution must be active" end
   return true
 end
 
@@ -429,6 +442,16 @@ function M.validate_health_response(response)
     local actual_capabilities = set(client.capabilities)
     for capability, _ in pairs(expected_capabilities) do if not actual_capabilities[capability] then return false, "client family capabilities mismatch" end end
     for capability, _ in pairs(actual_capabilities) do if not expected_capabilities[capability] then return false, "client family capabilities mismatch" end end
+  end
+  if type(response.executions) ~= "table" or not vim.islist(response.executions) or #response.executions > 1 then
+    return false, "executions must be present with at most one active execution"
+  end
+  for _, execution in ipairs(response.executions) do
+    local execution_ok, execution_error = validate_active_execution(execution)
+    if not execution_ok then return false, execution_error end
+    if runtime == vim.NIL or execution.kernel_id ~= runtime.kernel_id or execution.notebook_id ~= runtime.notebook_id then
+      return false, "execution runtime ownership mismatch"
+    end
   end
   if type(response.surfaces) ~= "table" or not vim.islist(response.surfaces) then return false, "surfaces must be present as an array" end
   local surface_ids = {}

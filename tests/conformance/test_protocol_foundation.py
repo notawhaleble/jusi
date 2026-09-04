@@ -113,6 +113,17 @@ def test_python_consumes_shared_close_client_command() -> None:
     assert validate_command(command, "close_client")["client_id"] == "client_123"
 
 
+def test_python_consumes_shared_interrupt_command() -> None:
+    fixture_root = ROOT / "protocol" / "fixtures" / "v1"
+    command = load_json(fixture_root / "valid" / "interrupt-execution.json")
+    assert validate_command(command, "interrupt")["execution_id"] == "execution_123"
+    with pytest.raises(ProtocolValidationError, match="execution_id"):
+        validate_command(
+            load_json(fixture_root / "invalid" / "interrupt-missing-execution-id.json"),
+            "interrupt",
+        )
+
+
 def test_python_consumes_shared_terminal_stream_controls() -> None:
     fixture_root = ROOT / "protocol" / "fixtures" / "v1"
     for kind in ("attach", "attached", "resize", "resized", "failure"):
@@ -149,6 +160,9 @@ def test_python_consumes_shared_health_fixtures() -> None:
     assert validate_health_response(response)["kernel"]["state"] == "on"
     assert validate_health_response(response)["runtime"]["plugin_catalog"]["plugins"] == []
     assert validate_health_response(response)["surfaces"] == []
+    assert validate_health_response(response)["executions"] == []
+    active = validate_health_response(load_json(fixture_root / "valid" / "health-active-execution.json"))
+    assert active["executions"][0]["outcome"] == "running"
 
     invalid = load_json(fixture_root / "invalid" / "health-invalid-window.json")
     with pytest.raises(ProtocolValidationError, match="window"):
@@ -161,6 +175,10 @@ def test_python_consumes_shared_health_fixtures() -> None:
     missing_surfaces = load_json(fixture_root / "invalid" / "health-missing-surfaces.json")
     with pytest.raises(ProtocolValidationError, match="surfaces"):
         validate_health_response(missing_surfaces)
+
+    missing_executions = load_json(fixture_root / "invalid" / "health-missing-executions.json")
+    with pytest.raises(ProtocolValidationError, match="executions"):
+        validate_health_response(missing_executions)
 
 
 def test_python_consumes_shared_plugin_catalog_fixtures() -> None:

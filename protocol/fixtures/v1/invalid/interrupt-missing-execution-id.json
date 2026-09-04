@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_interrupt_invalid",
+  "trace_id": "trace_interrupt_invalid",
+  "kind": "interrupt",
+  "kernel_id": "kernel_123"
+}

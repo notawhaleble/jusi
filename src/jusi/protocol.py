@@ -22,6 +22,7 @@ EVENT_FIELDS = {
 COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
     "start_kernel": ("notebook_id", "kernel_name"),
     "execute": ("kernel_id", "notebook_id", "cell_id", "code"),
+    "interrupt": ("kernel_id", "execution_id"),
     "stop_kernel": ("kernel_id",),
     "close_client": ("client_id",),
     "restart_notebook": ("runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"),
@@ -98,6 +99,23 @@ def _validate_client(client: object, context: str = "client") -> dict[str, Any]:
     if client["interaction"] not in {"noninteractive", "request_response", "terminal_interactive"}:
         raise ProtocolValidationError(f"{context}.interaction is invalid")
     return client
+
+
+def _validate_execution(execution: object, context: str = "execution") -> dict[str, Any]:
+    fields = {"execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at"}
+    if not isinstance(execution, dict) or set(execution) != fields:
+        raise ProtocolValidationError(f"{context} has invalid fields")
+    _required_strings(execution, ("execution_id", "kernel_id", "notebook_id", "cell_id", "started_at"), context)
+    if execution["client_id"] is not None and not _bounded_string(execution["client_id"], 3, 128):
+        raise ProtocolValidationError(f"{context}.client_id is invalid")
+    if execution["outcome"] not in OUTCOMES:
+        raise ProtocolValidationError(f"{context}.outcome is invalid")
+    if execution["outcome"] == "running":
+        if execution["completed_at"] is not None:
+            raise ProtocolValidationError(f"{context} running execution cannot be complete")
+    elif not isinstance(execution["completed_at"], str):
+        raise ProtocolValidationError(f"{context} completed execution requires a completion time")
+    return execution
 
 
 def _validate_surface(surface: object, context: str = "surface") -> dict[str, Any]:
@@ -411,6 +429,15 @@ def validate_health_response(data: object) -> dict[str, Any]:
         )
         if family is None or set(family["capabilities"]) != set(client["capabilities"]):
             raise ProtocolValidationError("client family capabilities mismatch")
+    executions = data.get("executions")
+    if not isinstance(executions, list) or len(executions) > 1:
+        raise ProtocolValidationError("executions must be present with at most one active execution")
+    for index, candidate in enumerate(executions):
+        execution = _validate_execution(candidate, f"executions[{index}]")
+        if execution["outcome"] != "running":
+            raise ProtocolValidationError("health exposes only active executions")
+        if runtime is None or execution["kernel_id"] != runtime["kernel_id"] or execution["notebook_id"] != runtime["notebook_id"]:
+            raise ProtocolValidationError("execution runtime ownership mismatch")
     surfaces = data.get("surfaces")
     if not isinstance(surfaces, list):
         raise ProtocolValidationError("surfaces must be present as an array")

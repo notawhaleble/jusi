@@ -162,6 +162,39 @@ class ExecutionsHandler(BaseHandler):
         self.write_json(200, {"ok": True, **result})
 
 
+class ExecutionInterruptHandler(BaseHandler):
+    async def post(self, kernel_id: str, execution_id: str) -> None:
+        command = self.parse_command("interrupt")
+        if command is None:
+            return
+        if command["kernel_id"] != kernel_id or command["execution_id"] != execution_id:
+            failure = Failure(
+                failure_id=new_id("fail"),
+                trace_id=command["trace_id"],
+                layer="protocol",
+                operation="interrupt",
+                reason="invalid_request",
+                message="kernel_id and execution_id in the body must match the URL",
+                retryable=False,
+                scope="request",
+                resource=ResourceRef("execution", execution_id),
+            )
+            self.supervisor.record_failure(failure)
+            self.write_json(400, {"ok": False, "failure": failure.to_dict()})
+            return
+        try:
+            result = await asyncio.to_thread(
+                self.supervisor.interrupt_execution,
+                kernel_id=kernel_id,
+                execution_id=execution_id,
+                trace_id=command["trace_id"],
+            )
+        except SupervisorError as exc:
+            self.write_supervisor_error(exc)
+            return
+        self.write_json(202, {"ok": True, **result})
+
+
 class ClientHandler(BaseHandler):
     async def delete(self, client_id: str) -> None:
         command = self.parse_command("close_client")
@@ -440,6 +473,7 @@ def make_application(supervisor: Supervisor) -> tornado.web.Application:
             (r"/v1/kernels", KernelsHandler, handler_args),
             (r"/v1/kernels/([^/]+)", KernelHandler, handler_args),
             (r"/v1/kernels/([^/]+)/executions", ExecutionsHandler, handler_args),
+            (r"/v1/kernels/([^/]+)/executions/([^/]+)/interrupt", ExecutionInterruptHandler, handler_args),
             (r"/v1/clients/([^/]+)", ClientHandler, handler_args),
             (r"/v1/notebook-runtimes/([^/]+)/restart", NotebookRuntimeRestartHandler, handler_args),
         ],

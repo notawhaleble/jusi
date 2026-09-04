@@ -72,6 +72,8 @@ class Supervisor:
         self._clients: dict[str, ClientResource] = {}
         self._known_client_ids: set[str] = set()
         self._surfaces: dict[str, SurfaceResource] = {}
+        self._active_kernel_execution: tuple[ExecutionResource, KernelHandle] | None = None
+        self._interrupt_requested: set[str] = set()
         self.events.append(
             trace_id=new_id("trace"),
             layer="service",
@@ -83,6 +85,7 @@ class Supervisor:
 
     def health(self) -> dict[str, Any]:
         with self._state_lock:
+            active_execution = self._active_kernel_execution
             return {
                 "status": "ready",
                 "supervisor_id": self.supervisor_id,
@@ -90,6 +93,7 @@ class Supervisor:
                 "event_sequence": self.events.latest_sequence,
                 "kernel": self._current_kernel.to_dict() if self._current_kernel is not None else None,
                 "runtime": self._current_runtime.to_dict() if self._current_runtime is not None else None,
+                "executions": [active_execution[0].to_dict()] if active_execution is not None else [],
                 "clients": [client.to_dict() for client in self._clients.values()],
                 "surfaces": [surface.to_dict() for surface in self._surfaces.values()],
             }
@@ -396,6 +400,8 @@ class Supervisor:
                 cell_id=cell_id,
             )
             execution_ref = ResourceRef("execution", execution.execution_id)
+            with self._state_lock:
+                self._active_kernel_execution = (execution, handle)
             self.events.append(
                 trace_id=trace_id,
                 layer="execution",
@@ -423,6 +429,19 @@ class Supervisor:
 
                 result = handle.execute(code, timeout=timeout, on_output=publish_output)
             except KernelAdapterError as exc:
+                with self._state_lock:
+                    self._active_kernel_execution = None
+                    interrupted = execution.execution_id in self._interrupt_requested
+                    self._interrupt_requested.discard(execution.execution_id)
+                if interrupted and exc.layer != "kernel" and exc.reason == "interrupted":
+                    execution.complete("interrupted")
+                    self.events.append(
+                        trace_id=trace_id, layer="execution", operation="execute",
+                        kind="execution.completed", resource=execution_ref,
+                        payload=execution.to_dict(),
+                    )
+                    self._complete_operation(operation, "cancelled", resource=execution_ref)
+                    return {"operation": operation.to_dict(), "execution": execution.to_dict()}
                 kernel_failure = self._failure(
                     trace_id=trace_id,
                     layer=exc.layer,
@@ -485,16 +504,18 @@ class Supervisor:
                             operation="execute",
                         )
                     with self._state_lock:
+                        previous_state = kernel.state
                         kernel.state = "off"
                         self._kernel_handle = None
-                    self.events.append(
-                        trace_id=trace_id,
-                        layer="kernel",
-                        operation="execute",
-                        kind="kernel.state_changed",
-                        resource=ResourceRef("kernel", kernel_id),
-                        payload={"kernel_id": kernel_id, "previous_state": "on", "state": "off"},
-                    )
+                    if previous_state == "on":
+                        self.events.append(
+                            trace_id=trace_id,
+                            layer="kernel",
+                            operation="execute",
+                            kind="kernel.state_changed",
+                            resource=ResourceRef("kernel", kernel_id),
+                            payload={"kernel_id": kernel_id, "previous_state": "on", "state": "off"},
+                        )
                 execution.complete("failed")
                 self.events.append(
                     trace_id=trace_id,
@@ -506,6 +527,20 @@ class Supervisor:
                 )
                 self._complete_operation(operation, "failed", resource=execution_ref, failure=kernel_failure)
                 raise SupervisorError(503, kernel_failure) from exc
+
+            with self._state_lock:
+                self._active_kernel_execution = None
+                interrupted = execution.execution_id in self._interrupt_requested
+                self._interrupt_requested.discard(execution.execution_id)
+            if interrupted and result.outcome == "interrupted":
+                execution.complete("interrupted")
+                self.events.append(
+                    trace_id=trace_id, layer="execution", operation="execute",
+                    kind="execution.completed", resource=execution_ref,
+                    payload=execution.to_dict(),
+                )
+                self._complete_operation(operation, "cancelled", resource=execution_ref)
+                return {"operation": operation.to_dict(), "execution": execution.to_dict()}
 
             if result.handoffs:
                 handoff = result.handoffs[0]
@@ -831,6 +866,87 @@ class Supervisor:
             if failure is not None:
                 response["failure"] = failure.to_dict()
             return response
+
+    def interrupt_execution(
+        self, *, kernel_id: str, execution_id: str, trace_id: str,
+    ) -> dict[str, Any]:
+        execution_ref = ResourceRef("execution", execution_id)
+        operation = self._begin_operation("interrupt", trace_id, resource=execution_ref)
+        with self._state_lock:
+            active = self._active_kernel_execution
+            if active is None or active[0].execution_id != execution_id:
+                failure = self._failure(
+                    trace_id=trace_id,
+                    layer="supervisor",
+                    operation="interrupt",
+                    reason="conflict",
+                    message=f"Execution {execution_id} is not the active kernel execution",
+                    retryable=False,
+                    scope="request",
+                    resource=execution_ref,
+                    details={"kernel_id": kernel_id},
+                )
+                self._emit_failure(failure)
+                self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                raise SupervisorError(409, failure)
+            execution, handle = active
+            if execution.kernel_id != kernel_id:
+                failure = self._failure(
+                    trace_id=trace_id,
+                    layer="supervisor",
+                    operation="interrupt",
+                    reason="conflict",
+                    message="execution does not belong to the requested kernel",
+                    retryable=False,
+                    scope="request",
+                    resource=execution_ref,
+                    details={"kernel_id": kernel_id},
+                )
+                self._emit_failure(failure)
+                self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                raise SupervisorError(409, failure)
+            already_requested = execution_id in self._interrupt_requested
+            self._interrupt_requested.add(execution_id)
+        if not already_requested:
+            try:
+                handle.interrupt()
+            except KernelAdapterError as exc:
+                with self._state_lock:
+                    self._interrupt_requested.discard(execution_id)
+                failure = self._failure(
+                    trace_id=trace_id,
+                    layer=exc.layer,
+                    operation="interrupt",
+                    reason=exc.reason,
+                    message=str(exc),
+                    retryable=exc.retryable,
+                    scope="kernel" if exc.layer == "kernel" else "execution",
+                    resource=ResourceRef("kernel", kernel_id) if exc.layer == "kernel" else execution_ref,
+                    process=exc.diagnostics,
+                    details=exc.details,
+                )
+                self._emit_failure(failure)
+                if exc.layer == "kernel":
+                    with self._state_lock:
+                        current = self._current_kernel
+                        previous_state = current.state if current is not None and current.kernel_id == kernel_id else "off"
+                        if current is not None and current.kernel_id == kernel_id:
+                            current.state = "off"
+                            self._kernel_handle = None
+                    if previous_state == "on":
+                        self.events.append(
+                            trace_id=trace_id, layer="kernel", operation="interrupt",
+                            kind="kernel.state_changed", resource=ResourceRef("kernel", kernel_id),
+                            payload={"kernel_id": kernel_id, "previous_state": "on", "state": "off"},
+                        )
+                self._complete_operation(operation, "failed", resource=failure.resource, failure=failure)
+                raise SupervisorError(409 if exc.reason == "conflict" else 503, failure) from exc
+        self._complete_operation(operation, "succeeded", resource=execution_ref)
+        return {
+            "operation": operation.to_dict(),
+            "execution": execution.to_dict(),
+            "interrupt": {"result": "already_requested" if already_requested else "requested"},
+        }
 
     def close_client(self, *, client_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
         with self._operation_lock:

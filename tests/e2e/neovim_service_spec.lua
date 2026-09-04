@@ -110,6 +110,42 @@ local function run_scenario()
     assert(vim.bo[output_buf].buftype == "terminal")
 
     vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "import time; time.sleep(30)" })
+    local interrupted_response
+    local interrupted_failure
+    controller:execute(cell_id, function(response, failure)
+      interrupted_response = response
+      interrupted_failure = failure
+    end)
+    local active_execution_id
+    wait_for(5000, function()
+      for execution_id, execution in pairs(controller.executions) do
+        if execution.cell_id == cell_id and execution.outcome == "running" then
+          active_execution_id = execution_id
+          return true
+        end
+      end
+      return false
+    end, "long execution did not publish its active identity")
+    local interrupt_response
+    local interrupt_failure
+    controller:interrupt(active_execution_id, function(response, failure)
+      interrupt_response = response
+      interrupt_failure = failure
+    end)
+    wait_for(5000, function()
+      return interrupt_response ~= nil or interrupt_failure ~= nil
+    end, "interrupt control request did not complete while execution was active")
+    assert(interrupt_failure == nil, vim.inspect(interrupt_failure))
+    assert(interrupt_response.interrupt.result == "requested")
+    wait_for(5000, function()
+      return interrupted_response ~= nil or interrupted_failure ~= nil
+    end, "interrupted execution did not complete")
+    assert(interrupted_failure == nil, vim.inspect(interrupted_failure))
+    assert(interrupted_response.execution.outcome == "interrupted")
+    assert(controller.executions[active_execution_id].outcome == "interrupted")
+    assert(controller.kernel_state == "on", "interrupt changed authoritative kernel state")
+
     vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "jusi_restart_probe = 41" })
     local probe_response
     local probe_failure

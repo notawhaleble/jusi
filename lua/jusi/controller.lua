@@ -76,6 +76,14 @@ function Controller:_accept_health_snapshot(response)
     for _, client in ipairs(response.clients) do
       self.clients[client.client_id] = client
     end
+    for _, execution in ipairs(response.executions) do
+      self.executions[execution.execution_id] = {
+        execution_id = execution.execution_id,
+        cell_id = execution.cell_id,
+        client_id = execution.client_id,
+        outcome = execution.outcome,
+      }
+    end
     for _, surface in ipairs(response.surfaces) do
       self.surfaces[surface.surface_id] = surface
     end
@@ -433,6 +441,36 @@ function Controller:execute(cell_id, callback)
     code = table.concat(body, "\n"),
   })
   return self:_request("POST", "/v1/kernels/" .. self.kernel_id .. "/executions", command, callback)
+end
+
+function Controller:interrupt(execution_id, callback)
+  local execution = self.executions[execution_id]
+  if not execution or execution.outcome ~= "running" or not self.kernel_id then
+    if callback then
+      callback(nil, {
+        trace_id = "",
+        layer = "frontend_model",
+        operation = "interrupt",
+        reason = "conflict",
+        message = "no matching active execution is selected",
+        retryable = false,
+        scope = "request",
+        resource = { kind = "execution", id = execution_id or "unknown" },
+      })
+    end
+    return nil
+  end
+  local command = self:_command("interrupt", {
+    kernel_id = self.kernel_id,
+    execution_id = execution_id,
+    idempotency_key = new_id("interrupt"),
+  })
+  return self:_request(
+    "POST",
+    "/v1/kernels/" .. self.kernel_id .. "/executions/" .. execution_id .. "/interrupt",
+    command,
+    callback
+  )
 end
 
 function Controller:stop_kernel(callback)

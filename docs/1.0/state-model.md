@@ -98,6 +98,13 @@ One request evaluated by one kernel generation.
 
 Execution outcome is local to that execution. It is not a notebook or kernel health state.
 
+At most one kernel-owned execution is active in the initial serialized service.
+Its identity is included in authoritative health inspection so reconnect does
+not lose the ability to interrupt it. Interrupt names both its `execution_id`
+and `kernel_id`; a stale identity is rejected rather than redirected. Successful
+interrupt changes the execution outcome to `interrupted` while kernel state
+remains `on`.
+
 ### Client
 
 A backend-visible output or interaction resource associated with an execution or plugin worker.
@@ -158,6 +165,11 @@ to client lifetime. The worker remains owned by its durable client across
 ordinary operation results.
 Concurrent interrupt and terminal interaction are deferred to transports that
 can operate independently of an in-flight request.
+
+Plugin interruption is distinct from client close. A successful plugin-specific
+interrupt hook cancels active plugin work while retaining the durable client;
+the generic concurrent worker-control path remains part of the client-operation
+milestone.
 
 Full restart cleans every worker before stopping the old kernel or publishing a
 replacement runtime. Incomplete worker cleanup aborts replacement with the old

@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_interrupt_123",
+  "trace_id": "trace_interrupt_123",
+  "kind": "interrupt",
+  "kernel_id": "kernel_123",
+  "execution_id": "execution_123",
+  "idempotency_key": "interrupt-execution-123"
+}

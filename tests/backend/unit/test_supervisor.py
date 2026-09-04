@@ -42,6 +42,7 @@ class FakeKernel:
         )
         self.stopped = False
         self.stop_error = stop_error
+        self.interrupt_count = 0
 
     def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
         assert code
@@ -55,6 +56,9 @@ class FakeKernel:
         if self.stop_error is not None:
             raise self.stop_error
         self.stopped = True
+
+    def interrupt(self) -> None:
+        self.interrupt_count += 1
 
 
 class FakeFactory:
@@ -132,6 +136,63 @@ class SequenceConfiguration:
 
 def make_supervisor(factory: FakeFactory, discovery: FakeDiscovery | None = None) -> Supervisor:
     return Supervisor(factory, discovery or FakeDiscovery())
+
+
+def test_interrupt_bypasses_execution_lane_and_preserves_kernel() -> None:
+    class BlockingKernel(FakeKernel):
+        def __init__(self) -> None:
+            super().__init__(KernelExecutionResult("interrupted", "KeyboardInterrupt", ""), outputs=())
+            self.executing = threading.Event()
+            self.released = threading.Event()
+
+        def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
+            self.executing.set()
+            assert self.released.wait(2), "interrupt did not reach the active execution"
+            return self.result
+
+        def interrupt(self) -> None:
+            super().interrupt()
+
+    kernel = BlockingKernel()
+    supervisor = make_supervisor(FakeFactory(kernel))
+    started = supervisor.start_kernel(notebook_id="nb_test", kernel_name="python3", trace_id="trace_start")
+    result: list[dict] = []
+    execution_thread = threading.Thread(target=lambda: result.append(supervisor.execute(
+        kernel_id=started["kernel"]["kernel_id"], notebook_id="nb_test", cell_id="cell_test",
+        code="slow()", trace_id="trace_execute", timeout=2,
+    )))
+    execution_thread.start()
+    assert kernel.executing.wait(1)
+    execution_started = next(
+        event for event in supervisor.events.events_after(0)
+        if event["kind"] == "execution.started"
+    )
+
+    interrupted = supervisor.interrupt_execution(
+        kernel_id=started["kernel"]["kernel_id"],
+        execution_id=execution_started["payload"]["execution_id"],
+        trace_id="trace_interrupt",
+    )
+    repeated = supervisor.interrupt_execution(
+        kernel_id=started["kernel"]["kernel_id"],
+        execution_id=execution_started["payload"]["execution_id"],
+        trace_id="trace_interrupt_again",
+    )
+    kernel.released.set()
+    execution_thread.join(2)
+
+    assert not execution_thread.is_alive()
+    assert interrupted["interrupt"]["result"] == "requested"
+    assert repeated["interrupt"]["result"] == "already_requested"
+    assert kernel.interrupt_count == 1
+    assert result[0]["execution"]["outcome"] == "interrupted"
+    assert supervisor.health()["kernel"]["state"] == "on"
+    relevant = [
+        (event["kind"], event["operation"])
+        for event in supervisor.events.events_after(0)
+        if event["trace_id"] in {"trace_execute", "trace_interrupt"}
+    ]
+    assert relevant[-1] == ("operation.completed", "execute")
 
 
 class FakePluginWorkerHandle:
