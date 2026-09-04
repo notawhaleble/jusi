@@ -98,10 +98,6 @@ local function test_client_commands_use_focused_projection_identity()
     local transport = FakeTransport.new()
     local session = jusi.connect({ buf = notebook_buf, transport = transport })
     local cell_id = session.model:cell_at_row(1).id
-    session.controller.clients.cli_sql = {
-      client_id = "cli_sql",
-      cell_id = cell_id,
-    }
     local client_buf = vim.api.nvim_create_buf(false, true)
     local terminal_lines = {}
     for _ = 1, 20 do
@@ -123,11 +119,26 @@ local function test_client_commands_use_focused_projection_identity()
     equal(transport.requests[2].payload.cell_id, cell_id)
     equal(transport.requests[2].payload.code, "%%sql main\nselect 1")
 
-    jusi.close_client()
+    session.controller.clients.cli_sql = {
+      client_id = "cli_sql",
+      cell_id = cell_id,
+    }
+    jusi.close()
 
     equal(transport.requests[3].method, "DELETE")
     equal(transport.requests[3].path, "/v1/clients/cli_sql")
     equal(transport.requests[3].payload.client_id, "cli_sql")
+
+    session.controller.clients.cli_sql = nil
+    session.controller.clients.cli_replaced = {
+      client_id = "cli_replaced",
+      cell_id = cell_id,
+    }
+    jusi.execute()
+    equal(transport.requests[4].path, "/v1/clients/cli_replaced")
+    equal(transport.requests[4].payload.kind, "close_client")
+    equal(transport.requests[5].path, "/v1/kernels/krn_runtime/executions")
+    equal(transport.requests[5].payload.cell_id, cell_id)
     vim.api.nvim_buf_delete(client_buf, { force = true })
     equal(jusi._destroy_session(notebook_buf), true)
   end, debug.traceback)
@@ -168,10 +179,13 @@ local function test_explicit_command_workflow()
     equal(vim.fn.exists(":JusiServiceStart"), 2)
     equal(vim.fn.exists(":JusiServiceStop"), 2)
     equal(vim.fn.exists(":JusiRestart"), 2)
+    equal(vim.fn.exists(":JusiClose"), 2)
+    equal(vim.fn.exists(":JusiToggleFocus"), 2)
 
     local notebook_buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(notebook_buf, 0, -1, false, { "╭──", "1 + 1", "╰──" })
     vim.api.nvim_win_set_buf(0, notebook_buf)
+    local notebook_window = vim.api.nvim_get_current_win()
     local transport = FakeTransport.new()
     local session = jusi.connect({ buf = notebook_buf, transport = transport })
     transport.callbacks.on_event(event(1, "service.ready", { supervisor_id = "sup_runtime" }))
@@ -198,12 +212,29 @@ local function test_explicit_command_workflow()
       media_type = "text/plain",
       data = "2",
     }))
-    local output_buf = assert(jusi.open_output(notebook_buf, 1))
-    equal(vim.api.nvim_get_current_buf(), output_buf)
+    local output_buf = assert(session.presentation:buffer_for_cell(cell_id))
+    equal(vim.api.nvim_get_current_buf(), notebook_buf, "automatic presentation must not steal focus")
+    equal(#vim.fn.win_findbuf(output_buf), 1, "execution must reveal its artifact")
     assert(vim.wait(1000, function()
       return vim.api.nvim_buf_get_lines(output_buf, 0, 1, false)[1] == "2"
     end, 10), "terminal output was not rendered")
     equal(vim.api.nvim_buf_get_lines(output_buf, 0, 1, false)[1], "2")
+
+    equal(jusi.toggle_focus(notebook_buf, 1), output_buf)
+    equal(vim.api.nvim_get_current_buf(), output_buf)
+    equal(jusi.toggle_focus(), notebook_buf)
+    equal(vim.api.nvim_get_current_win(), notebook_window)
+    equal(vim.api.nvim_get_current_buf(), notebook_buf)
+
+    jusi.toggle_focus(notebook_buf, 1)
+    vim.api.nvim_win_close(0, false)
+    equal(#vim.fn.win_findbuf(output_buf), 0, "native window close must only hide the artifact")
+    equal(vim.api.nvim_buf_is_valid(output_buf), true)
+    equal(jusi.toggle_focus(notebook_buf, 1), output_buf)
+    equal(vim.api.nvim_get_current_buf(), output_buf, "toggle must reopen a hidden artifact")
+    equal(jusi.toggle_focus(), notebook_buf)
+    equal(jusi.close(notebook_buf, 1), true)
+    equal(vim.api.nvim_buf_is_valid(output_buf), false, "JusiClose must destroy ordinary output")
 
     local old_notebook_id = session.model.notebook_id
     local old_cell_id = cell_id

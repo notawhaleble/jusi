@@ -48,7 +48,8 @@ cell delimiters and use:
 :JusiConnect
 :JusiStartKernel
 :JusiExecute
-:JusiOpenOutput
+:JusiToggleFocus
+:JusiClose
 :JusiRestart
 :JusiStopKernel
 :JusiDisconnect
@@ -57,6 +58,12 @@ cell delimiters and use:
 Connecting and disconnecting affect only the frontend transport. Disconnect
 preserves the current notebook model and output surfaces for later transport
 resumption. Neither command implicitly starts or stops a kernel.
+
+Execution reveals the cell's ordinary output or plugin client without taking
+focus. `:JusiToggleFocus` moves between that artifact and its source cell and
+reopens a buffer hidden with native `:close`. `:JusiClose` completely removes
+the cell artifact, including backend client teardown when required, without
+stopping the kernel.
 
 Alternatively, when `jusi` is on `PATH`, `:JusiServiceStart` explicitly launches
 and connects a notebook-local service; `:JusiServiceStop` stops its kernel and

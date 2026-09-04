@@ -2,6 +2,7 @@ local controller_module = require("jusi.controller")
 local notebook = require("jusi.notebook")
 local presentation_module = require("jusi.presentation")
 local interactive_terminal = require("jusi.presentation.interactive_terminal")
+local presentation_window = require("jusi.presentation.window")
 local local_service = require("jusi.service.local")
 local transport_module = require("jusi.transport.http_sse")
 
@@ -88,10 +89,38 @@ end
 local function new_presentation(model)
   return presentation_module.new({
     notebook_id = model.notebook_id,
+    notebook_buf = model.buf,
+    height = config.output_height,
     on_failure = function(failure)
       notify(failure_text(failure), vim.log.levels.ERROR)
     end,
   })
+end
+
+local function clients_for_cell(session, cell_id)
+  local result = {}
+  for client_id, client in pairs(session.controller.clients) do
+    if client.cell_id == cell_id then
+      table.insert(result, client_id)
+    end
+  end
+  table.sort(result)
+  return result
+end
+
+local function close_clients(session, client_ids, callback, index)
+  local position = index or 1
+  if position > #client_ids then
+    callback(true)
+    return nil
+  end
+  return session.controller:close_client(client_ids[position], function(_, failure)
+    if failure then
+      callback(false, failure)
+      return
+    end
+    close_clients(session, client_ids, callback, position + 1)
+  end)
 end
 
 local function retire_session(session)
@@ -337,10 +366,23 @@ function M.execute(buf, row)
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
   end
-  return session.controller:execute(cell.id, function(_, failure)
-    if failure then
+  local function execute_cell()
+    return session.controller:execute(cell.id, function(_, failure)
+      if failure then
+        notify(failure_text(failure), vim.log.levels.ERROR)
+      end
+    end)
+  end
+  local client_ids = clients_for_cell(session, cell.id)
+  if #client_ids == 0 then
+    return execute_cell()
+  end
+  return close_clients(session, client_ids, function(closed, failure)
+    if not closed then
       notify(failure_text(failure), vim.log.levels.ERROR)
+      return
     end
+    execute_cell()
   end)
 end
 
@@ -358,50 +400,7 @@ function M.stop_kernel(buf)
   end)
 end
 
-function M.close_client(buf, row, requested_client_id)
-  local context_buf = buf or vim.api.nvim_get_current_buf()
-  local session = require_session(context_buf)
-  if not session then
-    return nil
-  end
-  local client_id = requested_client_id
-  if client_id == nil or client_id == "" then
-    local projected_client_id = vim.b[context_buf].jusi_client_id
-    if type(projected_client_id) == "string" and projected_client_id ~= "" then
-      client_id = projected_client_id
-    else
-      local cell = cell_from_context(session, context_buf, row)
-      if not cell then
-        notify("cursor is not inside a cell", vim.log.levels.ERROR)
-        return nil
-      end
-      local matches = {}
-      for id, client in pairs(session.controller.clients) do
-        if client.cell_id == cell.id then
-          table.insert(matches, id)
-        end
-      end
-      if #matches ~= 1 then
-        notify(
-          #matches == 0 and "cell has no active plugin client"
-            or "cell has multiple active clients; pass an explicit client_id to :JusiCloseClient",
-          vim.log.levels.ERROR
-        )
-        return nil
-      end
-      client_id = matches[1]
-    end
-  end
-  return session.controller:close_client(client_id, function(response, failure)
-    if failure then
-      notify(failure_text(failure), vim.log.levels.ERROR)
-    elseif response then
-      notify("client closed: " .. response.cleanup.result)
-    end
-  end)
-end
-
-function M.open_output(buf, row)
+function M.close(buf, row)
   local context_buf = buf or vim.api.nvim_get_current_buf()
   local session = require_session(context_buf)
   if not session then
@@ -412,15 +411,65 @@ function M.open_output(buf, row)
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
   end
-  local output_buf = session.interactive:buffer_for_cell(cell.id)
-    or session.presentation:buffer_for_cell(cell.id)
-  if not output_buf then
-    notify("cell has no output surface", vim.log.levels.WARN)
+  local client_ids = clients_for_cell(session, cell.id)
+  local output_buf = session.presentation:buffer_for_cell(cell.id)
+  if output_buf then
+    session.presentation:close_cell(cell.id)
+  end
+  if #client_ids == 0 then
+    if not output_buf then
+      notify("cell has no execution artifact", vim.log.levels.WARN)
+      return nil
+    end
+    return true
+  end
+  return close_clients(session, client_ids, function(closed, failure)
+    if not closed then
+      notify(failure_text(failure), vim.log.levels.ERROR)
+    end
+  end)
+end
+
+local function focus_notebook_cell(session, cell)
+  local window = presentation_window.show(session.buf, {
+    anchor_buf = vim.api.nvim_get_current_buf(),
+    enter = true,
+    split = "above",
+  })
+  local snapshot = session.model:cell_snapshot(cell)
+  if snapshot then
+    local row = math.min(snapshot.body_start_row, snapshot.close_row)
+    vim.api.nvim_win_set_cursor(window, { row + 1, 0 })
+  end
+  return session.buf
+end
+
+function M.toggle_focus(buf, row)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
+  if not session then
     return nil
   end
-  vim.cmd("botright " .. tostring(config.output_height) .. "split")
-  vim.api.nvim_win_set_buf(0, output_buf)
-  return output_buf
+  local cell = cell_from_context(session, context_buf, row)
+  if not cell then
+    notify("cursor is not inside a cell", vim.log.levels.ERROR)
+    return nil
+  end
+  if context_buf ~= session.buf then
+    return focus_notebook_cell(session, cell)
+  end
+  local artifact_buf = session.interactive:buffer_for_cell(cell.id)
+    or session.presentation:buffer_for_cell(cell.id)
+  if not artifact_buf then
+    notify("cell has no execution artifact", vim.log.levels.WARN)
+    return nil
+  end
+  presentation_window.show(artifact_buf, {
+    anchor_buf = session.buf,
+    height = config.output_height,
+    enter = true,
+  })
+  return artifact_buf
 end
 
 function M.disconnect(buf)
@@ -475,11 +524,11 @@ local function create_commands()
   vim.api.nvim_create_user_command("JusiStopKernel", function()
     M.stop_kernel()
   end, {})
-  vim.api.nvim_create_user_command("JusiCloseClient", function(command)
-    M.close_client(nil, nil, command.args)
-  end, { nargs = "?" })
-  vim.api.nvim_create_user_command("JusiOpenOutput", function()
-    M.open_output()
+  vim.api.nvim_create_user_command("JusiClose", function()
+    M.close()
+  end, {})
+  vim.api.nvim_create_user_command("JusiToggleFocus", function()
+    M.toggle_focus()
   end, {})
   vim.api.nvim_create_user_command("JusiDisconnect", function()
     M.disconnect()

@@ -45,3 +45,8 @@ four lines and require execution of the stored model cell and closure of the
 exact client. The real Neovim test focuses a terminal as its target exits, then
 requires the surviving notebook model to execute again and create a new client.
 Plugin-owned screen coordinates never enter the notebook model.
+
+ADR 0020 later replaced the user-facing `open_output` and `close_client`
+commands with `JusiToggleFocus` and cell-oriented `JusiClose`. The original
+command names remain here as incident evidence; the projection-identity
+regression requirement applies to the replacement interface.

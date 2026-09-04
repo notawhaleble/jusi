@@ -59,6 +59,15 @@ function M.run()
       vim.api.nvim_win_get_height(record.window)
     )
     assert(terminal_text(record.buf):find(expected_geometry, 1, true), terminal_text(record.buf))
+    assert(vim.api.nvim_get_current_buf() == buf, "execution artifact stole notebook focus")
+
+    vim.api.nvim_win_close(record.window, false)
+    assert(vim.api.nvim_buf_is_valid(record.buf), "native window close destroyed the artifact")
+    assert(session.controller.clients[record.client.client_id] ~= nil)
+    assert(jusi.toggle_focus(buf, 1) == record.buf, "toggle did not reopen the hidden artifact")
+    assert(vim.api.nvim_get_current_buf() == record.buf)
+    assert(jusi.toggle_focus() == buf, "toggle did not return to the source cell")
+    assert(vim.api.nvim_get_current_buf() == buf)
 
     vim.api.nvim_chan_send(record.job_id, "h")
     wait_for(3000, function()
@@ -75,7 +84,7 @@ function M.run()
     assert(session.controller.surfaces[first_surface_id] ~= nil)
     assert(session.controller.kernel_state == "on")
 
-    jusi.close_client(buf, 1, first_client_id)
+    jusi.close(buf, 1)
     wait_for(5000, function()
       return next(session.controller.clients) == nil
         and next(session.controller.surfaces) == nil
@@ -115,7 +124,7 @@ function M.run()
       return next(session.interactive.surfaces) ~= nil
     end, "notebook execution after focused target exit did not create a new client")
     local _, final_record = next(session.interactive.surfaces)
-    jusi.close_client(buf, 1, final_record.client.client_id)
+    jusi.close(buf, 1)
     wait_for(5000, function()
       return next(session.controller.clients) == nil
         and next(session.controller.surfaces) == nil

@@ -115,6 +115,13 @@ errors do not implicitly close it.
 
 A Neovim terminal buffer is a frontend projection of a client, not the client identity.
 
+The initial frontend presents at most one current execution artifact per model
+cell. This is a user interaction abstraction over either bounded execution
+output or a plugin client, not a backend resource. Native window close only
+hides its projection. `JusiClose`, runtime cleanup, demonstrated fatal loss, or
+explicit replacement by a new execution ends the artifact through the cleanup
+path appropriate to its underlying resources.
+
 ### Client Surface
 
 A generic frontend projection requested by one durable backend client.

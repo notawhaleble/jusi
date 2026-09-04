@@ -1,4 +1,5 @@
 local terminal = require("jusi.presentation.terminal")
+local presentation_window = require("jusi.presentation.window")
 
 local M = {}
 local Presentation = {}
@@ -67,6 +68,11 @@ function Presentation:write(cell_id, output)
     end
     surface = value
     self.surfaces[cell_id] = surface
+    presentation_window.show(surface.buf, {
+      anchor_buf = self.notebook_buf,
+      height = self.height,
+      enter = false,
+    })
   end
   local ok, message = surface:write(output.data)
   if not ok then
@@ -120,6 +126,8 @@ function M.new(options)
   vim.validate("notebook_id", opts.notebook_id, "string")
   return setmetatable({
     notebook_id = opts.notebook_id,
+    notebook_buf = opts.notebook_buf,
+    height = opts.height or 12,
     on_failure = opts.on_failure,
     pending = {},
     surfaces = {},

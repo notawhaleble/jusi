@@ -1,17 +1,10 @@
 local M = {}
+local presentation_window = require("jusi.presentation.window")
 local InteractiveTerminals = {}
 InteractiveTerminals.__index = InteractiveTerminals
 
 local function default_launch(options)
-  local previous_window = vim.api.nvim_get_current_win()
-  local notebook_window = vim.fn.bufwinid(options.notebook_buf)
-  if notebook_window ~= -1 then
-    vim.api.nvim_set_current_win(notebook_window)
-  end
-  vim.cmd("botright " .. tostring(options.height) .. "split")
-  local window = vim.api.nvim_get_current_win()
   local buf = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_win_set_buf(window, buf)
   vim.bo[buf].bufhidden = "hide"
   vim.bo[buf].swapfile = false
   vim.api.nvim_buf_set_name(buf, "jusi://terminal/" .. options.surface.surface_id)
@@ -20,6 +13,11 @@ local function default_launch(options)
   vim.b[buf].jusi_cell_id = options.client.cell_id
   vim.b[buf].jusi_client_id = options.surface.client_id
   vim.b[buf].jusi_surface_id = options.surface.surface_id
+  local window = presentation_window.show(buf, {
+    anchor_buf = options.notebook_buf,
+    height = options.height,
+    enter = false,
+  })
   local job_id
   vim.api.nvim_buf_call(buf, function()
     job_id = vim.fn.jobstart(options.command, {
@@ -27,9 +25,6 @@ local function default_launch(options)
       on_exit = options.on_exit,
     })
   end)
-  if vim.api.nvim_win_is_valid(previous_window) then
-    vim.api.nvim_set_current_win(previous_window)
-  end
   if type(job_id) ~= "number" or job_id <= 0 then
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
     error("could not start terminal bridge: " .. tostring(job_id))

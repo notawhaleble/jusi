@@ -1,10 +1,10 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-02
+Updated: 2026-09-04
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0019 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0020 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -14,8 +14,8 @@ Updated: 2026-09-02
 - The Neovim frontend has a pure Lua symbolic-format parser, model-owned cell identities, extmark anchors, locally spliced structural reconciliation, and an executable 10,000-line/1,000-cell performance harness.
 - `.vipynb` remains the canonical extension with Neovim filetype `jusi`; legacy `##` notebooks are detected and rejected without mutation until explicit conversion exists.
 - A replaceable curl/`vim.system` adapter and Lua controller now bind that model to HTTP commands and ordered SSE events.
-- Textual output now projects unchanged through `nvim_open_term()` into a hidden, cell-attached terminal buffer. Renderer choice is media-driven.
-- Repository-root Neovim runtime loading exposes explicit connect, kernel start/stop, execute, output-open, and disconnect commands. Output opens in a predictable bottom split.
+- Textual output now projects unchanged through `nvim_open_term()` into a cell-attached terminal buffer. Its first output reveals a bottom split without taking focus. Renderer choice is media-driven.
+- Repository-root Neovim runtime loading exposes explicit connect, kernel start/stop, restart, execute, artifact close/focus-toggle, and disconnect commands. ADR 0020 gives ordinary output and plugin clients one cell-oriented interaction without merging their internal ownership.
 - Frontend disconnect now closes only transport; the live buffer model, cell identities, kernel view, and output surfaces survive an inspect-before-replay reconnect.
 - Explicit `JusiServiceStart`/`JusiServiceStop` now own one notebook-local service process, validate readiness, retain bounded stderr, distinguish process/supervisor/transport identities, and clean up on buffer destruction. Transport connect still never spawns implicitly.
 - Event-stream connection now inspects authoritative supervisor/kernel state and the retained replay window first. Supervisor replacement and expired cursors replace stale frontend state; replayable cursors consume only missing ordered events.
@@ -42,7 +42,8 @@ Updated: 2026-09-02
 - Terminal surface attachment is now implemented end to end: a dedicated WebSocket subprotocol carries closed attach/resize/failure controls, cursor-framed raw target output, and raw frontend input. The target process is spawned only after verified first-attachment geometry; bounded replay, single-writer ownership, slow-consumer fencing, and explicit cursor expiry do not use the supervisor operation lane.
 - The repository `jusi terminal-bridge` resolves the relative surface endpoint against the configured local or remote service URL and relays opaque bytes and verified resize controls inside a native Neovim terminal job. Health reconciliation projects existing surfaces without duplicating jobs. The running bridge now survives WebSocket loss by reattaching with a fresh identity from its exact in-memory consumed cursor; expired continuity ends visibly without guessed replay. A dead bridge process is not silently recreated.
 - Incident 0004 established that the bridge must own its local TTY mode as part of byte transport. It now selects raw input with guaranteed restoration, so single keys and Ctrl-C reach the target immediately instead of being echoed/buffered or signalling the bridge. Automatic surface creation still leaves focus in the notebook.
-- Cell-oriented commands now use stored model identity when invoked from a Jusi projection and notebook cursor coordinates only from notebook text. `JusiCloseClient` additionally uses a projection's exact client identity. Incident 0005 prevents terminal screen rows from being mistaken for notebook coordinates during asynchronous client cleanup.
+- Cell-oriented commands use stored model identity when invoked from a Jusi projection and notebook cursor coordinates only from notebook text. Incident 0005 prevents terminal screen rows from being mistaken for notebook coordinates during asynchronous client cleanup.
+- `JusiExecute` reveals one current cell artifact without taking focus; it explicitly replaces prior cell-owned clients before a new execution. Native window close only hides an artifact, `JusiToggleFocus` reopens or navigates to/from it, and `JusiClose` performs the appropriate frontend-output or backend-client teardown while leaving the kernel on.
 - Unexpected target terminal-process death emits a typed `client/run_terminal_surface/channel_closed` core failure with process diagnostics, retires only the owning surface/client/worker, and leaves kernel truth unchanged.
 - A test-only `terminal_fixture` exact plugin now proves the complete Neovim path through fresh discovery, kernel attestation/handoff, worker isolation, target PTY, WebSocket bridge, first-draw geometry, opaque input/output, explicit client close, and kernel survival. It is outside production packaging and is discovered only through an explicit test `PYTHONPATH`.
 - Backend-only terminal plugins expose generic terminal surfaces. SQL/VisiData, shell, and terminal text remain plugin-owned; frontend core manages native surfaces and generic input/geometry. Web surfaces remain a conceptual later family only. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
@@ -78,7 +79,7 @@ Implemented:
 Deferred:
 
 - remote supervisors and `checking`
-- richer terminal window/focus policy, dead-bridge replacement policy, and multiple observers
+- dead-bridge replacement policy and multiple terminal observers
 - kernel interrupt, completion, input requests, rich media, and durable event storage
 
 ## Next Boundary
@@ -88,7 +89,8 @@ are implemented and automatically verified. Web work is out of the near-term
 path. Incremental ordinary output, realistic ANSI/error streams, kernel survival,
 large-body input, and bounded exact output are now automatically verified. The
 ADR 0019 and the first central read-only SQL/SQLite/VisiData development fixture
-are implemented. This is now a manual review boundary. After it is exercised,
-the next decision is whether to migrate the shared `jusi-sql` family contract
-first or the exact `jusi-sqlite` provider alongside it; their clean 0.x
-repositories remain unchanged.
+are implemented. ADR 0020's uniform execute/toggle-focus/close interaction is
+the current manual review boundary. After it is exercised, the next decision is
+whether to migrate the shared `jusi-sql` family contract first or the exact
+`jusi-sqlite` provider alongside it; their clean 0.x repositories remain
+unchanged.

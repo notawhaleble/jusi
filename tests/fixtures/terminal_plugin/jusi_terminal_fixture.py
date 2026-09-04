@@ -84,7 +84,7 @@ def run_application() -> int:
 
     signal.signal(signal.SIGWINCH, lambda *_: draw_size("resized"))
     draw_size("initial")
-    os.write(sys.stdout.fileno(), b"Type in this terminal; the target echoes opaque bytes. Close with :JusiCloseClient.\r\n> ")
+    os.write(sys.stdout.fileno(), b"Type in this terminal; the target echoes opaque bytes. Close with :JusiClose.\r\n> ")
     while True:
         value = os.read(sys.stdin.fileno(), 4096)
         if not value:

@@ -38,5 +38,5 @@ PYTHONPATH="$PWD/tests/fixtures/sqlite_plugin${PYTHONPATH:+:$PYTHONPATH}" \
 
 Run `:JusiServiceStart`, `:JusiStartKernel`, and `:JusiExecute`. VisiData should
 open in a native terminal with a `value` column containing `2`. Return to the
-notebook, run `:JusiCloseClient`, confirm the kernel remains on, then run
+notebook, run `:JusiClose`, confirm the kernel remains on, then run
 `:JusiServiceStop`.

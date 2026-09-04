@@ -24,13 +24,19 @@ The first commands are:
 - `:JusiServiceStop`
 - `:JusiStartKernel`
 - `:JusiExecute`
-- `:JusiOpenOutput`
+- `:JusiToggleFocus`
+- `:JusiClose`
+- `:JusiRestart`
 - `:JusiStopKernel`
 - `:JusiDisconnect`
 
 Execution resolves the current model cell through extmark-anchored ranges and
 reads its active body at command time. It does not scan the notebook or run from
-an edit callback.
+an edit callback. Its output or client artifact appears without taking focus.
+Native window close hides that artifact, `JusiToggleFocus` reopens or navigates
+between it and its source cell, and `JusiClose` performs complete artifact
+cleanup. ADR 0020 defines this uniform interaction without merging the distinct
+internal output and client lifetimes.
 
 ## Initial Configuration
 

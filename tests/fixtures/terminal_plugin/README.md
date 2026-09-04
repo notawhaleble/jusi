@@ -33,5 +33,5 @@ PYTHONPATH="$PWD/tests/fixtures/terminal_plugin${PYTHONPATH:+:$PYTHONPATH}" \
 Run `:JusiServiceStart`, `:JusiStartKernel`, place the cursor in the cell, and
 run `:JusiExecute`. The interactive split should report its initial geometry;
 typing there should echo through the target PTY. Return to the notebook and run
-`:JusiCloseClient`, then `:JusiServiceStop`. Explicit close must remove the
+`:JusiClose`, then `:JusiServiceStop`. Explicit close must remove the
 terminal while the kernel remains on until service stop.

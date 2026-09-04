@@ -74,8 +74,26 @@ function M.run()
     assert(terminal_text(record.buf):find("FileExistsError", 1, true) == nil,
       "isolated VisiData fixture attempted to persist user state:\n" .. terminal_text(record.buf))
 
+    local first_client_id = record.client.client_id
+    local first_buf = record.buf
+    jusi.execute(buf, 1)
+    wait_for(10000, function()
+      if vim.tbl_count(session.controller.clients) ~= 1 then
+        return false
+      end
+      local _, current = next(session.interactive.surfaces)
+      return current ~= nil and current.client.client_id ~= first_client_id
+    end, "re-execution did not replace the SQL cell artifact")
+    assert(not vim.api.nvim_buf_is_valid(first_buf), "replaced SQL artifact buffer survived")
+    local _, replacement = next(session.interactive.surfaces)
+    wait_for(5000, function()
+      local text = terminal_text(replacement.buf)
+      return text:find("value", 1, true) ~= nil and text:find("2", 1, true) ~= nil
+    end, "replacement VisiData artifact did not render")
+    record = replacement
+
     vim.api.nvim_set_current_win(record.window)
-    jusi.close_client()
+    jusi.close()
     wait_for(5000, function()
       return next(session.controller.clients) == nil
         and next(session.controller.surfaces) == nil

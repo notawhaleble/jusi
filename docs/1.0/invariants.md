@@ -85,3 +85,11 @@ These invariants constrain implementation and protocol design. A change that vio
 52. An operation-level plugin error does not close an otherwise usable client or widen failure to the kernel.
 53. Plugin application semantics and presentation content remain backend-owned; frontend core supports only versioned generic terminal/web surfaces, controls, and actions.
 54. Recoverable plugin application errors use plugin-owned presentation, while fatal factory, worker, channel, or required-surface failures always produce a typed core failure event.
+
+## Cell Artifact Interaction
+
+55. Ordinary execution output and plugin clients share one cell-oriented interaction model without erasing their distinct internal identities or cleanup paths.
+56. Execute reveals the current cell artifact without moving frontend focus; focus changes only through an explicit focus or editor action.
+57. Native window close hides a projection and does not end its execution artifact or backend client.
+58. `JusiClose` explicitly ends the current cell artifact and performs type-appropriate, idempotent cleanup while leaving an otherwise live kernel on.
+59. The initial frontend retains at most one current execution artifact per model cell; a new cell execution explicitly replaces any prior artifact.

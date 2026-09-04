@@ -21,8 +21,10 @@ execution replaces and closes only that cell's previous terminal. Other cell
 surfaces remain intact. Completed output stays available until replacement or
 explicit frontend cleanup.
 
-The terminal buffers are initially hidden. Window placement, focus, mappings,
-and user commands are a later UI slice and do not alter renderer ownership.
+The first output reveals its terminal buffer in a split without changing the
+current window. Native window close only hides the buffer. `JusiToggleFocus`
+focuses or reopens it and returns from a projection to its source cell;
+`JusiClose` deletes it. These window operations do not alter renderer ownership.
 
 ## Deferred Media
 
@@ -46,6 +48,13 @@ The frontend owns buffer/window placement, focus, current geometry, input
 routing, and explicit close. The backend owns application state and rendered
 content. Fatal surface/client failures arrive through generic core failure
 events; recoverable application errors remain content on the plugin surface.
+
+ADR 0020 exposes the same cell artifact interaction for ordinary output and
+plugin clients. The abstraction does not merge their internals: closing bounded
+output deletes a frontend terminal, while closing a plugin artifact uses the
+backend client operation and authoritative surface events. Executing a cell
+explicitly replaces its current artifact, preventing stale clients from
+accumulating behind one cell.
 
 The terminal surface projection is now implemented. `surface.created` opens a
 native Neovim terminal split at its real geometry and starts the configured
