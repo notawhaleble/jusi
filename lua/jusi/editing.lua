@@ -195,6 +195,8 @@ end
 function Editing:close()
   if self.closed then return end
   self.closed = true
+  self.cellmode:close()
+  if self.offline_marks then self.offline_marks:close() end
   self.history:close()
   instances[self.model.buf] = nil
   vim.api.nvim_del_augroup_by_id(self.group)
@@ -227,6 +229,7 @@ function M.new(model, controller)
   vim.api.nvim_create_autocmd("ColorScheme", { group = self.group, callback = function() self.cache = {}; self:schedule() end })
   vim.api.nvim_create_autocmd("BufWipeout", { group = self.group, buffer = model.buf, once = true,
     callback = function() self:close() end })
+  self.cellmode = require("jusi.cellmode").new(self)
   self:catalog()
   self:schedule()
   return self
@@ -241,9 +244,13 @@ function M.attach(buf)
   local model = require("jusi.notebook").attach(buf)
   local editing = M.new(model, {})
   editing.owns_model = true
+  editing.offline_marks = require("jusi.marks").new(model, { clients = {} })
   model.on_text_changed = function(ids) editing:changed(ids) end
-  model.on_cells_changed = function(ids) editing:changed(ids, true) end
-  model.on_cells_retired = function(ids) for _, id in ipairs(ids) do editing:retire(id) end end
+  model.on_cells_changed = function(ids)
+    editing.offline_marks.on_cells_changed(ids)
+    editing:changed(ids, true)
+  end
+  model.on_cells_retired = function(ids) for _, id in ipairs(ids) do editing.offline_marks:retire(id); editing:retire(id) end end
   return editing
 end
 return M

@@ -44,7 +44,7 @@ function M.run()
         end
       end
     end
-    jusi.execute(buf, 1)
+    jusi.submit(buf, 1)
     local first = pending()
     assert(first.prompt == "lalala: " and first.cell_id == cell_id)
     local output_buf = assert(session.presentation:buffer_for_cell(cell_id))
@@ -61,7 +61,7 @@ function M.run()
     assert(controller.pending_input.input_request_id == first.input_request_id)
     vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "ololo" })
     vim.api.nvim_win_set_cursor(notebook_win, { 2, 0 })
-    vim.cmd("JusiInput")
+    vim.cmd("JusiSubmit")
     complete(first.execution_id, "succeeded")
     wait_for(function()
       return table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n"):find("'ololo'", 1, true) ~= nil

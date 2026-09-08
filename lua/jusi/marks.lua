@@ -12,6 +12,8 @@ local function highlights()
     Error = { "#e06c75", 168 }, Interrupted = { "#d19a66", 173 },
     Followup = { "#61afef", 75 }, Idle = { "#e5c07b", 180 }, Unknown = { "#7f848e", 102 } }) do
     vim.api.nvim_set_hl(0, "JusiCell" .. name, { fg = color[1], ctermfg = color[2], default = true })
+    local base = vim.api.nvim_get_hl(0, { name = "JusiCell" .. name, link = false })
+    vim.api.nvim_set_hl(0, "JusiCell" .. name .. "Mode", vim.tbl_extend("force", base, { reverse = true, cterm = { reverse = true } }))
   end
 end
 local function outcome(value)
@@ -27,6 +29,7 @@ function Marks:render(cell_id)
   local snapshot = self.model:cell_snapshot(cell_id)
   if not snapshot then self:retire(cell_id); return end
   local style = record and styles[record.state] or { "", "JusiCellIdle" }
+  if vim.b[self.model.buf].jusi_cell_mode_active then style = { style[1], style[2] .. "Mode" } end
   local parser = require("jusi.notebook.parser")
   if snapshot.close_row then
     self.closers[cell_id] = vim.api.nvim_buf_set_extmark(self.model.buf, self.namespace, snapshot.close_row, 0, {
@@ -42,7 +45,7 @@ function Marks:render(cell_id)
     self.idle[cell_id] = vim.api.nvim_buf_set_extmark(self.model.buf, self.namespace, snapshot.open_row, 0, {
       id = self.idle[cell_id], end_col = #require("jusi.notebook.parser").lines.open,
       right_gravity = true, end_right_gravity = false, invalidate = true, undo_restore = false,
-      hl_group = "JusiCellIdle", priority = 120,
+      hl_group = style[2], priority = 120,
     })
     return
   end
@@ -161,6 +164,11 @@ function M.new(model, controller)
     namespace = vim.api.nvim_create_namespace("jusi_cell_status_" .. model.notebook_id) }, Marks)
   marks.group = vim.api.nvim_create_augroup("jusi_cell_status_" .. model.notebook_id, { clear = true })
   vim.api.nvim_create_autocmd("ColorScheme", { group = marks.group, callback = highlights })
+  vim.api.nvim_create_autocmd("User", { group = marks.group, pattern = "JusiCellModeChanged", callback = function(event)
+    if event.data and event.data.buf == model.buf then
+      for _, cell in ipairs(model:ordered_cells()) do marks:render(cell.id) end
+    end
+  end })
   marks.on_cells_changed = function(ids)
     for _, id in ipairs(ids) do marks:render(id) end
   end

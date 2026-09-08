@@ -45,6 +45,30 @@ magic or alias resets that attribution. Profiles name installed Neovim
 warn once. One local headless Neovim editing worker is owned by each open
 notebook; editing does not call the backend. See [ADR 0030](docs/1.0/adr/0030-cell-local-syntax-and-indentation.md).
 
+## Navigation And Cell Mode
+
+Press Space in Normal mode to toggle cell mode. Its delimiter/status colors are
+inverted; Insert mode uses normal colors and native editing/completion, and Esc
+returns to cell-mode controls.
+
+| Cell-mode key | Action |
+| --- | --- |
+| `j` / `n`, `k` | Next / previous cell or expanded history entry; counts work |
+| Enter | Execute, send pending input, send a followup, or restore history by context |
+| `H` | Toggle history |
+| Ctrl-P / Ctrl-N | Restore older / newer history |
+| `C` | Clear payload and edit, keeping magic header and history |
+| `X` | Delete cell and close its resources |
+| `Y` / `P` | Copy cell / paste below with a fresh identity |
+| `Q` | Close the cell's output/client |
+
+`:JusiNextCell` and `:JusiPreviousCell` skip history and work in either mode.
+`:JusiCellNewAbove` / `:JusiCellNewBelow` create an empty cell and enter Insert.
+`:JusiCellEdit`, `:JusiCellDelete`, `:JusiCellCopy`, `:JusiCellPasteBelow`,
+`:JusiCellModeToggle`, and `:JusiSubmit` expose the same actions explicitly.
+The original `JusiExecute`, `JusiInput`, and `JusiFollowup` commands remain
+available when you want a specific submission variant.
+
 ## Cell History
 
 Followup-capable plugins keep submitted bodies in the cell's history suffix,

@@ -100,8 +100,8 @@ function History:toggle()
   vim.fn.winrestview(view)
   return true
 end
-function History:apply()
-  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+function History:apply(row)
+  row = row or vim.api.nvim_win_get_cursor(0)[1] - 1
   local cell = self.model:cell_at_row(row)
   local s = cell and self.model:cell_snapshot(cell)
   if not s or not s.valid then return false end

@@ -81,7 +81,7 @@ function M.run()
     wait_for(3000, function() return session.marks.records[record.client.cell_id].state == "followup" end,
       "followup mark stayed busy after delivery")
     assert(session.interactive.surfaces[original_surface] == record, "followup replaced the surface")
-    jusi.followup(buf, 1)
+    jusi.submit(buf, 1)
     wait_for(5000, function()
       return vim.tbl_contains(notifications, "followup delivered")
     end, "JusiFollowup did not report acceptance")

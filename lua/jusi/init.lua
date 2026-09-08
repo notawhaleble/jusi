@@ -438,6 +438,40 @@ function M.execute(buf, row)
   end)
 end
 
+-- Context selects an existing operation; input and followups keep their identities.
+function M.submit(buf, row)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local mode = require("jusi.cellmode").get(context_buf)
+  if mode and context_buf == vim.api.nvim_get_current_buf() then
+    local cell = mode.editor.model:cell_at_row(row or vim.api.nvim_win_get_cursor(0)[1] - 1)
+    local snapshot = cell and mode.editor.model:cell_snapshot(cell)
+    local cursor = row or vim.api.nvim_win_get_cursor(0)[1] - 1
+    if snapshot and snapshot.history_row and cursor >= snapshot.history_row and cursor < (snapshot.close_row or snapshot.end_row) then
+      if not snapshot.valid then notify("cell history is structurally invalid", vim.log.levels.WARN); return end
+      if vim.fn.foldclosed(snapshot.history_row + 1) >= 0 then
+        return mode.editor.history:toggle()
+      end
+      return mode.editor.history:apply(cursor)
+    end
+  end
+  local session = require_session(context_buf)
+  if not session then return end
+  local cell = cell_from_context(session, context_buf, row)
+  if not cell then notify("cursor is not inside a cell", vim.log.levels.ERROR); return end
+  local input = session.controller.pending_input
+  if input and input.cell_id == cell.id then return M.input(context_buf, row) end
+  for _, execution in pairs(session.controller.executions) do
+    if execution.cell_id == cell.id and execution.outcome == "running" then
+      notify("cell execution is still running", vim.log.levels.INFO); return
+    end
+  end
+  for _, client in pairs(session.controller.clients) do
+    if client.cell_id == cell.id and client.notebook_id == session.model.notebook_id
+        and vim.tbl_contains(client.capabilities, "followup") then return M.followup(context_buf, row) end
+  end
+  return M.execute(context_buf, row)
+end
+
 function M.complete()
   local session = require_session(vim.api.nvim_get_current_buf())
   if not session then return end
@@ -611,6 +645,19 @@ local function create_commands()
     return
   end
   commands_created = true
+  vim.api.nvim_create_user_command("JusiSubmit", function() M.submit() end, {})
+  for name, action in pairs({ JusiCellModeToggle = "toggle", JusiCellEdit = "edit", JusiCellDelete = "delete",
+      JusiCellCopy = "copy", JusiCellPasteBelow = "paste" }) do
+    vim.api.nvim_create_user_command(name, function() require("jusi.cellmode").command(action) end, {})
+  end
+  vim.api.nvim_create_user_command("JusiCellNewAbove", function() require("jusi.cellmode").command("insert", true) end, {})
+  vim.api.nvim_create_user_command("JusiCellNewBelow", function() require("jusi.cellmode").command("insert", false) end, {})
+  for name, direction in pairs({ JusiNextCell = 1, JusiPreviousCell = -1 }) do
+    vim.api.nvim_create_user_command(name, function(command)
+      local mode = require("jusi.cellmode").get()
+      if mode then require("jusi.navigation").move(mode.editor.model, direction, command.count, false) end
+    end, { count = 1 })
+  end
   vim.api.nvim_create_user_command("JusiHistoryToggle", function() require("jusi.history").command("toggle") end, {})
   vim.api.nvim_create_user_command("JusiHistoryApply", function() require("jusi.history").command("apply") end, {})
   vim.api.nvim_create_user_command("JusiTrace", function(command)
