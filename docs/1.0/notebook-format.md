@@ -69,6 +69,8 @@ second entry = after the first ├┄┄ until the next ├┄┄
 last entry   = after the last ├┄┄ until ╰──
 ```
 
+Capture, folding and restoration are implemented under [ADR 0031](adr/0031-foldable-followup-history.md).
+
 Neovim may add readable virtual text such as a history count or replace a folded history suffix with a summary. That presentation is not stored in delimiter lines.
 
 ## Structural Recovery
@@ -111,4 +113,3 @@ Text is the durable, reconstructable authority for structure. The in-memory note
 - representation of a literal body line exactly equal to one of the reserved structural lines
 - whether blank text outside cells is allowed or diagnosed
 - explicit conversion behavior from legacy `##` notebooks
-- whether history is part of the first walking-skeleton frontend scope; it is not part of the service-level skeleton

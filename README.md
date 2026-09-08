@@ -45,6 +45,23 @@ magic or alias resets that attribution. Profiles name installed Neovim
 warn once. One local headless Neovim editing worker is owned by each open
 notebook; editing does not call the backend. See [ADR 0030](docs/1.0/adr/0030-cell-local-syntax-and-indentation.md).
 
+## Cell History
+
+Followup-capable plugins keep submitted bodies in the cell's history suffix,
+newest first. Initial handoff and subsequent followups are captured; exact
+repeats move to the front. Magic headers are omitted. Ordinary kernel execution
+and kernel input replies do not add history.
+
+History starts folded as `╞══ history: N entries`, with the cell closer visible.
+Use native `zo`, `zc`, or `za`, or `:JusiHistoryToggle` from anywhere in the cell.
+Each window keeps its own fold state. Open history is editable notebook text
+with isolated syntax and indentation for each entry.
+
+Place the cursor on an entry and use `:JusiHistoryApply` to restore it into the
+active body without executing. The current magic header/alias and stored history
+remain; one undo restores the previous body. Both commands work offline and have
+no default mappings.
+
 ## Current Manual Workflow
 
 Start the service in a regular terminal:

@@ -65,6 +65,7 @@ function M.run()
       local mark = session.marks.records[record.client.cell_id]
       return mark and mark.state == "followup"
     end, "durable client did not receive its followup mark")
+    assert(vim.deep_equal(session.model:history(record.client.cell_id), { { "manual fixture" } }), "initial handoff was not captured")
     local original_client = record.client.client_id
     local original_surface = record.surface.surface_id
     vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "  literal followup  ", "α" })
@@ -76,6 +77,7 @@ function M.run()
     assert(not followup_failure, vim.inspect(followup_failure))
     assert(response.result.body == "  literal followup  \nα" and response.result.count == 1)
     assert(response.client.client_id == original_client)
+    assert(vim.deep_equal(session.model:history(record.client.cell_id)[1], { "  literal followup  ", "α" }), "followup history lost submitted text")
     wait_for(3000, function() return session.marks.records[record.client.cell_id].state == "followup" end,
       "followup mark stayed busy after delivery")
     assert(session.interactive.surfaces[original_surface] == record, "followup replaced the surface")

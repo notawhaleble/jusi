@@ -494,7 +494,11 @@ function Controller:execute(cell_id, callback)
     cell_id = cell_id,
     code = table.concat(body, "\n"),
   })
-  return self:_request("POST", "/v1/kernels/" .. self.kernel_id .. "/executions", command, callback)
+  if self.on_submission then self.on_submission(command, cell_id) end
+  return self:_request("POST", "/v1/kernels/" .. self.kernel_id .. "/executions", command, function(response, failure)
+    if self.on_submission_result then self.on_submission_result(command, response, failure) end
+    if callback then callback(response, failure) end
+  end)
 end
 
 function Controller:complete(context, callback)
@@ -538,7 +542,9 @@ function Controller:followup(cell_id, callback)
   local submissions = self.followup_submissions
   submissions[client.client_id] = true
   local command = self:_command("followup", { client_id = client.client_id, body = table.concat(body, "\n") })
+  if self.on_submission then self.on_submission(command, cell_id) end
   return self:_request("POST", "/v1/clients/" .. client.client_id .. "/followups", command, function(response, failure)
+    if self.on_submission_result then self.on_submission_result(command, response, failure) end
     submissions[client.client_id] = nil
     if callback then callback(response, failure) end
   end)

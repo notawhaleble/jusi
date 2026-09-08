@@ -130,6 +130,8 @@ local function bind_cell_lifecycle(session)
   session.marks = marks
   local editing = require("jusi.editing").new(model, controller)
   session.editing = editing
+  controller.on_submission = function(command, id) editing.history:submit(command, id) end
+  controller.on_submission_result = function(command, response, failure) editing.history:result(command, response, failure) end
   local marks_changed = model.on_cells_changed
   model.on_cells_changed = function(ids) marks_changed(ids); editing:changed(ids, true) end
   model.on_text_changed = function(ids) editing:changed(ids) end
@@ -162,7 +164,7 @@ local function bind_cell_lifecycle(session)
   end
   controller.on_resynchronized = function(snapshot)
     marks:resync(snapshot)
-    if snapshot.reason == "supervisor_replaced" then editing.overrides = {}; editing.submissions = {} end
+    if snapshot.reason == "supervisor_replaced" then editing.overrides = {}; editing.submissions = {}; editing.history.pending = {} end
     editing:catalog(); editing.cache = {}; editing:schedule()
     lifecycle:reconcile()
     local surfaces = {}
@@ -609,6 +611,8 @@ local function create_commands()
     return
   end
   commands_created = true
+  vim.api.nvim_create_user_command("JusiHistoryToggle", function() require("jusi.history").command("toggle") end, {})
+  vim.api.nvim_create_user_command("JusiHistoryApply", function() require("jusi.history").command("apply") end, {})
   vim.api.nvim_create_user_command("JusiTrace", function(command)
     diagnostics.open(command.args)
   end, { nargs = "?", complete = function(prefix)

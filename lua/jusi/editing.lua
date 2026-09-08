@@ -33,7 +33,15 @@ function Editing:context(cell)
   if override then profile = vim.tbl_extend("force", profile, override.profile) end
   local start = snapshot.body_start_row
   if magic then table.remove(lines, 1); start = start + 1 end
-  return { id = cell.id, syntax = profile.syntax, indent = profile.indent, lines = lines,
+  local regions = {}
+  if snapshot.valid then
+    for index, entry in ipairs(snapshot.history_entries) do
+      table.insert(regions, { id = cell.id .. ":history:" .. index,
+        start = entry.start_row, finish = entry.end_row,
+        lines = vim.api.nvim_buf_get_lines(self.model.buf, entry.start_row, entry.end_row, false) })
+    end
+  end
+  return { regions = regions, id = cell.id, syntax = profile.syntax, indent = profile.indent, lines = lines,
     options = options(self.model.buf), start = start, finish = snapshot.body_end_row,
     header = header, header_revision = cell.header_revision, magic = magic, open = snapshot.open_row, revision = cell.text_revision }
 end
@@ -50,6 +58,7 @@ function Editing:catalog()
   for _, client in pairs(self.controller.clients or {}) do self:client(client) end
 end
 function Editing:event(event)
+  self.history:event(event)
   if event.kind == "execution.started" then
     local cell = self.model:cell_by_id(event.payload.cell_id)
     local ctx = cell and self:context(cell)
@@ -75,6 +84,7 @@ function Editing:client(client)
   end
 end
 function Editing:retire(id)
+  self.history:changed({ id })
   self.overrides[id], self.cache[id] = nil, nil
   local ns = self.namespaces[id]
   if ns and vim.api.nvim_buf_is_valid(self.model.buf) then vim.api.nvim_buf_clear_namespace(self.model.buf, ns, 0, -1) end
@@ -110,7 +120,9 @@ function Editing:refresh()
   for id, cell in pairs(visible) do
     local ctx = self:context(cell)
     if ctx then
-      local key = vim.inspect({ ctx.lines, ctx.syntax, ctx.indent, ctx.options, ctx.header, ctx.revision })
+      local region_keys = {}
+      for _, region in ipairs(ctx.regions) do table.insert(region_keys, { region.lines, region.start - ctx.start }) end
+      local key = vim.inspect({ ctx.lines, region_keys, ctx.syntax, ctx.indent, ctx.options, ctx.header, ctx.revision })
       if self.cache[id] ~= key then
         ctx.action = "highlight"
         local tick = vim.api.nvim_buf_get_changedtick(self.model.buf)
@@ -151,6 +163,7 @@ function Editing:schedule()
   vim.schedule(function() self.scheduled = false; self:refresh() end)
 end
 function Editing:changed(ids, structural)
+  if structural then self.history:changed(ids) end
   -- Invalidate provider attribution even if a magic is edited away and back
   -- while the cell is offscreen.
   for _, id in ipairs(ids) do
@@ -163,6 +176,14 @@ end
 function Editing:indent(lnum)
   local cell = self.model:cell_at_row(lnum - 1)
   local ctx = cell and self:context(cell)
+  if ctx then
+    for _, region in ipairs(ctx.regions) do
+      if lnum - 1 >= region.start and lnum - 1 < region.finish then
+        ctx.id, ctx.lines, ctx.start, ctx.finish = region.id, region.lines, region.start, region.finish
+        break
+      end
+    end
+  end
   if not ctx or lnum - 1 < ctx.start or lnum - 1 >= ctx.finish then return 0 end
   ctx.action, ctx.lnum = "indent", lnum - ctx.start
   return self:request(ctx) or -1
@@ -174,6 +195,7 @@ end
 function Editing:close()
   if self.closed then return end
   self.closed = true
+  self.history:close()
   instances[self.model.buf] = nil
   vim.api.nvim_del_augroup_by_id(self.group)
   if self.job then pcall(vim.fn.jobstop, self.job) end
@@ -186,6 +208,7 @@ end
 function M.new(model, controller)
   local self = setmetatable({ model = model, controller = controller, families = {}, providers = {}, overrides = {},
     submissions = {}, namespaces = {}, cache = {}, warned = {}, saved = {}, indentkeys = {} }, Editing)
+  self.history = require("jusi.history").new(model)
   self.job = vim.fn.jobstart({ vim.v.progpath, "--headless", "--embed", "-u", "NONE", "-i", "NONE", "-n" }, { rpc = true })
   assert(self.job > 0, "could not start local cell editing worker")
   vim.rpcrequest(self.job, "nvim_set_option_value", "runtimepath", vim.o.runtimepath, {})

@@ -4,6 +4,8 @@ Updated: 2026-09-09
 
 ## Current Facts
 
+- Followup-capable plugins now capture durable cell history on initial handoff and followup delivery. Native per-window history folds, offline toggle/apply commands, undoable restoration and isolated entry syntax/indentation are implemented. Pending accepted text waits through structural damage and retires with its opener. See [ADR 0031](adr/0031-foldable-followup-history.md). Navigation and cell mode remain the next frontend boundary.
+
 - Cell-local syntax and indentation now use installed Neovim runtime profiles in a notebook-owned local editing worker. Plain Python works before connection; discovery supplies family defaults and exact client handoff selects provider overrides. Visible-cell extmarks update in Insert mode without cross-cell syntax/indent leakage. See [ADR 0030](adr/0030-cell-local-syntax-and-indentation.md).
 
 - Whole-cell deletion now retires model entries even when the opener extmark has vanished, including undo-created cells. Reconciliation begins from the linked left boundary so output cleanup receives every retired identity. See [Incident 0012](incidents/0012-whole-cell-deletion-skipped-retirement.md).
@@ -14,7 +16,7 @@ Updated: 2026-09-09
 
 - Cell status now uses opener-anchored extmarks with symbols after the opener and matching opener/closer colors, with purple busy *, green done ✓, red error ✗, orange interrupted !, blue followup >, and yellow never-executed delimiters. RGB and 256-color terminal palettes are provided. No sign or status columns are used. Execution/input, client lifecycle and exact followup operations drive the projection; ordinary typing only moves existing extmarks. See [ADR 0028](adr/0028-cell-status-is-an-inline-extmark-projection.md).
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0030 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0031 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
