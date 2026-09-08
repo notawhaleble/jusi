@@ -1,0 +1,19 @@
+{
+  "protocol_version": 1,
+  "event_id": "evt_input_replied",
+  "supervisor_id": "sup_walk_1",
+  "sequence": 8,
+  "occurred_at": "2026-08-31T12:00:00Z",
+  "trace_id": "trace_execute_1",
+  "layer": "execution",
+  "operation": "submit_input",
+  "kind": "execution.input_replied",
+  "resource": {
+    "kind": "execution",
+    "id": "exe_fixture_active_1"
+  },
+  "payload": {
+    "execution_id": "exe_fixture_active_1",
+    "input_request_id": "inp_fixture"
+  }
+}

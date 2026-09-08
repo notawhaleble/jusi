@@ -127,6 +127,17 @@ def create_worker(context):
         assert clients[0]["client_id"] == client_id
         assert clients[0]["plugin_id"] == "fixture_exact"
         assert supervisor.health()["kernel"]["state"] == "on"
+        for body in ["  next query  \nα", ""]:
+            response = supervisor.followup(client_id=client_id, body=body, trace_id="trace_followup", timeout=3)
+            assert response["result"] == {"accepted": True}
+            assert response["client"] == clients[0]
+            request = json.loads(marker.read_text(encoding="utf-8"))
+            assert request == {
+                "operation": "followup", "payload": {"body": body},
+                "client_id": client_id, "execution_id": executed["execution"]["execution_id"],
+            }
+        assert supervisor.health()["clients"] == clients
+        assert len([e for e in supervisor.events.events_after(0) if e["kind"] == "execution.started"]) == 1
     finally:
         supervisor.stop_kernel(
             kernel_id=started["kernel"]["kernel_id"], trace_id="trace_stop", timeout=5,

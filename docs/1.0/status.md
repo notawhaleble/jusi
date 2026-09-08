@@ -1,10 +1,21 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-05
+Updated: 2026-09-09
 
 ## Current Facts
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0021 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- Cell-local syntax and indentation now use installed Neovim runtime profiles in a notebook-owned local editing worker. Plain Python works before connection; discovery supplies family defaults and exact client handoff selects provider overrides. Visible-cell extmarks update in Insert mode without cross-cell syntax/indent leakage. See [ADR 0030](adr/0030-cell-local-syntax-and-indentation.md).
+
+- Whole-cell deletion now retires model entries even when the opener extmark has vanished, including undo-created cells. Reconciliation begins from the linked left boundary so output cleanup receives every retired identity. See [Incident 0012](incidents/0012-whole-cell-deletion-skipped-retirement.md).
+
+- Retiring output now closes windows still displaying its buffer before deleting it, for ordinary and interactive terminals. Reused windows survive; Neovim’s last window remains with replacement content. See [Incident 0011](incidents/0011-retired-output-left-a-split-open.md).
+
+- Kernel execution and input waiting now have no automatic deadline. Explicit interrupt and cell/runtime cleanup remain authoritative; execution HTTP has no total timeout, while connection setup and control/resource operations stay bounded. See [ADR 0029](adr/0029-cell-execution-has-no-automatic-deadline.md).
+
+- Cell status now uses opener-anchored extmarks with symbols after the opener and matching opener/closer colors, with purple busy *, green done ✓, red error ✗, orange interrupted !, blue followup >, and yellow never-executed delimiters. RGB and 256-color terminal palettes are provided. No sign or status columns are used. Execution/input, client lifecycle and exact followup operations drive the projection; ordinary typing only moves existing extmarks. See [ADR 0028](adr/0028-cell-status-is-an-inline-extmark-projection.md).
+
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0030 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
@@ -81,14 +92,38 @@ Deferred:
 
 - remote supervisors and `checking`
 - dead-bridge replacement policy and multiple terminal observers
-- plugin interrupt, completion, input requests, rich media, and durable event storage
+- plugin interrupt, rich media, and durable event storage
 
 ## Next Boundary
 
 The original service/kernel walking skeleton is complete; current work is core
-operational completion. ADR 0021's kernel-execution interrupt is the current
-manual review boundary. The next dedicated slice is identified, follow-up-style
-Jupyter input requests without modal Neovim input. Generic durable-client
-operations—including concurrent plugin-specific interrupt—follow before any
-decision to migrate the shared `jusi-sql` family or an exact provider. Their
-clean 0.x repositories remain unchanged.
+operational completion. Kernel-execution interrupt has passed manual testing;
+session-local failure inspection is implemented for the startup diagnostics gap.
+Kernel input is implemented as an execution-owned reply with exact request
+identity and explicit `JusiInput` cell submission
+([ADR 0023](adr/0023-kernel-input-is-an-execution-reply.md)), independently of
+plugin followups. Real-kernel coverage includes literal replies, consecutive
+prompts, reconnect, stale rejection, interruption, and teardown. Accepted input
+now echoes literally on its prompt line, and `JusiClose` interrupts pending
+input and fences late presentation (see [Incident 0006](incidents/0006-input-confirmation-and-artifact-close.md)). Durable-client followups now route literal cell bodies through `JusiFollowup`
+to the same capability-checked worker, preserving client and surface identity
+([ADR 0026](adr/0026-followups-target-durable-clients.md)). Shared contract,
+frontend, supervisor, real-worker and terminal end-to-end tests cover delivery,
+empty bodies, stale rejection, and isolated failure. Concurrent plugin-specific
+interrupt remains planned. `JusiComplete` and `<Plug>(JusiComplete)` now implement
+kernel-scope completion and active-client plugin completion, with explicit Unicode
+ranges, empty-prefix menus, cancellation, and untouched suffixes. Tab invokes
+Vim's native popup; navigation, acceptance, cancellation, and `completeopt` remain
+Vim-owned. Edits reaching earlier lines are finalized on acceptance ([ADR 0027](adr/0027-completions-use-explicit-source-ranges.md)). Manual
+completion testing has exercised native menus and kernel suggestions. The test runtime now excludes installed user
+plugins after the legacy command collision in
+[Incident 0008](incidents/0008-completion-test-loaded-legacy-command.md). The current structural-edit slice preserves cell identity and runtime
+controls through closer/history damage and undo. Opener retirement now invokes
+full cell close outside the typing callback: exact execution interrupt, client
+cleanup, and late-output fencing. Merge keeps A; B fully closes; undo creates
+fresh C. See [ADR 0025](adr/0025-opener-retirement-closes-cell-resources.md) and
+[structural edit policy](architecture/cell-structural-edits.md).
+Kernel-wide cleanup of final outputs with explicit parking is recorded in
+[output retention](architecture/output-retention.md) and remains deferred.
+External SQL-family/provider migration is still deferred; their clean 0.x
+repositories remain unchanged.

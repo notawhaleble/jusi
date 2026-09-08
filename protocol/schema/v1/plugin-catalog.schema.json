@@ -3,51 +3,156 @@
   "$id": "https://jusi.dev/protocol/v1/plugin-catalog.schema.json",
   "title": "Jusi Plugin Catalog v1",
   "type": "object",
-  "required": ["protocol_version", "catalog_version", "discovery_id", "plugins"],
+  "required": [
+    "protocol_version",
+    "catalog_version",
+    "discovery_id",
+    "plugins"
+  ],
   "properties": {
-    "protocol_version": {"const": 1},
-    "catalog_version": {"const": 1},
-    "discovery_id": {"type": "string", "minLength": 3, "maxLength": 128},
+    "protocol_version": {
+      "const": 1
+    },
+    "catalog_version": {
+      "const": 1
+    },
+    "discovery_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128
+    },
     "plugins": {
       "type": "array",
       "description": "Exact-provider entries. Providers sharing a family_id and magic_name must declare identical family capabilities and presentation; one magic_name cannot identify different families. These cross-entry constraints are enforced by conformance validators.",
       "items": {
         "type": "object",
-        "required": ["plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"],
+        "required": [
+          "plugin_id",
+          "plugin_version",
+          "distribution",
+          "families",
+          "kernel_extensions",
+          "worker_entry_point",
+          "media_types",
+          "interaction"
+        ],
         "properties": {
-          "plugin_id": {"type": "string", "minLength": 3, "maxLength": 128},
-          "plugin_version": {"type": "string", "minLength": 1, "maxLength": 128},
-          "distribution": {"type": "string", "minLength": 1, "maxLength": 256},
+          "plugin_id": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 128
+          },
+          "plugin_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "distribution": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
           "families": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "object",
-              "required": ["family_id", "magic_name", "capabilities"],
+              "required": [
+                "family_id",
+                "magic_name",
+                "capabilities"
+              ],
               "properties": {
-                "family_id": {"type": "string", "minLength": 1, "maxLength": 128},
-                "magic_name": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"},
+                "family_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                },
+                "magic_name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"
+                },
                 "capabilities": {
                   "type": "array",
                   "uniqueItems": true,
-                  "items": {"enum": ["execute", "followup", "complete", "interrupt", "editor_actions"]}
+                  "items": {
+                    "enum": [
+                      "execute",
+                      "followup",
+                      "complete",
+                      "interrupt",
+                      "editor_actions"
+                    ]
+                  }
                 },
                 "presentation": {
                   "type": "object",
                   "properties": {
-                    "syntax": {"type": "string"},
-                    "indent": {"type": "string"}
+                    "syntax": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "pattern": "^([a-z][a-z0-9_]*|)$"
+                    },
+                    "indent": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "pattern": "^([a-z][a-z0-9_]*|)$"
+                    }
                   },
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "description": "Shared family syntax and indentation runtime profiles, available after discovery."
+                },
+                "provider_presentation": {
+                  "type": "object",
+                  "properties": {
+                    "syntax": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "pattern": "^([a-z][a-z0-9_]*|)$"
+                    },
+                    "indent": {
+                      "type": "string",
+                      "maxLength": 64,
+                      "pattern": "^([a-z][a-z0-9_]*|)$"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "description": "Exact-provider overrides selected after execution resolves this provider. Not part of shared-family equality."
                 }
               },
               "additionalProperties": false
             }
           },
-          "kernel_extensions": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-          "worker_entry_point": {"type": ["string", "null"], "minLength": 1},
-          "media_types": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
-          "interaction": {"enum": ["noninteractive", "request_response", "terminal_interactive"]}
+          "kernel_extensions": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "worker_entry_point": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "media_types": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "interaction": {
+            "enum": [
+              "noninteractive",
+              "request_response",
+              "terminal_interactive"
+            ]
+          }
         },
         "additionalProperties": false
       }

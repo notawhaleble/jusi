@@ -55,7 +55,7 @@ These invariants constrain implementation and protocol design. A change that vio
 31. Text is the durable, reconstructable authority for notebook structure; the in-memory model is the operational authority during editing.
 32. Syntax, extmarks, signs, highlights, and client buffers are projections and do not define cell semantics.
 33. Every cell opener is a structural recovery point, so one malformed cell does not consume or invalidate the rest of the notebook.
-34. Ordinary typing performs no backend, supervisor, session, client, or whole-notebook work.
+34. Ordinary body typing performs no backend, supervisor, session, client, or whole-notebook work. Structural cell retirement queues its full resource cleanup outside the typing callback (ADR 0025).
 35. Non-structural edits reparse and rerender only a bounded affected region.
 36. Deleted runtime bindings do not resurrect through undo, duplicate text, stale extmarks, or late backend events.
 37. Backend unavailability cannot make plain-text notebook editing unusable.

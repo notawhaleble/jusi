@@ -73,6 +73,7 @@ function M.run()
     else
       vim.api.nvim_buf_set_lines(buf, split_row, split_row + 2, false, {})
     end
+    model:flush()
     assert(model.last_change.kind == "structural")
   end)
 

@@ -23,13 +23,16 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
     "start_kernel": ("notebook_id", "kernel_name"),
     "execute": ("kernel_id", "notebook_id", "cell_id", "code"),
     "interrupt": ("kernel_id", "execution_id"),
+    "submit_input": ("kernel_id", "execution_id", "input_request_id", "value"),
     "stop_kernel": ("kernel_id",),
+    "complete": ("kernel_id", "notebook_id", "cell_id", "body"),
+    "followup": ("client_id", "body"),
     "close_client": ("client_id",),
     "restart_notebook": ("runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"),
 }
 LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
-OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events"}
-EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
+OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"}
+EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
 RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
@@ -139,6 +142,17 @@ def _validate_surface(surface: object, context: str = "surface") -> dict[str, An
     return surface
 
 
+def _validate_input_request(value: object) -> dict[str, Any]:
+    fields = {"input_request_id", "execution_id", "kernel_id", "notebook_id", "cell_id", "prompt", "password"}
+    if not isinstance(value, dict):
+        raise ProtocolValidationError("input request must be an object")
+    _exact_fields(value, fields, set(), "input request")
+    _required_strings(value, ("input_request_id", "execution_id", "kernel_id", "notebook_id", "cell_id"), "input request")
+    if not isinstance(value["prompt"], str) or not isinstance(value["password"], bool):
+        raise ProtocolValidationError("input prompt or password flag is invalid")
+    return value
+
+
 def _validate_event_payload(data: dict[str, Any]) -> None:
     kind = data["kind"]
     payload = data["payload"]
@@ -186,6 +200,14 @@ def _validate_event_payload(data: dict[str, Any]) -> None:
             raise ProtocolValidationError("execution.completed has an invalid outcome or completion time")
         if data["resource"] != {"kind": "execution", "id": payload["execution_id"]}:
             raise ProtocolValidationError("execution event resource mismatch")
+    elif kind in {"execution.input_requested", "execution.input_replied"}:
+        if kind == "execution.input_requested":
+            _validate_input_request(payload)
+        else:
+            _exact_fields(payload, {"execution_id", "input_request_id"}, set(), "input reply")
+            _required_strings(payload, ("execution_id", "input_request_id"), "input reply")
+        if data["resource"] != {"kind": "execution", "id": payload["execution_id"]}:
+            raise ProtocolValidationError("input event resource mismatch")
     elif kind == "execution.output":
         fields = {"execution_id", "client_id", "output_kind", "media_type", "data"}
         _exact_fields(payload, fields, set(), "payload")
@@ -328,12 +350,19 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
         value = data.get(field)
         if not isinstance(value, str):
             raise ProtocolValidationError(f"{field} must be a string")
-        if field != "code" and not value.strip():
+        if field not in {"code", "value", "body"} and not value.strip():
             raise ProtocolValidationError(f"{field} must be a non-empty string")
     idempotency_key = data.get("idempotency_key")
     if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key):
         raise ProtocolValidationError("idempotency_key must be a non-empty string when provided")
     allowed = {"protocol_version", "command_id", "trace_id", "kind", "idempotency_key", *COMMAND_FIELDS[expected_kind]}
+    if expected_kind == "complete":
+        allowed.update({"cursor_pos", "client_id"})
+        cursor = data.get("cursor_pos")
+        if type(cursor) is not int or not 0 <= cursor <= len(data["body"]):
+            raise ProtocolValidationError("cursor_pos must be a Unicode character offset within body")
+        if "client_id" in data:
+            _required_strings(data, ("client_id",), "complete")
     unknown = sorted(set(data) - allowed)
     if unknown:
         raise ProtocolValidationError(f"Unknown command fields: {', '.join(unknown)}")
@@ -438,6 +467,12 @@ def validate_health_response(data: object) -> dict[str, Any]:
             raise ProtocolValidationError("health exposes only active executions")
         if runtime is None or execution["kernel_id"] != runtime["kernel_id"] or execution["notebook_id"] != runtime["notebook_id"]:
             raise ProtocolValidationError("execution runtime ownership mismatch")
+    pending_input = data.get("pending_input")
+    if pending_input is not None:
+        _validate_input_request(pending_input)
+        if len(executions) != 1 or any(pending_input[field] != executions[0][field]
+                for field in ("kernel_id", "execution_id", "notebook_id", "cell_id")):
+            raise ProtocolValidationError("input request execution ownership mismatch")
     surfaces = data.get("surfaces")
     if not isinstance(surfaces, list):
         raise ProtocolValidationError("surfaces must be present as an array")
@@ -498,7 +533,7 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
         family_claims: set[tuple[str, str]] = set()
         for family in plugin["families"]:
             required = {"family_id", "magic_name", "capabilities"}
-            if not isinstance(family, dict) or not required <= set(family) or set(family) - required - {"presentation"}:
+            if not isinstance(family, dict) or not required <= set(family) or set(family) - required - {"presentation", "provider_presentation"}:
                 raise ProtocolValidationError("Plugin family fields are invalid")
             _required_strings(family, ("family_id", "magic_name"), "family")
             if not _bounded_string(family["family_id"], 1, 128):
@@ -509,9 +544,13 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
             family_claims.add(claim)
             if not isinstance(family["capabilities"], list) or len(family["capabilities"]) != len(set(family["capabilities"])) or not set(family["capabilities"]) <= capabilities:
                 raise ProtocolValidationError("Plugin family capabilities are invalid")
+            for field in ("presentation", "provider_presentation"):
+                value = family.get(field)
+                if field in family and (not isinstance(value, dict) or set(value) - {"syntax", "indent"}
+                        or any(not isinstance(item, str) or len(item) > 64
+                               or re.fullmatch(r"(?:[a-z][a-z0-9_]*|)", item) is None for item in value.values())):
+                    raise ProtocolValidationError("Plugin family editing profile is invalid")
             presentation = family.get("presentation")
-            if presentation is not None and (not isinstance(presentation, dict) or set(presentation) - {"syntax", "indent"} or any(not isinstance(value, str) for value in presentation.values())):
-                raise ProtocolValidationError("Plugin family presentation is invalid")
             descriptor = (
                 family["magic_name"],
                 tuple(sorted(family["capabilities"])),
@@ -664,3 +703,23 @@ def _validate_kernel_families(families: object) -> None:
         if identity in seen:
             raise ProtocolValidationError("Plugin adapter family is duplicated")
         seen.add(identity)
+
+
+def validate_completion(result: object, cursor_pos: int) -> dict[str, Any]:
+    """Ranges are zero-based Unicode code points in the original cell body."""
+    if not isinstance(result, dict) or not isinstance(result.get("items"), list):
+        raise ProtocolValidationError("completion.items must be an array")
+    if len(result["items"]) > 500:
+        raise ProtocolValidationError("completion has too many items")
+    for item in result["items"]:
+        if not isinstance(item, dict):
+            raise ProtocolValidationError("completion item must be an object")
+        start, end = item.get("start"), item.get("end")
+        if type(start) is not int or type(end) is not int or not 0 <= start <= end <= cursor_pos:
+            raise ProtocolValidationError("completion range must lie before the cursor")
+        if not isinstance(item.get("text"), str) or len(item["text"]) > 65536 or "\x00" in item["text"]:
+            raise ProtocolValidationError("completion text must be a bounded string without NUL")
+        for key in ("label", "detail", "documentation", "kind"):
+            if key in item and (not isinstance(item[key], str) or len(item[key]) > 4096 or "\x00" in item[key]):
+                raise ProtocolValidationError("completion metadata must be bounded text")
+    return result

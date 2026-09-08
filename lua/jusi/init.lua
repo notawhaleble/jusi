@@ -5,6 +5,8 @@ local interactive_terminal = require("jusi.presentation.interactive_terminal")
 local presentation_window = require("jusi.presentation.window")
 local local_service = require("jusi.service.local")
 local transport_module = require("jusi.transport.http_sse")
+local diagnostics = require("jusi.diagnostics")
+local cell_lifecycle = require("jusi.cell_lifecycle")
 
 local M = {}
 
@@ -25,12 +27,7 @@ local function notify(message, level)
 end
 
 local function failure_text(failure)
-  if type(failure) ~= "table" then
-    return tostring(failure)
-  end
-  local origin = table.concat({ failure.layer or "unknown", failure.operation or "unknown", failure.reason or "unknown" }, "/")
-  local trace = failure.trace_id and failure.trace_id ~= "" and (" trace=" .. failure.trace_id) or ""
-  return origin .. ": " .. tostring(failure.message or "failure") .. trace
+  return diagnostics.summary(failure)
 end
 
 local function current_session(buf)
@@ -123,7 +120,67 @@ local function close_clients(session, client_ids, callback, index)
   end)
 end
 
+local function bind_cell_lifecycle(session)
+  local model, controller = session.model, session.controller
+  local presentation, interactive = session.presentation, session.interactive
+  local lifecycle = cell_lifecycle.new({ model = model, controller = controller, presentation = presentation,
+    on_failure = function(failure) notify(failure_text(failure), vim.log.levels.ERROR) end })
+  session.lifecycle = lifecycle
+  local marks = require("jusi.marks").new(model, controller)
+  session.marks = marks
+  local editing = require("jusi.editing").new(model, controller)
+  session.editing = editing
+  local marks_changed = model.on_cells_changed
+  model.on_cells_changed = function(ids) marks_changed(ids); editing:changed(ids, true) end
+  model.on_text_changed = function(ids) editing:changed(ids) end
+  controller.on_catalog = function() editing:catalog(); editing.cache = {}; editing:schedule() end
+  controller.on_status_event = function(event) marks:event(event); editing:event(event) end
+  model.on_cells_retired = function(ids)
+    for _, id in ipairs(ids) do marks:retire(id); editing:retire(id); lifecycle:retire(id) end
+  end
+  local callbacks = presentation:controller_callbacks()
+  for _, name in ipairs({ "on_execution_started", "on_output", "on_input_requested", "on_input_replied" }) do
+    controller[name] = function(cell_id, ...)
+      if lifecycle:accepts(cell_id) then callbacks[name](cell_id, ...) end
+    end
+  end
+  controller.on_client_created = function(client)
+    if client.notebook_id == model.notebook_id then
+      if presentation.retired_executions[client.execution_id] then lifecycle:close_client(client.client_id)
+      else lifecycle:accepts(client.cell_id) end
+    end
+  end
+  controller.on_surface_created = function(surface)
+    local client = controller.clients[surface.client_id]
+    if client and client.notebook_id == model.notebook_id then
+      if presentation.retired_executions[client.execution_id] then lifecycle:close_client(client.client_id)
+      elseif lifecycle:accepts(client.cell_id) then interactive:open(surface, client) end
+    end
+  end
+  controller.on_surface_closed = function(surface, payload)
+    interactive:close_surface(payload.surface_id or (surface and surface.surface_id))
+  end
+  controller.on_resynchronized = function(snapshot)
+    marks:resync(snapshot)
+    if snapshot.reason == "supervisor_replaced" then editing.overrides = {}; editing.submissions = {} end
+    editing:catalog(); editing.cache = {}; editing:schedule()
+    lifecycle:reconcile()
+    local surfaces = {}
+    for id, surface in pairs(controller.surfaces) do
+      local client = controller.clients[surface.client_id]
+      if client and client.notebook_id == model.notebook_id then
+        if presentation.retired_executions[client.execution_id] then lifecycle:close_client(client.client_id)
+        elseif lifecycle:accepts(client.cell_id) then surfaces[id] = surface end
+      end
+    end
+    interactive:reconcile(surfaces, controller.clients)
+  end
+end
+
 local function retire_session(session)
+  if session.lifecycle then session.lifecycle:detach() end
+  if session.marks then session.marks:close() end
+  if session.editing then session.editing:close() end
   sessions[session.buf] = nil
   session.controller:close()
   session.presentation:close()
@@ -132,6 +189,9 @@ local function retire_session(session)
 end
 
 local function replace_frontend_runtime(session, notebook_id)
+  if session.lifecycle then session.lifecycle:detach() end
+  if session.marks then session.marks:close() end
+  if session.editing then session.editing:close() end
   session.presentation:close()
   session.interactive:close()
   session.model:detach()
@@ -147,23 +207,12 @@ local function replace_frontend_runtime(session, notebook_id)
       notify(failure_text(failure), vim.log.levels.ERROR)
     end,
   })
-  local callbacks = presentation:controller_callbacks()
   session.model = model
   session.presentation = presentation
   session.interactive = interactive
   session.controller.notebook = model
-  session.controller.on_execution_started = callbacks.on_execution_started
-  session.controller.on_output = callbacks.on_output
-  session.controller.on_surface_created = function(surface)
-    interactive:open(surface, session.controller.clients[surface.client_id])
-  end
-  session.controller.on_surface_closed = function(surface, payload)
-    interactive:close_surface(payload.surface_id or (surface and surface.surface_id))
-  end
-  session.controller.on_resynchronized = function()
-    interactive:reconcile(session.controller.surfaces, session.controller.clients)
-  end
   session.controller.executions = {}
+  bind_cell_lifecycle(session)
   return model
 end
 
@@ -175,10 +224,13 @@ function M.connect(options)
   end
   local existing = sessions[buf]
   if existing then
-    existing.controller:connect()
+    existing.controller:connect(function(connected)
+      if connected and existing.lifecycle then existing.lifecycle:reconcile() end
+    end)
     return existing
   end
 
+  require("jusi.editing").detach_standalone(buf)
   local model = notebook.attach(buf)
   local presentation = new_presentation(model)
   local base_url = opts.base_url or config.base_url
@@ -192,24 +244,11 @@ function M.connect(options)
       notify(failure_text(failure), vim.log.levels.ERROR)
     end,
   })
-  local callbacks = presentation:controller_callbacks()
   local transport = opts.transport or transport_module.new({ base_url = base_url })
-  local controller
-  controller = controller_module.new({
+  local controller = controller_module.new({
     notebook = model,
     transport = transport,
     kernel_name = opts.kernel_name or config.kernel_name,
-    on_execution_started = callbacks.on_execution_started,
-    on_output = callbacks.on_output,
-    on_surface_created = function(surface)
-      interactive:open(surface, controller.clients[surface.client_id])
-    end,
-    on_surface_closed = function(surface, payload)
-      interactive:close_surface(payload.surface_id or (surface and surface.surface_id))
-    end,
-    on_resynchronized = function()
-      interactive:reconcile(controller.surfaces, controller.clients)
-    end,
     on_failure = function(failure)
       notify(failure_text(failure), vim.log.levels.ERROR)
     end,
@@ -223,6 +262,17 @@ function M.connect(options)
     base_url = base_url,
   }
   sessions[buf] = session
+  vim.keymap.set("i", "<Tab>", function()
+    if vim.fn.pumvisible() == 1 or sessions[buf] ~= session then return "<Tab>" end
+    local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    local cell = session.model:cell_at_row(row)
+    local snapshot = cell and session.model:cell_snapshot(cell)
+    if not snapshot or not snapshot.valid or row < snapshot.body_start_row or row >= snapshot.body_end_row then
+      return "<Tab>"
+    end
+    return "<Cmd>JusiComplete<CR>"
+  end, { buffer = buf, expr = true, desc = "Request Jusi completion" })
+  bind_cell_lifecycle(session)
   vim.api.nvim_create_autocmd("BufWipeout", {
     buffer = buf,
     once = true,
@@ -386,6 +436,45 @@ function M.execute(buf, row)
   end)
 end
 
+function M.complete()
+  local session = require_session(vim.api.nvim_get_current_buf())
+  if not session then return end
+  return require("jusi.completion").request(session.model, session.controller, function(_, failure)
+    if failure then
+      notify(type(failure) == "table" and failure_text(failure) or failure, vim.log.levels.ERROR)
+    end
+  end)
+end
+
+function M.followup(buf, row)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
+  if not session then return nil end
+  local cell = cell_from_context(session, context_buf, row)
+  if not cell then
+    notify("cursor is not inside a cell", vim.log.levels.ERROR)
+    return nil
+  end
+  return session.controller:followup(cell.id, function(_, failure)
+    if failure then notify(failure_text(failure), vim.log.levels.ERROR)
+    else notify("followup delivered") end
+  end)
+end
+
+function M.input(buf, row)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
+  if not session then return nil end
+  local cell = cell_from_context(session, context_buf, row)
+  if not cell then
+    notify("cursor is not inside a cell", vim.log.levels.ERROR)
+    return nil
+  end
+  return session.controller:submit_input(cell.id, function(_, failure)
+    if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
+  end)
+end
+
 function M.interrupt(buf, row)
   local context_buf = buf or vim.api.nvim_get_current_buf()
   local session = require_session(context_buf)
@@ -437,26 +526,14 @@ function M.close(buf, row)
   end
   local cell = cell_from_context(session, context_buf, row)
   if not cell then
+    local retired_id = vim.b[context_buf].jusi_cell_id
+    if retired_id and session.lifecycle.retired[retired_id] then
+      return session.lifecycle:close_cell(retired_id)
+    end
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
   end
-  local client_ids = clients_for_cell(session, cell.id)
-  local output_buf = session.presentation:buffer_for_cell(cell.id)
-  if output_buf then
-    session.presentation:close_cell(cell.id)
-  end
-  if #client_ids == 0 then
-    if not output_buf then
-      notify("cell has no execution artifact", vim.log.levels.WARN)
-      return nil
-    end
-    return true
-  end
-  return close_clients(session, client_ids, function(closed, failure)
-    if not closed then
-      notify(failure_text(failure), vim.log.levels.ERROR)
-    end
-  end)
+  return session.lifecycle:close_cell(cell.id)
 end
 
 local function focus_notebook_cell(session, cell)
@@ -467,7 +544,7 @@ local function focus_notebook_cell(session, cell)
   })
   local snapshot = session.model:cell_snapshot(cell)
   if snapshot then
-    local row = math.min(snapshot.body_start_row, snapshot.close_row)
+    local row = math.min(snapshot.body_start_row, snapshot.end_row - 1)
     vim.api.nvim_win_set_cursor(window, { row + 1, 0 })
   end
   return session.buf
@@ -532,6 +609,11 @@ local function create_commands()
     return
   end
   commands_created = true
+  vim.api.nvim_create_user_command("JusiTrace", function(command)
+    diagnostics.open(command.args)
+  end, { nargs = "?", complete = function(prefix)
+    return vim.tbl_filter(function(id) return id:sub(1, #prefix) == prefix end, diagnostics.trace_ids())
+  end })
   vim.api.nvim_create_user_command("JusiConnect", function(command)
     M.connect({ base_url = command.args ~= "" and command.args or nil })
   end, { nargs = "?" })
@@ -550,6 +632,14 @@ local function create_commands()
   vim.api.nvim_create_user_command("JusiExecute", function()
     M.execute()
   end, {})
+  vim.api.nvim_create_user_command("JusiComplete", function() M.complete() end, {})
+  vim.keymap.set("i", "<Plug>(JusiComplete)", function() M.complete() end, { desc = "Complete Jusi cell" })
+  vim.api.nvim_create_user_command("JusiFollowup", function()
+    M.followup()
+  end, {})
+  vim.api.nvim_create_user_command("JusiInput", function()
+    M.input()
+  end, { desc = "Reply to the cell's pending kernel input with its current body" })
   vim.api.nvim_create_user_command("JusiInterrupt", function()
     M.interrupt()
   end, {})

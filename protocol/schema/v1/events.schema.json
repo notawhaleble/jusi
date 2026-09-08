@@ -27,7 +27,7 @@
       "enum": ["protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"]
     },
     "operation": {
-      "enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events"]
+      "enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"]
     },
     "kind": {
       "enum": [
@@ -37,6 +37,8 @@
         "kernel.state_changed",
         "execution.started",
         "execution.output",
+        "execution.input_requested",
+        "execution.input_replied",
         "execution.completed",
         "client.created",
         "client.closed",
@@ -57,6 +59,91 @@
     "payload": {"type": "object"}
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "execution.input_requested"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "input_request_id",
+              "execution_id",
+              "kernel_id",
+              "notebook_id",
+              "cell_id",
+              "prompt",
+              "password"
+            ],
+            "properties": {
+              "input_request_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "execution_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kernel_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "notebook_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cell_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "password": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "execution.input_replied"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "execution_id",
+              "input_request_id"
+            ],
+            "properties": {
+              "execution_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "input_request_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    },
     {
       "if": {"properties": {"kind": {"const": "service.ready"}}},
       "then": {
@@ -80,7 +167,7 @@
             "properties": {
               "operation_id": {"type": "string", "minLength": 3},
               "trace_id": {"type": "string", "minLength": 3},
-              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"]},
               "outcome": {"const": "running"},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "null"}
@@ -100,7 +187,7 @@
             "properties": {
               "operation_id": {"type": "string", "minLength": 3},
               "trace_id": {"type": "string", "minLength": 3},
-              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events"]},
+              "kind": {"enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"]},
               "outcome": {"enum": ["succeeded", "failed", "cancelled"]},
               "started_at": {"type": "string", "format": "date-time"},
               "completed_at": {"type": "string", "format": "date-time"},

@@ -19,8 +19,9 @@ from jusi.interfaces.http import make_application
 class FakeKernel:
     pid = 2468
 
-    def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
+    def execute(self, code: str, *, timeout: float, on_output, on_input=None) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
         assert code == "1 + 1"
+        assert timeout is None
         on_output(KernelOutput("result", "text/plain", "2"))
         return KernelExecutionResult("succeeded")
 
@@ -215,6 +216,17 @@ async def run_http_sse_scenario(socket_path: str) -> None:
         assert restarted["runtime"]["runtime_id"] != runtime_id
         assert restarted["kernel"]["kernel_id"] != kernel_id
         assert restarted["kernel"]["notebook_id"] == "nb_next"
+        for body_client, expected_status, expected_reason in [
+            ("client_other", 400, "invalid_request"),
+            ("client_unknown", 404, "not_found"),
+        ]:
+            status, response = await request_json(
+                socket_path, "POST", "/v1/clients/client_unknown/followups",
+                make_command("followup", "trace_followup", client_id=body_client, body=""),
+            )
+            assert status == expected_status
+            assert response["failure"]["reason"] == expected_reason
+
     finally:
         sse_writer.close()
         await sse_writer.wait_closed()

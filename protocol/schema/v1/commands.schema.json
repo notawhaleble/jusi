@@ -6,7 +6,10 @@
     {"$ref": "#/$defs/start_kernel"},
     {"$ref": "#/$defs/execute"},
     {"$ref": "#/$defs/interrupt"},
+    {"$ref": "#/$defs/submit_input"},
     {"$ref": "#/$defs/stop_kernel"},
+    {"$ref": "#/$defs/complete"},
+    {"$ref": "#/$defs/followup"},
     {"$ref": "#/$defs/close_client"},
     {"$ref": "#/$defs/restart_notebook"}
   ],
@@ -54,6 +57,44 @@
         }
       ]
     },
+    "submit_input": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "kernel_id",
+            "execution_id",
+            "input_request_id",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "submit_input"
+            },
+            "kernel_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "execution_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "input_request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
     "interrupt": {
       "allOf": [
         {"$ref": "#/$defs/base"},
@@ -82,6 +123,81 @@
           "unevaluatedProperties": false
         }
       ]
+    },
+    "complete": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "kernel_id",
+            "notebook_id",
+            "cell_id",
+            "body",
+            "cursor_pos"
+          ],
+          "properties": {
+            "kind": {
+              "const": "complete"
+            },
+            "kernel_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "notebook_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "cell_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "client_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "body": {
+              "type": "string"
+            },
+            "cursor_pos": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "followup": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "client_id",
+            "body"
+          ],
+          "properties": {
+            "kind": {
+              "const": "followup"
+            },
+            "client_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "body": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
     },
     "close_client": {
       "allOf": [

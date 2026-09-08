@@ -21,7 +21,7 @@ def catalog_entry() -> dict:
         "families": [{
             "family_id": "terminal_fixture",
             "magic_name": "terminal_fixture",
-            "capabilities": ["execute"],
+            "capabilities": ["execute", "followup", "complete"],
         }],
         "kernel_extensions": ["jusi_terminal_fixture"],
         "worker_entry_point": "jusi_terminal_fixture:create_worker",
@@ -56,8 +56,20 @@ def load_ipython_extension(ipython) -> None:  # type: ignore[no-untyped-def]
 class FixtureWorker:
     def __init__(self, context) -> None:  # type: ignore[no-untyped-def]
         self.context = context
+        self.followup_count = 0
 
     def handle(self, operation: str, payload: dict) -> WorkerResult:
+        if operation == "complete":
+            assert payload["prefix"] == payload["body"][:payload["cursor_pos"]]
+            return WorkerResult({"items": [
+                {"text": "public.", "label": "public", "detail": "schema",
+                 "start": payload["cursor_pos"], "end": payload["cursor_pos"]},
+                {"text": "private.", "label": "private", "detail": "schema",
+                 "start": payload["cursor_pos"], "end": payload["cursor_pos"]},
+            ]})
+        if operation == "followup":
+            self.followup_count += 1
+            return WorkerResult({"body": payload["body"], "count": self.followup_count})
         if operation != "execute":
             raise ValueError(f"unsupported fixture operation: {operation}")
         return WorkerResult(

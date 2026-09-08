@@ -1,0 +1,23 @@
+{
+  "protocol_version": 1,
+  "event_id": "evt_output_1",
+  "supervisor_id": "sup_walk_1",
+  "sequence": 7,
+  "occurred_at": "2026-08-31T12:00:00Z",
+  "trace_id": "trace_execute_1",
+  "layer": "execution",
+  "operation": "execute",
+  "kind": "execution.input_requested",
+  "resource": {
+    "kind": "execution",
+    "id": "exe_fixture_active_1"
+  },
+  "payload": {
+    "execution_id": "exe_fixture_active_1",
+    "kernel_id": "krn_fixture_1",
+    "notebook_id": "nb_fixture_1",
+    "cell_id": "cell_fixture_1",
+    "prompt": "lalala: ",
+    "password": false
+  }
+}

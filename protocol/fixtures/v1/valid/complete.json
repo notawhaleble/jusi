@@ -1,0 +1,11 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_complete",
+  "trace_id": "trace_complete",
+  "kind": "complete",
+  "kernel_id": "kernel_test",
+  "notebook_id": "notebook_test",
+  "cell_id": "cell_test",
+  "body": "α\nsTAIL",
+  "cursor_pos": 3
+}

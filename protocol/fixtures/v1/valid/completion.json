@@ -1,0 +1,13 @@
+{
+  "items": [
+    {
+      "text": "sleep",
+      "label": "sleep",
+      "detail": "function",
+      "documentation": "Pause execution.",
+      "kind": "function",
+      "start": 2,
+      "end": 3
+    }
+  ]
+}

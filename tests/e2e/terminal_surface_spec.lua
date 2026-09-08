@@ -61,6 +61,49 @@ function M.run()
     assert(terminal_text(record.buf):find(expected_geometry, 1, true), terminal_text(record.buf))
     assert(vim.api.nvim_get_current_buf() == buf, "execution artifact stole notebook focus")
 
+    wait_for(3000, function()
+      local mark = session.marks.records[record.client.cell_id]
+      return mark and mark.state == "followup"
+    end, "durable client did not receive its followup mark")
+    local original_client = record.client.client_id
+    local original_surface = record.surface.surface_id
+    vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "  literal followup  ", "α" })
+    local response, followup_failure
+    session.controller:followup(session.model:cell_at_row(1).id, function(result, err)
+      response, followup_failure = result, err
+    end)
+    wait_for(5000, function() return response ~= nil or followup_failure ~= nil end, "followup did not finish")
+    assert(not followup_failure, vim.inspect(followup_failure))
+    assert(response.result.body == "  literal followup  \nα" and response.result.count == 1)
+    assert(response.client.client_id == original_client)
+    wait_for(3000, function() return session.marks.records[record.client.cell_id].state == "followup" end,
+      "followup mark stayed busy after delivery")
+    assert(session.interactive.surfaces[original_surface] == record, "followup replaced the surface")
+    jusi.followup(buf, 1)
+    wait_for(5000, function()
+      return vim.tbl_contains(notifications, "followup delivered")
+    end, "JusiFollowup did not report acceptance")
+    vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "select * from SUFFIX" })
+    vim.api.nvim_win_set_cursor(0, { 2, #"select * from " })
+    _G.jusi_e2e_plugin_ready = function()
+      wait_for(5000, function() return require("jusi.completion")._active[buf] ~= nil end, "plugin completion reply did not arrive")
+    end
+    _G.jusi_e2e_plugin_complete = function()
+      assert(vim.fn.pumvisible() == 1, "plugin empty-prefix menu did not appear")
+      assert(vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == "select * from public.SUFFIX")
+      vim.api.nvim_select_popupmenu_item(1, true, false, {})
+    end
+    vim.v.errmsg = ""
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(
+      "i<Tab><Cmd>lua jusi_e2e_plugin_ready()<CR><Cmd>lua jusi_e2e_plugin_complete()<CR><C-y><Esc>", true, false, true), "xt", false)
+    assert(vim.v.errmsg == "", vim.v.errmsg)
+    _G.jusi_e2e_plugin_complete, _G.jusi_e2e_plugin_ready = nil, nil
+    assert(vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == "select * from private.SUFFIX")
+    assert(session.interactive.surfaces[original_surface] == record, "completion replaced the client surface")
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "  literal followup  ", "α" })
+    -- Restore executable source for the subsequent close/re-execute checks.
+    vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "%%terminal_fixture", "manual fixture" })
+
     vim.api.nvim_win_close(record.window, false)
     assert(vim.api.nvim_buf_is_valid(record.buf), "native window close destroyed the artifact")
     assert(session.controller.clients[record.client.client_id] ~= nil)
@@ -124,12 +167,17 @@ function M.run()
       return next(session.interactive.surfaces) ~= nil
     end, "notebook execution after focused target exit did not create a new client")
     local _, final_record = next(session.interactive.surfaces)
-    jusi.close(buf, 1)
+    local retired_cell = session.model:cell_at_row(1).id
+    -- Damaging the opener must fully close its durable client and terminal worker.
+    vim.api.nvim_buf_set_text(buf, 0, 0, 0, 0, { "x" })
+    assert(session.model:cell_by_id(retired_cell) == nil)
     wait_for(5000, function()
       return next(session.controller.clients) == nil
         and next(session.controller.surfaces) == nil
         and next(session.interactive.surfaces) == nil
-    end, "final client cleanup did not converge")
+    end, "opener retirement did not close the client and terminal surface")
+    assert(not vim.api.nvim_buf_is_valid(final_record.buf))
+    assert(session.controller.kernel_state == "on")
 
     jusi.stop_service(buf)
     wait_for(8000, function()

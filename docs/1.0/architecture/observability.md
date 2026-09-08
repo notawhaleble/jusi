@@ -26,9 +26,23 @@ If the kernel dies during execution, the supervisor emits a primary
 `execution/cancelled` failure for the owning execution. The authoritative kernel
 transition to `off` follows those failures in the ordered event chronology.
 
+## Frontend Inspection
+
+[ADR 0022](../adr/0022-session-local-failure-inspection.md) defines
+`:JusiTrace [trace-id]`. With no argument it opens the latest received failure's
+trace in a read-only scratch split. It remains usable after failed service
+startup and after the owning notebook is closed. Notifications surface missing
+configuration paths and local process exit/stderr causes directly.
+
+History contains up to 50 bounded, selectively copied failure records for the
+current Neovim session. Identical HTTP/SSE reports collapse; separate causal
+failures remain inspectable. Request/config/environment data are not captured.
+Failure producers must keep messages and stderr free of credentials.
+
 ## Limits
 
 These mechanisms make a future reproduction of Incident 0001 actionable; they
-do not establish its cause. Parent PID, operating-system resource limits, and
-plugin-worker chronology are not yet captured because those resources do not
-exist in the walking skeleton.
+do not establish its cause. Parent PID and operating-system resource limits are
+not yet captured. Frontend failure history is neither a complete operation/event
+timeline nor durable backend trace storage; records not received by this editor,
+evicted records, and records from previous Neovim sessions cannot be inspected.

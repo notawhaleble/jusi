@@ -3,6 +3,102 @@
   "$id": "https://jusi.dev/protocol/v1/responses.schema.json",
   "title": "Jusi Protocol v1 HTTP Responses",
   "$defs": {
+    "completion": {
+      "type": "object",
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 500,
+          "items": {
+            "type": "object",
+            "required": [
+              "text",
+              "start",
+              "end"
+            ],
+            "properties": {
+              "text": {
+                "type": "string",
+                "maxLength": 65536,
+                "pattern": "^[^\\u0000]*$"
+              },
+              "start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "end": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]*$"
+              },
+              "detail": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]*$"
+              },
+              "documentation": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]*$"
+              },
+              "kind": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^[^\\u0000]*$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "input_request": {
+      "type": "object",
+      "required": [
+        "input_request_id",
+        "execution_id",
+        "kernel_id",
+        "notebook_id",
+        "cell_id",
+        "prompt",
+        "password"
+      ],
+      "properties": {
+        "input_request_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kernel_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notebook_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cell_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "password": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
     "execution": {
       "type": "object",
       "required": ["execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at"],
@@ -102,9 +198,30 @@
           "additionalProperties": false
         },
         "clients": {"type": "array", "items": {"$ref": "#/$defs/client"}},
+        "pending_input": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/input_request"}]},
+        "input_reply": {
+          "type": "object",
+          "required": [
+            "execution_id",
+            "input_request_id"
+          ],
+          "properties": {
+            "execution_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "input_request_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
         "executions": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/execution"}},
         "surfaces": {"type": "array", "items": {"$ref": "#/$defs/surface"}},
         "execution": {"type": "object"},
+        "completion": {"$ref": "#/$defs/completion"},
+        "result": {"type": "object"},
         "cleanup": {"type": "object"},
         "status": {"type": "string"},
         "supervisor_id": {"type": "string"},

@@ -10,6 +10,8 @@ def catalog_entry() -> dict[str, Any]:
         "distribution": "jusi-sqlite-fixture",
         "families": [{
             "family_id": "sql",
+            "presentation": {"syntax": "sql", "indent": "sql"},
+            "provider_presentation": {"syntax": "sql", "indent": "sql"},
             "magic_name": "sql",
             "capabilities": ["execute"],
         }],

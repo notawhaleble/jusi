@@ -173,6 +173,7 @@ local function test_partial_delimiter_edit_reparses_structure()
 
   vim.api.nvim_buf_set_text(buf, 2, 0, 2, 1, { "x" })
 
+  model:flush()
   equal(model.last_change.kind, "structural")
   equal(model:cell_snapshot(first_id).valid, false)
   equal(model:cell_snapshot(second_id).valid, true)
@@ -206,7 +207,109 @@ local function test_cell_lookup_uses_current_extmark_ranges()
   model:detach()
 end
 
+local function test_join_undo_redo_keeps_both_cell_identities_and_lookup()
+  local buf = buffer_with({ "╭──", "one", "╰──", "╭──", "two", "╰──" })
+  vim.api.nvim_set_current_buf(buf)
+  local model = notebook.attach(buf)
+  local first, second = cells(model)[1].id, cells(model)[2].id
+  vim.cmd("let &ul = &ul") -- separate fixture creation from the real edit's undo block
+  vim.api.nvim_win_set_cursor(0, { 2, 0 })
+  vim.cmd("normal! J")
+  equal(model:cell_at_row(1).id, first)
+  equal(model:cell_snapshot(first).valid, false)
+  equal(model:cell_snapshot(first).end_row, 2)
+  equal(model:cell_at_row(2).id, second)
+  local body, failure = model:body(first)
+  equal(body, nil)
+  equal(failure, "cell is structurally invalid")
+  for _ = 1, 3 do
+    vim.cmd("silent undo")
+    equal(model:cell_at_row(1).id, first)
+    equal(model:cell_at_row(4).id, second)
+    equal(model:cell_snapshot(second).open_row, 3)
+    equal(model:body(first), { "one" })
+    equal(model:body(second), { "two" })
+    vim.cmd("silent redo")
+    equal(model:cell_at_row(1).id, first)
+    equal(model:cell_at_row(3).id, second)
+    equal(model:cell_snapshot(first).valid, false)
+  end
+  equal(model.metrics.full_parse_count, 1)
+  truthy(model.metrics.max_structural_scan <= 3, "join/undo must not reparse the neighbor")
+  model:detach()
+end
+
+local function test_unclosed_eof_and_history_damage_remain_addressable()
+  local buf = buffer_with({ "╭──", "body", "╞══", "history", "╰──" })
+  local model = notebook.attach(buf)
+  local id = cells(model)[1].id
+  vim.api.nvim_buf_set_lines(buf, 4, 5, false, {})
+  equal(model:cell_at_row(3).id, id)
+  equal(model:cell_snapshot(id).end_row, 4)
+  vim.api.nvim_buf_set_lines(buf, 2, 3, false, { "├┄┄" })
+  equal(model:cell_at_row(2).id, id)
+  equal(model:cell_snapshot(id).valid, false)
+  vim.api.nvim_buf_set_lines(buf, 2, 3, false, { "╞══" })
+  vim.api.nvim_buf_set_lines(buf, 4, 4, false, { "╰──" })
+  equal(model:cell_at_row(4).id, id)
+  equal(model:body(id), { "body" })
+  equal(model:history(id), { { "history" } })
+  model:detach()
+end
+
+local function test_deferred_reconciliation_never_resurrects_a_deleted_opener()
+  local buf = buffer_with({ "╭──", "body", "╰──", "╭──", "next", "╰──" })
+  local model = notebook.attach(buf)
+  local first, second = cells(model)[1].id, cells(model)[2].id
+  vim.api.nvim_buf_set_lines(buf, 0, 1, false, {})
+  vim.api.nvim_buf_set_lines(buf, 0, 0, false, { "╭──" })
+  truthy(model:cell_at_row(1).id ~= first, "coalesced deletion/reinsertion must not revive identity")
+  equal(model:cell_by_id(first), nil)
+  equal(model:cell_at_row(4).id, second)
+  model:detach()
+end
+
+local function test_whole_cell_deletion_retires_missing_opener()
+  for _, index in ipairs({ 1, 2, 3 }) do
+    local buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+      "╭──", "a", "╰──", "╭──", "b", "╰──", "╭──", "c", "╰──",
+    })
+    local model = notebook.attach(buf)
+    local before = model:ordered_cells()
+    local retired = {}
+    model.on_cells_retired = function(ids) for _, id in ipairs(ids) do retired[id] = true end end
+    local row = (index - 1) * 3
+    vim.cmd("let &ul = &ul")
+    vim.api.nvim_buf_set_lines(buf, row, row + 3, false, {})
+    model:flush()
+    assert(model:cell_by_id(before[index].id) == nil, "whole deleted cell stayed in model")
+    assert(#model:ordered_cells() == 2)
+    assert(vim.wait(1000, function() return retired[before[index].id] end))
+    vim.cmd("silent undo")
+    model:flush()
+    local recreated = model:ordered_cells()[index]
+    assert(recreated.id ~= before[index].id)
+    -- Undo-created opener anchors can disappear entirely on a later deletion.
+    vim.cmd("let &ul = &ul")
+    vim.api.nvim_buf_set_lines(buf, row, row + 3, false, {})
+    model:flush()
+    assert(model:cell_by_id(recreated.id) == nil)
+    assert(vim.wait(1000, function() return retired[recreated.id] end))
+    for n, cell in ipairs(before) do
+      if n ~= index then assert(model:cell_by_id(cell.id) ~= nil) end
+    end
+    model:detach()
+    vim.api.nvim_buf_delete(buf, { force = true })
+  end
+end
+
 function M.run()
+  test_whole_cell_deletion_retires_missing_opener()
+  test_join_undo_redo_keeps_both_cell_identities_and_lookup()
+  test_unclosed_eof_and_history_damage_remain_addressable()
+  test_deferred_reconciliation_never_resurrects_a_deleted_opener()
   test_parser_valid_cell_and_history()
   test_parser_exact_lines_and_local_recovery()
   test_format_detection_distinguishes_native_and_legacy_notebooks()

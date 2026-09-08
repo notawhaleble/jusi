@@ -105,6 +105,25 @@ and `kernel_id`; a stale identity is rejected rather than redirected. Successful
 interrupt changes the execution outcome to `interrupted` while kernel state
 remains `on`.
 
+### Kernel Input Request
+
+A single reply opportunity owned by one running execution, as specified in
+[ADR 0023](adr/0023-kernel-input-is-an-execution-reply.md).
+
+- identity: `input_request_id`, distinct for every prompt
+- ownership: exact `execution_id`, `kernel_id`, `notebook_id`, and `cell_id`
+- metadata: literal prompt and Jupyter password flag
+- lifetime: prompt publication until reply acceptance or owning execution end
+- inspection: optional `pending_input` health field, null when absent
+
+Input waiting is not a kernel state, new execution, or plugin-client followup.
+The concurrent `submit_input` operation carries the exact request identity and
+literal reply; ordered events and inspection never include the reply value.
+Stop/restart cancel their execution's input wait before serialized teardown.
+`JusiClose` interrupts the exact active execution before retiring its
+projection. Opener retirement invokes the same complete cell-close lifecycle. Accepted input is echoed locally, separately from kernel results;
+acceptance alone does not mean the execution has completed.
+
 ### Client
 
 A backend-visible output or interaction resource associated with an execution or plugin worker.
@@ -158,13 +177,18 @@ An isolated plugin-owned runtime when plugin behavior needs a separate process o
   supervisor lifetime
 
 The initial worker control path serializes bounded `execute`, `followup`,
-`complete`, and `editor_action` requests. Payloads and results are opaque
-JSON-compatible objects; core validates identity and declared capability.
+`complete`, and `editor_action` requests. Application payloads and results are
+opaque JSON-compatible objects; core validates identity and declared capability.
+ADR 0027 gives the generic editor `complete` result an explicit source-range
+contract, while followup application results remain opaque.
 “Opaque” means core does not interpret plugin-specific fields; it is unrelated
 to client lifetime. The worker remains owned by its durable client across
 ordinary operation results.
-Concurrent interrupt and terminal interaction are deferred to transports that
-can operate independently of an in-flight request.
+`JusiFollowup` now exposes the bounded `followup` worker operation for an existing
+capability-declaring client (ADR 0026). It uses a fresh operation identity while
+preserving client, worker, and originating execution identity. Kernel stdin
+replies remain a separate operation. Terminal interaction uses its independent
+PTY stream; concurrent plugin interrupt remains deferred.
 
 Plugin interruption is distinct from client close. A successful plugin-specific
 interrupt hook cancels active plugin work while retaining the durable client;
@@ -195,6 +219,15 @@ Frontend model resources.
 - `cell_id`: stable model identity, anchored to text with extmarks
 
 Backend resources may reference these identifiers for correlation, but do not own their coordinates or presentation state.
+
+### Local Cell Editing Worker
+
+A frontend-owned headless Neovim process, distinct from backend plugin workers.
+It owns isolated scratch buffers for language-rule evaluation and communicates
+only with its owning notebook frontend over local RPC. It can exist before
+service connection and survives transport disconnect. Notebook detach, model
+replacement or buffer destruction terminates it. It has no kernel-control or
+backend-resource authority. See [ADR 0030](adr/0030-cell-local-syntax-and-indentation.md).
 
 ## Start Semantics
 

@@ -58,10 +58,16 @@ function M.run()
       return session.controller.kernel_state == "on"
     end, "SQLite fixture kernel did not start")
 
+    local editing_cell = session.model:cell_at_row(1)
+    wait_for(2000, function() return session.editing.families.sql ~= nil end, "discovery editing metadata did not reach frontend")
+    assert(session.editing:context(editing_cell).syntax == "sql")
+    assert(session.editing.overrides[editing_cell.id] == nil)
     jusi.execute(buf, 1)
     wait_for(10000, function()
       return next(session.interactive.surfaces) ~= nil
     end, "SQLite VisiData terminal surface was not projected")
+    wait_for(2000, function() return session.editing.overrides[editing_cell.id] ~= nil end, "exact provider editing metadata was not selected")
+    assert(session.editing.overrides[editing_cell.id].profile.indent == "sql")
     local _, record = next(session.interactive.surfaces)
     local rendered = vim.wait(5000, function()
       local text = terminal_text(record.buf)

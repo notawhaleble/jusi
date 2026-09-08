@@ -27,6 +27,7 @@ function Terminal:close()
   self.closed = true
   pcall(vim.api.nvim_chan_close, self.channel)
   if valid_buffer(self.buf) then
+    require("jusi.presentation.window").close_for_buffer(self.buf)
     pcall(vim.api.nvim_buf_delete, self.buf, { force = true })
   end
 end

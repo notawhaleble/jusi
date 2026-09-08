@@ -53,6 +53,8 @@ function Transport:request(method, path, payload, options, callback)
     "--show-error",
     "--request",
     method,
+    "--connect-timeout",
+    string.format("%.3f", self.request_timeout_ms / 1000),
     "--max-time",
     string.format("%.3f", timeout_ms / 1000),
     "--header",

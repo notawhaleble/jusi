@@ -1,0 +1,10 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_input",
+  "trace_id": "trace_input",
+  "kind": "submit_input",
+  "execution_id": "exe_fixture_active_1",
+  "kernel_id": "krn_fixture_1",
+  "input_request_id": "inp_fixture",
+  "value": "ololo"
+}

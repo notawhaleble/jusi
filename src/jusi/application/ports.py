@@ -76,9 +76,14 @@ class KernelHandle(Protocol):
         self,
         code: str,
         *,
-        timeout: float,
+        timeout: float | None,
         on_output: Callable[[KernelOutput], None],
+        on_input: Callable[[str, str, bool], None] | None = None,
     ) -> KernelExecutionResult: ...
+
+    def complete(self, prefix: str, *, timeout: float) -> dict[str, Any]: ...
+
+    def submit_input(self, input_request_id: str, value: str) -> None: ...
 
     def interrupt(self) -> None: ...
 

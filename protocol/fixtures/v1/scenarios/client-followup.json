@@ -1,0 +1,64 @@
+{
+  "command": {
+    "protocol_version": 1,
+    "command_id": "cmd_followup",
+    "trace_id": "trace_followup",
+    "kind": "followup",
+    "client_id": "client_existing",
+    "body": "  literal body  \nα"
+  },
+  "events": [
+    {
+      "protocol_version": 1,
+      "event_id": "evt_followup_1",
+      "supervisor_id": "sup_test",
+      "sequence": 1,
+      "occurred_at": "2026-09-08T00:00:00Z",
+      "trace_id": "trace_followup",
+      "layer": "supervisor",
+      "operation": "followup",
+      "kind": "operation.started",
+      "resource": {
+        "kind": "client",
+        "id": "client_existing"
+      },
+      "payload": {
+        "operation_id": "op_followup",
+        "trace_id": "trace_followup",
+        "kind": "followup",
+        "outcome": "running",
+        "started_at": "2026-09-08T00:00:00Z",
+        "completed_at": null
+      }
+    },
+    {
+      "protocol_version": 1,
+      "event_id": "evt_followup_2",
+      "supervisor_id": "sup_test",
+      "sequence": 2,
+      "occurred_at": "2026-09-08T00:00:00Z",
+      "trace_id": "trace_followup",
+      "layer": "supervisor",
+      "operation": "followup",
+      "kind": "operation.completed",
+      "resource": {
+        "kind": "client",
+        "id": "client_existing"
+      },
+      "payload": {
+        "operation_id": "op_followup",
+        "trace_id": "trace_followup",
+        "kind": "followup",
+        "outcome": "succeeded",
+        "started_at": "2026-09-08T00:00:00Z",
+        "completed_at": "2026-09-08T00:00:01Z"
+      }
+    }
+  ],
+  "assertions": {
+    "same_client": true,
+    "same_worker": true,
+    "same_surface": true,
+    "new_kernel_execution": false
+  }
+}

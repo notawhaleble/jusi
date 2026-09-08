@@ -1,0 +1,73 @@
+{
+  "protocol_version": 1,
+  "catalog_version": 1,
+  "discovery_id": "discovery_fixture_1",
+  "plugins": [
+    {
+      "plugin_id": "sqlite_provider",
+      "plugin_version": "1.0.0",
+      "distribution": "jusi-sqlite",
+      "families": [
+        {
+          "family_id": "sql",
+          "magic_name": "sql",
+          "capabilities": [
+            "execute",
+            "followup",
+            "complete"
+          ],
+          "presentation": {
+            "syntax": "sql",
+            "indent": "sql"
+          },
+          "provider_presentation": {
+            "syntax": "sql",
+            "indent": "sql"
+          }
+        }
+      ],
+      "kernel_extensions": [
+        "jusi_sqlite.kernel"
+      ],
+      "worker_entry_point": "jusi_sqlite.worker:main",
+      "media_types": [
+        "text/plain",
+        "text/x-ansi"
+      ],
+      "interaction": "request_response"
+    },
+    {
+      "plugin_id": "postgres_provider",
+      "plugin_version": "1.0.0",
+      "distribution": "jusi-postgres",
+      "families": [
+        {
+          "family_id": "sql",
+          "magic_name": "sql",
+          "capabilities": [
+            "execute",
+            "followup",
+            "complete"
+          ],
+          "presentation": {
+            "syntax": "sql",
+            "indent": "sql"
+          },
+          "provider_presentation": {
+            "syntax": "pgsql",
+            "indent": "sql"
+          }
+        }
+      ],
+      "kernel_extensions": [
+        "jusi_postgres.kernel"
+      ],
+      "worker_entry_point": "jusi_postgres.worker:main",
+      "media_types": [
+        "text/plain",
+        "text/x-ansi"
+      ],
+      "interaction": "request_response"
+    }
+  ]
+}

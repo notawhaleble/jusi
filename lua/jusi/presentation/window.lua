@@ -10,6 +10,18 @@ local function valid_windows(buf)
   return result
 end
 
+function M.close_for_buffer(buf)
+  for _, window in ipairs(valid_windows(buf)) do
+    -- Window IDs are not ownership: users may have switched a former output
+    -- split to another buffer, including during a window-close autocmd.
+    if vim.api.nvim_win_is_valid(window) and vim.api.nvim_win_get_buf(window) == buf then
+      -- Neovim cannot close its final window. The caller still deletes the
+      -- output buffer, allowing Neovim to replace it in that remaining window.
+      pcall(vim.api.nvim_win_close, window, true)
+    end
+  end
+end
+
 function M.find(buf)
   return valid_windows(buf)[1]
 end

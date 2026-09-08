@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_followup",
+  "trace_id": "trace_followup",
+  "kind": "followup",
+  "body": "  literal body  \nα"
+}

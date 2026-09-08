@@ -36,6 +36,7 @@ end
 function Presentation:write(cell_id, output)
   vim.validate("cell_id", cell_id, "string")
   vim.validate("output", output, "table")
+  if output.execution_id and self.retired_executions[output.execution_id] then return nil end
   if not is_textual(output.media_type) then
     local failure = self:_failure(
       "render_output",
@@ -102,6 +103,16 @@ function Presentation:close_cell(cell_id)
   self.pending[cell_id] = nil
 end
 
+function Presentation:retire_execution(cell_id, execution_id)
+  self.retired_executions[execution_id] = true
+  local surface = self.surfaces[cell_id]
+  local pending = self.pending[cell_id]
+  if (surface and surface.execution_id == execution_id)
+      or (pending and pending.execution_id == execution_id) then
+    self:close_cell(cell_id)
+  end
+end
+
 function Presentation:close()
   local cell_ids = vim.tbl_keys(self.surfaces)
   for _, cell_id in ipairs(cell_ids) do
@@ -114,6 +125,31 @@ function Presentation:controller_callbacks()
   return {
     on_execution_started = function(cell_id, execution)
       self:start_execution(cell_id, execution)
+    end,
+    on_input_requested = function(cell_id, request)
+      if self.retired_executions[request.execution_id] then return end
+      local surface = self.surfaces[cell_id]
+      if surface and surface.execution_id ~= request.execution_id then
+        self:start_execution(cell_id, request)
+        surface = nil
+      end
+      if not surface or surface.input_request_id ~= request.input_request_id then
+        surface = self:write(cell_id, {
+          execution_id = request.execution_id, media_type = "text/plain", data = request.prompt,
+        })
+        if surface then surface.input_request_id = request.input_request_id end
+      end
+      if surface then
+        presentation_window.show(surface.buf, { anchor_buf = self.notebook_buf, height = self.height, enter = false })
+      end
+    end,
+    on_input_replied = function(cell_id, request, value)
+      if self.retired_executions[request.execution_id] then return end
+      local surface = self.surfaces[cell_id]
+      if not surface or surface.execution_id ~= request.execution_id
+          or surface.input_request_id ~= request.input_request_id then return end
+      local echo = request.password and "[input accepted]" or (value or "[input accepted]")
+      self:write(cell_id, { execution_id = request.execution_id, media_type = "text/plain", data = echo .. "\r\n" })
     end,
     on_output = function(cell_id, output)
       self:write(cell_id, output)
@@ -131,6 +167,7 @@ function M.new(options)
     on_failure = opts.on_failure,
     pending = {},
     surfaces = {},
+    retired_executions = {},
   }, Presentation)
 end
 

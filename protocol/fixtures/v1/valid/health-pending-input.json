@@ -1,0 +1,49 @@
+{
+  "ok": true,
+  "status": "ready",
+  "supervisor_id": "sup_fixture_1",
+  "earliest_event_sequence": 1,
+  "event_sequence": 5,
+  "kernel": {
+    "kernel_id": "krn_fixture_1",
+    "notebook_id": "nb_fixture_1",
+    "kernel_name": "python3",
+    "state": "on",
+    "pid": 1234
+  },
+  "runtime": {
+    "runtime_id": "run_fixture_1",
+    "notebook_id": "nb_fixture_1",
+    "discovery_id": "discovery_fixture_health_1",
+    "kernel_id": "krn_fixture_1",
+    "plugin_catalog": {
+      "protocol_version": 1,
+      "catalog_version": 1,
+      "discovery_id": "discovery_fixture_health_1",
+      "plugins": []
+    }
+  },
+  "executions": [
+    {
+      "execution_id": "exe_fixture_active_1",
+      "kernel_id": "krn_fixture_1",
+      "notebook_id": "nb_fixture_1",
+      "cell_id": "cell_fixture_1",
+      "client_id": null,
+      "outcome": "running",
+      "started_at": "2026-09-05T08:00:00Z",
+      "completed_at": null
+    }
+  ],
+  "clients": [],
+  "surfaces": [],
+  "pending_input": {
+    "execution_id": "exe_fixture_active_1",
+    "kernel_id": "krn_fixture_1",
+    "notebook_id": "nb_fixture_1",
+    "cell_id": "cell_fixture_1",
+    "input_request_id": "inp_fixture",
+    "prompt": "lalala: ",
+    "password": false
+  }
+}

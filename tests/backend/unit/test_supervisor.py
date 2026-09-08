@@ -44,9 +44,9 @@ class FakeKernel:
         self.stop_error = stop_error
         self.interrupt_count = 0
 
-    def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
+    def execute(self, code: str, *, timeout: float, on_output, on_input=None) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
         assert code
-        assert timeout > 0
+        assert timeout is None or timeout > 0
         for output in self.outputs:
             on_output(output)
         return self.result
@@ -145,7 +145,7 @@ def test_interrupt_bypasses_execution_lane_and_preserves_kernel() -> None:
             self.executing = threading.Event()
             self.released = threading.Event()
 
-        def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
+        def execute(self, code: str, *, timeout: float, on_output, on_input=None) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
             self.executing.set()
             assert self.released.wait(2), "interrupt did not reach the active execution"
             return self.result
@@ -962,7 +962,7 @@ def test_discovery_failure_prevents_kernel_start_and_publishes_no_runtime() -> N
 
 def test_observed_kernel_death_turns_kernel_off_and_attempts_cleanup() -> None:
     class DeadKernel(FakeKernel):
-        def execute(self, code: str, *, timeout: float, on_output) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
+        def execute(self, code: str, *, timeout: float, on_output, on_input=None) -> KernelExecutionResult:  # type: ignore[no-untyped-def]
             on_output(KernelOutput("stdout", "text/x-ansi", "before death\n"))
             raise KernelAdapterError(
                 "kernel exited",
@@ -1194,3 +1194,287 @@ def test_restart_teardown_failure_preserves_current_runtime_and_kernel() -> None
     assert len(discovery.calls) == 1
     assert supervisor.health()["kernel"]["state"] == "on"
     assert supervisor.health()["runtime"] == started["runtime"]
+
+
+def test_pending_input_is_execution_owned_and_replies_are_fenced_and_private() -> None:
+    class InputKernel(FakeKernel):
+        def __init__(self):
+            super().__init__()
+            self.prompts = [threading.Event(), threading.Event()]
+            self.replies = [threading.Event(), threading.Event()]
+            self.values = []
+
+        def execute(self, code, *, timeout, on_output, on_input=None):
+            assert on_input is not None
+            for index in range(2):
+                on_input(f"inp_{index}", f"prompt {index}: ", False)
+                self.prompts[index].set()
+                assert self.replies[index].wait(2)
+            return KernelExecutionResult("succeeded")
+
+        def submit_input(self, input_request_id, value):
+            self.values.append(value)
+            self.replies[int(input_request_id[-1])].set()
+
+    kernel = InputKernel()
+    supervisor = make_supervisor(FakeFactory(kernel))
+    started = supervisor.start_kernel(notebook_id="nb_input", kernel_name="python3", trace_id="trace_start")
+    kernel_id = started["kernel"]["kernel_id"]
+    result = []
+    thread = threading.Thread(target=lambda: result.append(supervisor.execute(
+        kernel_id=kernel_id, notebook_id="nb_input", cell_id="cell_input",
+        code="input()", trace_id="trace_execute",
+    )))
+    thread.start()
+    try:
+        assert kernel.prompts[0].wait(1)
+        health = supervisor.health()
+        validate_health_response({"ok": True, **health})
+        pending = health["pending_input"]
+        identity = {key: pending[key] for key in ("kernel_id", "execution_id", "input_request_id")}
+        assert health["kernel"]["state"] == "on"
+        for key in identity:
+            with pytest.raises(SupervisorError) as captured:
+                supervisor.submit_input(**{**identity, key: "wrong_identity"}, value="PRIVATE_REPLY", trace_id="trace_wrong")
+            assert captured.value.failure.reason == "conflict"
+            assert supervisor.health()["pending_input"] == pending
+        supervisor.submit_input(**identity, value="PRIVATE_REPLY", trace_id="trace_reply")
+        assert kernel.prompts[1].wait(1)
+        with pytest.raises(SupervisorError):
+            supervisor.submit_input(**identity, value="duplicate", trace_id="trace_duplicate")
+        second = supervisor.health()["pending_input"]
+        assert second["input_request_id"] == "inp_1"
+        assert second["execution_id"] == pending["execution_id"]
+        supervisor.submit_input(**{**identity, "input_request_id": "inp_1"}, value="", trace_id="trace_empty")
+        thread.join(2)
+        assert not thread.is_alive()
+        assert result[0]["execution"]["outcome"] == "succeeded"
+        assert kernel.values == ["PRIVATE_REPLY", ""]
+        assert supervisor.health()["pending_input"] is None
+        with pytest.raises(SupervisorError):
+            supervisor.submit_input(**identity, value="late", trace_id="trace_late")
+        events = supervisor.events.events_after(0)
+        for event in events:
+            validate_event(event)
+        assert "PRIVATE_REPLY" not in json.dumps(events)
+        assert sum(event["kind"] == "execution.started" for event in events) == 1
+        assert [event["kind"] for event in events if event["kind"].startswith("execution.input_")] == [
+            "execution.input_requested", "execution.input_replied", "execution.input_requested", "execution.input_replied",
+        ]
+    finally:
+        for event in kernel.replies:
+            event.set()
+        thread.join(3)
+        supervisor.stop_kernel(kernel_id=kernel_id, trace_id="trace_stop")
+
+
+def test_followups_preserve_client_and_fence_stale_and_failed_workers() -> None:
+    plugin = plugin_entry()
+    plugin["families"][0]["capabilities"].append("followup")
+    handoff = PluginHandoff(plugin_id="exact_sql", plugin_version="1.0.0",
+                            family_id="sql", magic_name="sql", payload={})
+    workers = FakePluginWorkerFactory()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin]), PluginWorkerManager(workers),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    def execute(cell):
+        return supervisor.execute(kernel_id=started["kernel"]["kernel_id"], notebook_id="nb",
+                                  cell_id=cell, code="%%sql", trace_id="trace_execute")["execution"]["client_id"]
+    first, other = execute("first"), execute("other")
+    before = supervisor.health()["clients"]
+    # Application results are opaque; even an application error is not client death.
+    workers.handles[0].operation_result = PluginWorkerOperationResult({"error": "invalid query"})
+    result = supervisor.followup(client_id=first, body="", trace_id="trace_followup")
+    assert result["result"] == {"error": "invalid query"}
+    assert supervisor.health()["clients"] == before
+    events = [e for e in supervisor.events.events_after(0) if e["trace_id"] == "trace_followup"]
+    assert [e["kind"] for e in events] == ["operation.started", "operation.completed"]
+    for event in events:
+        validate_event(event)
+        assert event["resource"] == {"kind": "client", "id": first}
+    workers.handles[0].request_error = PluginWorkerError(
+        "worker died", reason="process_exited", retryable=False,
+        diagnostics=ProcessDiagnostics(pid=8765, exit_code=17, stderr_excerpt="worker diagnostic"),
+    )
+    with pytest.raises(SupervisorError) as failed:
+        supervisor.followup(client_id=first, body="private body", trace_id="trace_failure")
+    assert failed.value.failure.process.exit_code == 17
+    assert "private body" not in str(supervisor.events.events_after(0))
+    assert [c["client_id"] for c in supervisor.health()["clients"]] == [other]
+    assert supervisor.health()["kernel"]["state"] == "on"
+    closed = next(e for e in supervisor.events.events_after(0) if e["kind"] == "client.closed")
+    assert closed["payload"]["reason"] == "fatal_failure"
+    replacement = execute("first")
+    with pytest.raises(SupervisorError) as stale:
+        supervisor.followup(client_id=first, body="stale", trace_id="trace_stale")
+    assert stale.value.status_code == 409
+    assert replacement != first and len(supervisor.health()["clients"]) == 2
+    with pytest.raises(SupervisorError) as unknown:
+        supervisor.followup(client_id="client_unknown", body="", trace_id="trace_unknown")
+    assert unknown.value.status_code == 404
+
+
+def test_followup_capability_rejection_keeps_client() -> None:
+    handoff = PluginHandoff(plugin_id="exact_sql", plugin_version="1.0.0",
+                            family_id="sql", magic_name="sql", payload={})
+    workers = FakePluginWorkerFactory()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin_entry()]), PluginWorkerManager(workers),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    execution = supervisor.execute(kernel_id=started["kernel"]["kernel_id"], notebook_id="nb",
+                                   cell_id="cell", code="%%sql", trace_id="trace_execute")
+    client_id = execution["execution"]["client_id"]
+    with pytest.raises(SupervisorError) as failed:
+        supervisor.followup(client_id=client_id, body="", trace_id="trace_followup")
+    assert failed.value.failure.reason == "unsupported"
+    assert len(supervisor.health()["clients"]) == 1
+    assert workers.handles[0].stop_count == 0
+
+
+def test_followup_cannot_replace_its_terminal_surface() -> None:
+    plugin = interactive_plugin_entry()
+    plugin["families"][0]["capabilities"].append("followup")
+    handoff = PluginHandoff(plugin_id="exact_sql", plugin_version="1.0.0",
+                            family_id="sql", magic_name="sql", payload={})
+    workers = FakePluginWorkerFactory(operation_result=PluginWorkerOperationResult(
+        {}, (TerminalSurfaceRequest(request_id="terminal_main", argv=("application",)),),
+    ))
+    surfaces = FakeTerminalSurfaces()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin]), PluginWorkerManager(workers), surfaces,
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    executed = supervisor.execute(kernel_id=started["kernel"]["kernel_id"], notebook_id="nb",
+                                  cell_id="cell", code="%%sql", trace_id="trace_execute")
+    surface_id = supervisor.health()["surfaces"][0]["surface_id"]
+    with pytest.raises(SupervisorError) as failed:
+        supervisor.followup(client_id=executed["execution"]["client_id"], body="next", trace_id="trace_followup")
+    assert failed.value.failure.reason == "protocol_violation"
+    assert workers.handles[0].stop_count == 1
+    assert surface_id in surfaces.closed
+    assert supervisor.health()["surfaces"] == supervisor.health()["clients"] == []
+    assert supervisor.health()["kernel"]["state"] == "on"
+    for event in supervisor.events.events_after(0):
+        validate_event(event)
+
+
+def test_kernel_completion_is_prefix_only_and_busy_requests_do_not_queue() -> None:
+    class CompletingKernel(FakeKernel):
+        def complete(self, prefix, *, timeout):
+            assert prefix == "α\ns" and timeout > 0
+            return {"items": [{"text": "sleep", "start": 2, "end": 3}]}
+    supervisor = make_supervisor(FakeFactory(CompletingKernel()))
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    command = dict(kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+                   body="α\nsSUFFIX", cursor_pos=3, trace_id="trace_complete")
+    result = supervisor.complete(**command)
+    assert result["completion"]["items"][0]["text"] == "sleep"
+    assert not any(e["kind"] == "execution.started" for e in supervisor.events.events_after(0))
+    acquired, release = threading.Event(), threading.Event()
+    def hold_lane():
+        with supervisor._operation_lock:
+            acquired.set()
+            assert release.wait(2)
+    thread = threading.Thread(target=hold_lane)
+    thread.start()
+    assert acquired.wait(1)
+    try:
+        with pytest.raises(SupervisorError) as busy:
+            supervisor.complete(**command)
+        assert busy.value.failure.reason == "conflict"
+    finally:
+        release.set()
+        thread.join(2)
+    for event in supervisor.events.events_after(0):
+        validate_event(event)
+    assert "SUFFIX" not in str(supervisor.events.events_after(0))
+
+
+def test_plugin_completion_context_identity_ranges_and_lifetime() -> None:
+    handoff = PluginHandoff(plugin_id="exact_sql", plugin_version="1.0.0",
+                            family_id="sql", magic_name="sql", payload={})
+    workers = FakePluginWorkerFactory()
+    supervisor = Supervisor(
+        FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[plugin_entry()]), PluginWorkerManager(workers),
+    )
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    execution = supervisor.execute(kernel_id=started["kernel"]["kernel_id"], notebook_id="nb",
+                                   cell_id="cell", code="%%sql", trace_id="trace_execute")
+    client_id = execution["execution"]["client_id"]
+    calls = []
+    def complete(operation, payload, *, trace_id, timeout):
+        calls.append((operation, payload))
+        return PluginWorkerOperationResult({"items": [{"text": "public", "start": payload["cursor_pos"], "end": payload["cursor_pos"]}]})
+    workers.handles[0].request = complete
+    command = dict(kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+                   client_id=client_id, body="α\nselect * from SUFFIX", cursor_pos=len("α\nselect * from "), trace_id="trace_complete")
+    supervisor.complete(**command)
+    operation, payload = calls[0]
+    assert operation == "complete"
+    assert payload == {"body": command["body"], "prefix": "α\nselect * from ",
+                       "cursor_pos": command["cursor_pos"], "cursor_row": 1, "cursor_col": 14}
+    assert len(supervisor.health()["clients"]) == 1
+    with pytest.raises(SupervisorError):
+        supervisor.complete(**{**command, "cell_id": "other"})
+    assert len(calls) == 1
+    workers.handles[0].request = lambda *args, **kwargs: PluginWorkerOperationResult(
+        {"items": [{"text": "bad", "start": 0, "end": command["cursor_pos"] + 1}]})
+    with pytest.raises(SupervisorError) as failed:
+        supervisor.complete(**command)
+    assert failed.value.failure.reason == "protocol_violation"
+    assert supervisor.health()["clients"] == []
+    assert supervisor.health()["kernel"]["state"] == "on"
+    with pytest.raises(SupervisorError) as stale:
+        supervisor.complete(**command)
+    assert stale.value.failure.reason == "conflict"
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_teardown_interrupts_unbounded_execution_without_input(restart: bool) -> None:
+    import concurrent.futures
+
+    class RunningKernel(FakeKernel):
+        def __init__(self):
+            super().__init__()
+            self.running = threading.Event()
+            self.released = threading.Event()
+
+        def execute(self, code, *, timeout, on_output, on_input=None):
+            assert timeout is None
+            self.running.set()
+            assert self.released.wait(3)
+            return KernelExecutionResult("interrupted")
+
+        def interrupt(self):
+            super().interrupt()
+            self.released.set()
+
+    kernel = RunningKernel()
+    supervisor = make_supervisor(SequenceFactory([kernel, FakeKernel()]))
+    started = supervisor.start_kernel(notebook_id="nb_long", kernel_name="python3", trace_id="trace_start")
+    kernel_id = started["kernel"]["kernel_id"]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        executing = pool.submit(supervisor.execute, kernel_id=kernel_id, notebook_id="nb_long",
+                                cell_id="cell_long", code="sleep(60)", trace_id="trace_execute")
+        try:
+            assert kernel.running.wait(1)
+            assert supervisor.health()["pending_input"] is None
+            if restart:
+                teardown = pool.submit(supervisor.restart_notebook, kernel_id=kernel_id,
+                    runtime_id=started["runtime"]["runtime_id"], notebook_id="nb_long",
+                    next_notebook_id="nb_next", kernel_name="python3", trace_id="trace_restart")
+            else:
+                teardown = pool.submit(supervisor.stop_kernel, kernel_id=kernel_id, trace_id="trace_stop")
+            teardown.result(timeout=2)
+            assert executing.result(timeout=1)["execution"]["outcome"] == "interrupted"
+            assert kernel.interrupt_count == 1 and kernel.stopped
+        finally:
+            kernel.released.set()
+    current = supervisor.health()["kernel"]
+    supervisor.stop_kernel(kernel_id=current["kernel_id"], trace_id="trace_cleanup")

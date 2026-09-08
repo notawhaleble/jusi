@@ -26,6 +26,7 @@ local function default_launch(options)
     })
   end)
   if type(job_id) ~= "number" or job_id <= 0 then
+    presentation_window.close_for_buffer(buf)
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
     error("could not start terminal bridge: " .. tostring(job_id))
   end
@@ -94,6 +95,7 @@ function InteractiveTerminals:close_surface(surface_id)
     pcall(vim.fn.jobstop, record.job_id)
   end
   if record.buf and vim.api.nvim_buf_is_valid(record.buf) then
+    presentation_window.close_for_buffer(record.buf)
     pcall(vim.api.nvim_buf_delete, record.buf, { force = true })
   end
   return true

@@ -235,8 +235,8 @@ function FakeTransport:connect_events(after, callbacks)
   }
 end
 
-function FakeTransport:request(method, path, payload, _, callback)
-  table.insert(self.requests, { method = method, path = path, payload = payload })
+function FakeTransport:request(method, path, payload, options, callback)
+  table.insert(self.requests, { method = method, path = path, payload = payload, options = options })
   if path == "/v1/health" then
     callback(vim.deepcopy(self.health), nil)
   elseif payload.kind == "start_kernel" then
@@ -311,6 +311,7 @@ local function test_controller_routes_identity_and_preserves_kernel_truth_on_gap
   controller:execute(cell_id)
   equal(transport.requests[3].payload.cell_id, cell_id)
   equal(transport.requests[3].payload.code, "1 + 1")
+  equal(transport.requests[3].options.timeout_ms, 0)
 
   transport.event_callbacks.on_event(event(3, "execution.started", {
     execution_id = "exe_test",

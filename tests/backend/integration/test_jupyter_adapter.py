@@ -429,3 +429,114 @@ def jusi_kernel_adapter_v1():
     assert captured.value.reason == "conflict"
     assert captured.value.details["expected"]["fixture_bad_adapter"]["plugin_id"] == "fixture_provider"
     assert captured.value.details["observed"]["fixture_bad_adapter"]["plugin_id"] == "wrong_provider"
+
+
+def test_real_kernel_input_wait_is_unbounded_and_explicit_interrupt_still_works(monkeypatch, tmp_path):
+    import concurrent.futures
+    import threading
+    import time
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("IPYTHONDIR", str(tmp_path / "ipython"))
+    kernel = jupyter_kernel.ManagedJupyterKernelFactory().start("python3", timeout=8)
+    requests = queue.Queue()
+    outputs = []
+    timeline = []
+
+    def on_output(output):
+        outputs.append(output)
+        timeline.append(output.data)
+
+    def on_input(*request):
+        timeline.append(request[1])
+        requests.put(request)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        future = executor.submit(
+            kernel.execute, "print('before'); input('wait: ')", timeout=1.0, on_output=on_output,
+            on_input=on_input,
+        )
+        request_id, prompt, password = requests.get(timeout=3)
+        assert prompt == "wait: " and password is False
+        assert "".join(timeline) == "before\nwait: "
+        # Wait longer than the execution budget; this is deliberate user think time.
+        assert not threading.Event().wait(1.2)
+        assert not future.done()
+        kernel.submit_input(request_id, "literal reply")
+        assert future.result(timeout=3).outcome == "succeeded"
+        assert any(output.data == "'literal reply'" for output in outputs)
+        with pytest.raises(KernelAdapterError, match="no longer pending"):
+            kernel.submit_input(request_id, "duplicate")
+
+        # Advance only the adapter clock, proving that neither active work nor
+        # an input wait expires after the former 10/300-second limits.
+        from types import SimpleNamespace
+        elapsed = [0.0]
+        monkeypatch.setattr(jupyter_kernel, "time", SimpleNamespace(monotonic=lambda: time.monotonic() + elapsed[0]))
+
+        def advance_after_output(output):
+            outputs.append(output)
+            if "working" in output.data:
+                elapsed[0] += 600
+
+        future = executor.submit(
+            kernel.execute, "import time; print('working', flush=True); time.sleep(0.2); input('unbounded: ')",
+            timeout=None, on_output=advance_after_output, on_input=on_input,
+        )
+        request_id, _, _ = requests.get(timeout=3)
+        elapsed[0] += 600
+        assert not threading.Event().wait(0.15)
+        assert not future.done()
+        kernel.submit_input(request_id, "still here")
+        assert future.result(timeout=3).outcome == "succeeded"
+
+        future = executor.submit(
+            kernel.execute, "input('wait forever: ')", timeout=None, on_output=outputs.append,
+            on_input=on_input,
+        )
+        requests.get(timeout=3)
+        assert not future.done()
+        kernel.interrupt()
+        assert future.result(timeout=3).outcome == "interrupted"
+        assert kernel.execute("1 + 1", timeout=2, on_output=outputs.append,
+                              on_input=lambda *request: None).outcome == "succeeded"
+    finally:
+        if kernel._executing:
+            kernel.interrupt()
+        executor.shutdown(wait=True)
+        kernel.stop(timeout=3)
+
+
+def test_completion_timeout_preserves_kernel_and_late_reply_cannot_supply_next_result() -> None:
+    class CompletionClient(FakeClient):
+        def __init__(self):
+            super().__init__()
+            self.requests = []
+            self.replies = []
+
+        def complete(self, *, code, cursor_pos):
+            assert code == "α" and cursor_pos == 1
+            self.requests.append(code)
+            return f"completion_{len(self.requests)}"
+
+        def get_shell_msg(self, *, timeout):
+            assert timeout > 0
+            if not self.replies:
+                raise queue.Empty
+            return self.replies.pop(0)
+
+    stderr_file = tempfile.NamedTemporaryFile(delete=False)
+    client = CompletionClient()
+    kernel = ManagedJupyterKernel(FakeManager(), client, stderr_file, stderr_file.name)
+    try:
+        with pytest.raises(KernelAdapterError) as timed_out:
+            kernel.complete("α", timeout=0.1)
+        assert timed_out.value.reason == "timeout" and timed_out.value.layer == "execution"
+        for request_id, match in [("completion_1", "stale"), ("completion_2", "αvalue")]:
+            client.replies.append({"header": {"msg_type": "complete_reply"},
+                                   "parent_header": {"msg_id": request_id},
+                                   "content": {"status": "ok", "matches": [match], "cursor_start": 0, "cursor_end": 1}})
+        assert kernel.complete("α", timeout=0.1) == {"items": [{"text": "αvalue", "start": 0, "end": 1}]}
+        assert kernel.execute("1 + 1", timeout=1, on_output=lambda _: None).outcome == "succeeded"
+    finally:
+        kernel.stop(timeout=1)

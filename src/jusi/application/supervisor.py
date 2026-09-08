@@ -4,6 +4,7 @@ import threading
 import uuid
 from typing import Any
 
+from jusi.protocol import ProtocolValidationError, validate_completion
 from jusi.application.events import EventLog
 from jusi.application.ports import (
     KernelAdapterError,
@@ -74,6 +75,8 @@ class Supervisor:
         self._surfaces: dict[str, SurfaceResource] = {}
         self._active_kernel_execution: tuple[ExecutionResource, KernelHandle] | None = None
         self._interrupt_requested: set[str] = set()
+        self._pending_input: dict[str, Any] | None = None
+        self._input_teardown: set[str] = set()
         self.events.append(
             trace_id=new_id("trace"),
             layer="service",
@@ -94,6 +97,7 @@ class Supervisor:
                 "kernel": self._current_kernel.to_dict() if self._current_kernel is not None else None,
                 "runtime": self._current_runtime.to_dict() if self._current_runtime is not None else None,
                 "executions": [active_execution[0].to_dict()] if active_execution is not None else [],
+                "pending_input": dict(self._pending_input) if self._pending_input is not None else None,
                 "clients": [client.to_dict() for client in self._clients.values()],
                 "surfaces": [surface.to_dict() for surface in self._surfaces.values()],
             }
@@ -371,8 +375,9 @@ class Supervisor:
         cell_id: str,
         code: str,
         trace_id: str,
-        timeout: float = 10.0,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
+        control_timeout = 10.0 if timeout is None else timeout
         with self._operation_lock:
             execution_details = {
                 "code_bytes": len(code.encode("utf-8")),
@@ -427,10 +432,32 @@ class Supervisor:
                         },
                     )
 
-                result = handle.execute(code, timeout=timeout, on_output=publish_output)
+                def publish_input(input_request_id: str, prompt: str, password: bool) -> None:
+                    with self._state_lock:
+                        if execution.execution_id in self._input_teardown:
+                            self.interrupt_execution(kernel_id=kernel_id, execution_id=execution.execution_id, trace_id=trace_id)
+                            return
+                        self._pending_input = {
+                            "input_request_id": input_request_id,
+                            "execution_id": execution.execution_id,
+                            "kernel_id": kernel_id,
+                            "notebook_id": notebook_id,
+                            "cell_id": cell_id,
+                            "prompt": prompt,
+                            "password": password,
+                        }
+                        self.events.append(
+                            trace_id=trace_id, layer="execution", operation="execute",
+                            kind="execution.input_requested", resource=execution_ref,
+                            payload=dict(self._pending_input),
+                        )
+
+                result = handle.execute(code, timeout=timeout, on_output=publish_output, on_input=publish_input)
             except KernelAdapterError as exc:
                 with self._state_lock:
                     self._active_kernel_execution = None
+                    self._pending_input = None
+                    self._input_teardown.discard(execution.execution_id)
                     interrupted = execution.execution_id in self._interrupt_requested
                     self._interrupt_requested.discard(execution.execution_id)
                 if interrupted and exc.layer != "kernel" and exc.reason == "interrupted":
@@ -530,6 +557,8 @@ class Supervisor:
 
             with self._state_lock:
                 self._active_kernel_execution = None
+                self._pending_input = None
+                self._input_teardown.discard(execution.execution_id)
                 interrupted = execution.execution_id in self._interrupt_requested
                 self._interrupt_requested.discard(execution.execution_id)
             if interrupted and result.outcome == "interrupted":
@@ -634,7 +663,7 @@ class Supervisor:
                         family_id=handoff.family_id,
                         client_id=client_id,
                         execution_id=execution.execution_id,
-                        timeout=timeout,
+                        timeout=control_timeout,
                     )
                 except (PluginWorkerSelectionError, PluginWorkerError) as exc:
                     failure = self._plugin_worker_failure(
@@ -665,7 +694,7 @@ class Supervisor:
                         "execute",
                         handoff.payload,
                         trace_id=trace_id,
-                        timeout=timeout,
+                        timeout=control_timeout,
                     )
                 except (PluginWorkerSelectionError, PluginWorkerError) as exc:
                     failure = self._plugin_worker_failure(
@@ -712,7 +741,7 @@ class Supervisor:
                     )
                     self._emit_failure(failure)
                     try:
-                        self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=timeout)
+                        self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=control_timeout)
                     except (PluginWorkerSelectionError, PluginWorkerError):
                         pass
                     execution.complete("failed")
@@ -741,7 +770,7 @@ class Supervisor:
                     )
                     self._emit_failure(failure)
                     try:
-                        self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=timeout)
+                        self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=control_timeout)
                     except (PluginWorkerSelectionError, PluginWorkerError):
                         pass
                     execution.complete("failed")
@@ -796,7 +825,7 @@ class Supervisor:
                         )
                         self._emit_failure(failure)
                         try:
-                            self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=timeout)
+                            self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=control_timeout)
                         except (PluginWorkerSelectionError, PluginWorkerError):
                             pass
                         execution.complete("failed")
@@ -866,6 +895,47 @@ class Supervisor:
             if failure is not None:
                 response["failure"] = failure.to_dict()
             return response
+
+    def submit_input(
+        self, *, kernel_id: str, execution_id: str, input_request_id: str,
+        value: str, trace_id: str,
+    ) -> dict[str, Any]:
+        execution_ref = ResourceRef("execution", execution_id)
+        # This short control path must never queue behind the waiting execute.
+        with self._state_lock:
+            active = self._active_kernel_execution
+            pending = self._pending_input
+            if (active is None or pending is None
+                    or pending["kernel_id"] != kernel_id
+                    or pending["execution_id"] != execution_id
+                    or pending["input_request_id"] != input_request_id
+                    or execution_id in self._interrupt_requested):
+                raise self._request_failure(
+                    status_code=409, trace_id=trace_id, layer="execution",
+                    operation="submit_input", reason="conflict",
+                    message="Input request is no longer pending for this execution",
+                    retryable=False, scope="request", resource=execution_ref,
+                )
+            operation = self._begin_operation("submit_input", trace_id, resource=execution_ref)
+            try:
+                active[1].submit_input(input_request_id, value)
+            except KernelAdapterError as exc:
+                failure = self._failure(
+                    trace_id=trace_id, layer=exc.layer, operation="submit_input",
+                    reason=exc.reason, message="Kernel input reply was rejected",
+                    retryable=False, scope="request", resource=execution_ref,
+                )
+                self._emit_failure(failure)
+                self._complete_operation(operation, "failed", resource=execution_ref, failure=failure)
+                raise SupervisorError(409, failure) from exc
+            self._pending_input = None
+            payload = {"execution_id": execution_id, "input_request_id": input_request_id}
+            self.events.append(
+                trace_id=trace_id, layer="execution", operation="submit_input",
+                kind="execution.input_replied", resource=execution_ref, payload=payload,
+            )
+            self._complete_operation(operation, "succeeded", resource=execution_ref)
+            return {"operation": operation.to_dict(), "input_reply": payload}
 
     def interrupt_execution(
         self, *, kernel_id: str, execution_id: str, trace_id: str,
@@ -948,7 +1018,147 @@ class Supervisor:
             "interrupt": {"result": "already_requested" if already_requested else "requested"},
         }
 
+    def complete(
+        self, *, kernel_id: str, notebook_id: str, cell_id: str, body: str,
+        cursor_pos: int, trace_id: str, client_id: str | None = None, timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        # Completion is disposable: never queue behind execution or human input.
+        resource = ResourceRef("client", client_id) if client_id else ResourceRef("kernel", kernel_id)
+        if not self._operation_lock.acquire(blocking=False):
+            raise self._request_failure(
+                status_code=409, trace_id=trace_id, layer="supervisor", operation="complete",
+                reason="conflict", message="Runtime is busy; request completion again when idle",
+                retryable=True, scope="request", resource=resource,
+            )
+        try:
+            kernel, handle = self._require_live_kernel(kernel_id, trace_id, "complete")
+            with self._state_lock:
+                client = self._clients.get(client_id) if client_id else None
+            if kernel.notebook_id != notebook_id or (client is not None and (
+                client.kernel_id != kernel_id or client.notebook_id != notebook_id or client.cell_id != cell_id
+            )):
+                raise self._request_failure(
+                    status_code=409, trace_id=trace_id, layer="supervisor", operation="complete",
+                    reason="conflict", message="Completion target ownership does not match",
+                    retryable=False, scope="request", resource=resource,
+                )
+            prefix = body[:cursor_pos]
+            if client_id:
+                response = self._client_operation(
+                    client_id=client_id, kind="complete", trace_id=trace_id, timeout=timeout,
+                    payload={"body": body, "prefix": prefix, "cursor_pos": cursor_pos,
+                             "cursor_row": prefix.count("\n"),
+                             "cursor_col": len(prefix.rsplit("\n", 1)[-1])},
+                )
+                return {"operation": response["operation"], "completion": response["result"]}
+            operation = self._begin_operation("complete", trace_id, resource=resource)
+            try:
+                result = handle.complete(prefix, timeout=timeout)
+                validate_completion(result, cursor_pos)
+            except (KernelAdapterError, ProtocolValidationError) as exc:
+                adapter = isinstance(exc, KernelAdapterError)
+                dead = adapter and exc.layer == "kernel"
+                failure = self._failure(
+                    trace_id=trace_id, layer=exc.layer if adapter else "protocol", operation="complete",
+                    reason=exc.reason if adapter else "protocol_violation", message=str(exc),
+                    retryable=exc.retryable if adapter else False,
+                    scope="kernel" if dead else "request", resource=resource,
+                    process=exc.diagnostics if adapter else None,
+                )
+                self._emit_failure(failure)
+                if dead:
+                    with self._state_lock:
+                        kernel.state = "off"
+                        self._kernel_handle = None
+                    self.events.append(trace_id=trace_id, layer="kernel", operation="complete",
+                                       kind="kernel.state_changed", resource=resource,
+                                       payload={"kernel_id": kernel_id, "previous_state": "on", "state": "off"})
+                self._complete_operation(operation, "failed", resource=resource, failure=failure)
+                raise SupervisorError(503, failure) from exc
+            self._complete_operation(operation, "succeeded", resource=resource)
+            return {"operation": operation.to_dict(), "completion": result}
+        finally:
+            self._operation_lock.release()
+
+    def followup(
+        self, *, client_id: str, body: str, trace_id: str, timeout: float = 10.0,
+    ) -> dict[str, Any]:
+        return self._client_operation(client_id=client_id, payload={"body": body},
+                                      kind="followup", trace_id=trace_id, timeout=timeout)
+
+    def _client_operation(
+        self, *, client_id: str, payload: dict[str, Any], kind: str, trace_id: str, timeout: float,
+    ) -> dict[str, Any]:
+        """Route a bounded operation to an existing client without a kernel execution."""
+        with self._operation_lock:
+            client_ref = ResourceRef("client", client_id)
+            operation = self._begin_operation(kind, trace_id, resource=client_ref)
+            with self._state_lock:
+                client = self._clients.get(client_id)
+                known = client_id in self._known_client_ids
+            try:
+                if client is None:
+                    raise PluginWorkerSelectionError(
+                        "Client is closed" if known else "Unknown client",
+                        reason="conflict" if known else "not_found",
+                    )
+                if kind not in client.capabilities:
+                    raise PluginWorkerSelectionError(f"Client does not support {kind}", reason="unsupported")
+                assert self._plugin_workers is not None
+                result = self._plugin_workers.request(
+                    client.plugin_worker_id, kind, payload,
+                    trace_id=trace_id, timeout=timeout,
+                )
+                if result.core_requests:
+                    # The original handoff owns presentation creation. Later
+                    # operations cannot silently replace or add a client surface.
+                    raise PluginWorkerError(
+                        "Client operations cannot request new terminal surfaces",
+                        reason="protocol_violation", retryable=False,
+                    )
+                if kind == "complete":
+                    try:
+                        validate_completion(result.result, payload["cursor_pos"])
+                    except ProtocolValidationError as exc:
+                        raise PluginWorkerError(str(exc), reason="protocol_violation", retryable=False) from exc
+            except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+                fatal = isinstance(exc, PluginWorkerError)
+                failure = self._failure(
+                    trace_id=trace_id, layer="plugin_worker" if fatal else "supervisor",
+                    operation=kind, reason=exc.reason, message=str(exc),
+                    retryable=exc.retryable if fatal else False,
+                    scope="client" if fatal else "request", resource=client_ref,
+                    process=exc.diagnostics if fatal else None,
+                    details={**(exc.details if fatal else {}),
+                             **({"plugin_worker_id": client.plugin_worker_id,
+                                 "execution_id": client.execution_id} if client else {})},
+                )
+                self._emit_failure(failure)
+                if fatal and client is not None:
+                    try:
+                        # Also handles an already fenced/terminated worker.
+                        self._close_client(
+                            client_id=client_id, trace_id=trace_id, timeout=timeout,
+                            reason="fatal_failure", failure_id=failure.failure_id,
+                        )
+                    except SupervisorError:
+                        # Close already recorded its cleanup failure and retained
+                        # ownership for a later cleanup attempt.
+                        pass
+                self._complete_operation(operation, "failed", resource=client_ref, failure=failure)
+                raise SupervisorError(
+                    503 if fatal else (404 if exc.reason == "not_found" else 409), failure,
+                ) from exc
+            self._complete_operation(operation, "succeeded", resource=client_ref)
+            return {"operation": operation.to_dict(), "client": client.to_dict(), "result": result.result}
+
     def close_client(self, *, client_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
+        return self._close_client(client_id=client_id, trace_id=trace_id, timeout=timeout)
+
+    def _close_client(
+        self, *, client_id: str, trace_id: str, timeout: float,
+        reason: str = "explicit_close", failure_id: str = "",
+    ) -> dict[str, Any]:
         with self._operation_lock:
             client_ref = ResourceRef("client", client_id)
             operation = self._begin_operation("close_client", trace_id, resource=client_ref)
@@ -1048,7 +1258,8 @@ class Supervisor:
                 client_id,
                 trace_id=trace_id,
                 operation="close_client",
-                reason="explicit_close",
+                reason=reason,
+                failure_id=failure_id,
             )
             cleanup = {
                 "resource": client_ref.to_dict(),
@@ -1060,7 +1271,26 @@ class Supervisor:
             self._complete_operation(operation, "succeeded", resource=client_ref, cleanup=cleanup)
             return {"operation": operation.to_dict(), "client": {"client_id": client_id}, "cleanup": cleanup}
 
+    def _cancel_execution_for_teardown(
+        self, kernel_id: str, trace_id: str, *, runtime_id: str | None = None,
+        notebook_id: str | None = None,
+    ) -> None:
+        with self._state_lock:
+            active = self._active_kernel_execution
+            runtime = self._current_runtime
+            if active is None or active[0].kernel_id != kernel_id:
+                return
+            if runtime_id is not None and (runtime is None or runtime.runtime_id != runtime_id
+                    or runtime.notebook_id != notebook_id or runtime.kernel_id != kernel_id):
+                return
+            # Also fence a prompt that arrives after teardown queues for the lane.
+            self._input_teardown.add(active[0].execution_id)
+            self.interrupt_execution(
+                kernel_id=kernel_id, execution_id=active[0].execution_id, trace_id=trace_id,
+            )
+
     def stop_kernel(self, *, kernel_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
+        self._cancel_execution_for_teardown(kernel_id, trace_id)
         with self._operation_lock:
             operation = self._begin_operation("stop_kernel", trace_id, resource=ResourceRef("kernel", kernel_id))
             if self._current_kernel is None or self._current_kernel.kernel_id != kernel_id or self._current_kernel.state == "off":
@@ -1175,6 +1405,7 @@ class Supervisor:
         trace_id: str,
         timeout: float = 10.0,
     ) -> dict[str, Any]:
+        self._cancel_execution_for_teardown(kernel_id, trace_id, runtime_id=runtime_id, notebook_id=notebook_id)
         with self._operation_lock:
             runtime = self._current_runtime
             kernel = self._current_kernel

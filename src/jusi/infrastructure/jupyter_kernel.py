@@ -6,6 +6,8 @@ import queue
 import subprocess
 import tempfile
 import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -21,6 +23,7 @@ from jusi.application.ports import (
 )
 from jusi.domain.models import ProcessDiagnostics
 from jusi.protocol import ProtocolValidationError, validate_plugin_kernel_message
+
 
 
 MAX_STDERR_BYTES = 16 * 1024
@@ -246,6 +249,8 @@ class ManagedJupyterKernel:
         self._closed = False
         self._control_lock = threading.Lock()
         self._executing = False
+        self._pending_input: str | None = None
+        self._input_value: str | None = None
         self._interrupt_requested = threading.Event()
 
     @property
@@ -254,12 +259,46 @@ class ManagedJupyterKernel:
         pid = getattr(provisioner, "pid", None)
         return int(pid) if isinstance(pid, int) and pid > 0 else None
 
+    def complete(self, prefix: str, *, timeout: float) -> dict[str, Any]:
+        with self._lock:
+            if self._closed or not self._is_alive():
+                raise self._kernel_died("Kernel is not alive before completion")
+            try:
+                request_id = self._client.complete(code=prefix, cursor_pos=len(prefix))
+                deadline = time.monotonic() + timeout
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise queue.Empty
+                    reply = self._client.get_shell_msg(timeout=remaining)
+                    if reply.get("parent_header", {}).get("msg_id") != request_id:
+                        continue
+                    content = reply.get("content", {})
+                    if reply.get("header", {}).get("msg_type") != "complete_reply" or content.get("status") != "ok":
+                        raise KernelAdapterError("Kernel completion failed", layer="execution",
+                                                 reason="protocol_violation", retryable=False)
+                    matches = content.get("matches")
+                    if not isinstance(matches, list) or any(not isinstance(x, str) for x in matches):
+                        raise KernelAdapterError("Invalid kernel completion matches", layer="execution",
+                                                 reason="protocol_violation", retryable=False)
+                    return {"items": [{"text": text, "start": content.get("cursor_start"),
+                                       "end": content.get("cursor_end")} for text in matches[:500]]}
+            except KernelAdapterError:
+                raise
+            except Exception as exc:
+                if not self._is_alive():
+                    raise self._kernel_died("Kernel died during completion") from exc
+                raise KernelAdapterError("Kernel completion did not reply in time", layer="execution",
+                                         reason="timeout" if isinstance(exc, queue.Empty) else "channel_closed",
+                                         retryable=True) from exc
+
     def execute(
         self,
         code: str,
         *,
-        timeout: float,
+        timeout: float | None,
         on_output: Callable[[KernelOutput], None],
+        on_input: Callable[[str, str, bool], None] | None = None,
     ) -> KernelExecutionResult:
         with self._lock:
             if self._closed or not self._is_alive():
@@ -316,13 +355,16 @@ class ManagedJupyterKernel:
                         emit_output("stderr", "text/x-ansi", text)
 
             try:
-                reply = self._client.execute_interactive(
-                    code,
-                    allow_stdin=False,
-                    stop_on_error=True,
-                    timeout=timeout,
-                    output_hook=output_hook,
-                )
+                if on_input is None:
+                    reply = self._client.execute_interactive(
+                        code, allow_stdin=False, stop_on_error=True,
+                        timeout=timeout, output_hook=output_hook,
+                    )
+                else:
+                    reply = self._execute_with_input(code, timeout, output_hook, on_input)
+            except KernelAdapterError:
+                self._finish_execution()
+                raise
             except (queue.Empty, TimeoutError) as exc:
                 if self._finish_execution():
                     raise KernelAdapterError(
@@ -334,7 +376,7 @@ class ManagedJupyterKernel:
                 if not self._is_alive():
                     raise self._kernel_died("Kernel died while executing") from exc
                 raise KernelAdapterError(
-                    f"Execution did not complete within {timeout:.1f}s",
+                    str(exc) or "Execution reply timed out",
                     layer="execution",
                     reason="timeout",
                     retryable=True,
@@ -377,6 +419,106 @@ class ManagedJupyterKernel:
                 error_value=str(content.get("evalue", "")),
                 handoffs=tuple(handoffs),
             )
+
+    def submit_input(self, input_request_id: str, value: str) -> None:
+        # Only queue here. The execution thread owns every Jupyter socket read/write.
+        with self._control_lock:
+            if (not self._executing or self._interrupt_requested.is_set()
+                    or self._pending_input != input_request_id or self._input_value is not None):
+                raise KernelAdapterError(
+                    "Input request is no longer pending", layer="execution",
+                    reason="conflict", retryable=False,
+                )
+            self._input_value = value
+
+    def _execute_with_input(
+        self, code: str, timeout: float | None,
+        output_hook: Callable[[dict[str, Any]], None],
+        on_input: Callable[[str, str, bool], None],
+    ) -> dict[str, Any]:
+        msg_id = self._client.execute(code, allow_stdin=True, stop_on_error=True)
+        remaining = timeout
+        previous = time.monotonic()
+        waiting = False
+        timeout_error = None
+        drain_deadline = None
+        while True:
+            now = time.monotonic()
+            if remaining is not None and (not waiting or self._interrupt_requested.is_set()):
+                remaining -= now - previous
+            previous = now
+            if not self._is_alive():
+                raise self._kernel_died("Kernel died while executing")
+            if timeout_error is None and remaining is not None and remaining <= 0:
+                timeout_error = "Execution timed out"
+                self._manager.interrupt_kernel()
+                drain_deadline = now + 2.0
+            if drain_deadline is not None and now >= drain_deadline:
+                raise TimeoutError(timeout_error)
+
+            with self._control_lock:
+                if self._interrupt_requested.is_set() or timeout_error:
+                    self._pending_input = None
+                    self._input_value = None
+                    waiting = False
+                elif self._input_value is not None:
+                    value = self._input_value
+                    self._pending_input = None
+                    self._input_value = None
+                    self._client.input(value)
+                    waiting = False
+
+            # Drain already-arrived output before presenting a prompt on the
+            # independent stdin channel. Bound the batch so control stays responsive.
+            idle = False
+            for index in range(64):
+                try:
+                    message = self._client.get_iopub_msg(timeout=0.05 if index == 0 else 0)
+                except queue.Empty:
+                    break
+                if message.get("parent_header", {}).get("msg_id") != msg_id:
+                    continue
+                output_hook(message)
+                if (message.get("header", {}).get("msg_type") == "status"
+                        and message.get("content", {}).get("execution_state") == "idle"):
+                    idle = True
+                    break
+            if idle:
+                break
+            try:
+                request = self._client.get_stdin_msg(timeout=0)
+            except queue.Empty:
+                request = None
+            if (request is not None and request.get("parent_header", {}).get("msg_id") == msg_id
+                    and request.get("header", {}).get("msg_type") == "input_request"
+                    and not self._interrupt_requested.is_set() and timeout_error is None):
+                content = request.get("content", {})
+                prompt, password = content.get("prompt"), content.get("password")
+                if not isinstance(prompt, str) or not isinstance(password, bool):
+                    self._manager.interrupt_kernel()
+                    raise KernelAdapterError("Invalid kernel input request", layer="execution",
+                                             reason="protocol_violation", retryable=False)
+                request_id = "inp_" + uuid.uuid4().hex
+                with self._control_lock:
+                    self._pending_input = request_id
+                    self._input_value = None
+                waiting = True
+                on_input(request_id, prompt, password)
+        deadline = None if remaining is None else time.monotonic() + max(remaining, 2.0 if timeout_error else 0.1)
+        while True:
+            if not self._is_alive():
+                raise self._kernel_died("Kernel died while waiting for execution reply")
+            reply_timeout = 0.1 if deadline is None else deadline - time.monotonic()
+            if reply_timeout <= 0:
+                raise TimeoutError(timeout_error or "Timeout waiting for execution reply")
+            try:
+                reply = self._client.get_shell_msg(timeout=min(reply_timeout, 0.1))
+            except queue.Empty:
+                continue
+            if reply.get("parent_header", {}).get("msg_id") == msg_id:
+                if timeout_error:
+                    raise TimeoutError(timeout_error)
+                return reply
 
     def stop(self, *, timeout: float) -> None:
         with self._lock:
@@ -438,6 +580,8 @@ class ManagedJupyterKernel:
             requested = self._interrupt_requested.is_set()
             self._interrupt_requested.clear()
             self._executing = False
+            self._pending_input = None
+            self._input_value = None
             return requested
 
     def _is_alive(self) -> bool:

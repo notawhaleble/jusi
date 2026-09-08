@@ -68,6 +68,14 @@ function Notebook:_delete_cell_marks(cell, preserve_opener)
   cell.markers = {}
 end
 
+function Notebook:_update_header(cell, open_row)
+  local line = vim.api.nvim_buf_get_lines(self.buf, open_row + 1, open_row + 2, false)[1] or ""
+  local header = line:match("^%s*%%%%") and line or ""
+  if cell.header ~= header then
+    cell.header, cell.header_revision = header, (cell.header_revision or 0) + 1
+  end
+end
+
 function Notebook:_materialize_cell(raw, reusable)
   local cell = reusable
   if cell then
@@ -84,6 +92,7 @@ function Notebook:_materialize_cell(raw, reusable)
     self._cell_by_id[cell.id] = cell
   end
 
+  self:_update_header(cell, raw.open_row)
   cell.valid = raw.valid
   cell.markers = {}
   if raw.history_row then
@@ -133,7 +142,26 @@ function Notebook:_clear_diagnostics(start_row, end_row)
   end
 end
 
+function Notebook:_notify_retired(ids)
+  if #ids == 0 or not self.on_cells_retired then return end
+  -- Notifications never run inside an edit callback or a model query.
+  vim.schedule(function()
+    if not self._detached and self.on_cells_retired then self.on_cells_retired(ids) end
+  end)
+end
+
+function Notebook:_notify_cells_changed(ids)
+  if #ids == 0 or not self.on_cells_changed then return end
+  vim.schedule(function()
+    if not self._detached and self.on_cells_changed then self.on_cells_changed(ids) end
+  end)
+end
+
 function Notebook:_full_parse()
+  local retired_ids = {}
+  local previous = self._head
+  while previous do table.insert(retired_ids, previous.id); previous = previous.next end
+  self._dirty = nil
   vim.api.nvim_buf_clear_namespace(self.buf, self._open_namespace, 0, -1)
   vim.api.nvim_buf_clear_namespace(self.buf, self._structure_namespace, 0, -1)
   vim.api.nvim_buf_clear_namespace(self.buf, self._diagnostic_namespace, 0, -1)
@@ -165,6 +193,10 @@ function Notebook:_full_parse()
   self.metrics.full_parse_count = self.metrics.full_parse_count + 1
   self.metrics.full_parse_lines = self.metrics.full_parse_lines + #lines
   self.last_change = { kind = "full_parse", scanned_line_count = #lines, affected_cell_ids = {} }
+  self:_notify_retired(retired_ids)
+  local ids = {}
+  for _, cell in ipairs(parsed_cells) do table.insert(ids, cell.id) end
+  self:_notify_cells_changed(ids)
 end
 
 function Notebook:_nearest_open_before(row)
@@ -223,32 +255,17 @@ function Notebook:_is_local_text_edit(first_line, new_last_line)
   if first_line > marker_rows.close or new_last_line > marker_rows.close then
     return false
   end
-  return true, cell
+  return true, cell, open_row
 end
 
 function Notebook:_replace_region(start_row, end_row)
-  local start_cell, start_cell_row = self:_next_open_at_or_after(start_row)
-  if start_cell_row and start_cell_row >= end_row then
-    start_cell = nil
-  end
+  -- Deleted openers may have no extmark left at all. Start from the model
+  -- successor of the left boundary, not the first surviving opener inside
+  -- the region, so removed cells are included in retirement.
+  local left = start_row > 0 and self:_nearest_open_before(start_row - 1) or nil
+  local first_old
+  if left then first_old = left.next else first_old = self._head end
   local end_cell = self:_next_open_at_or_after(end_row)
-  local first_old = start_cell
-  if not first_old then
-    local previous = self:_nearest_open_before(start_row)
-    if previous then
-      first_old = previous.next
-    else
-      first_old = self._head
-    end
-  end
-  local left
-  if first_old then
-    left = first_old.prev
-  elseif end_cell then
-    left = end_cell.prev
-  else
-    left = self._tail
-  end
 
   local reusable_by_row = {}
   local old_cells = {}
@@ -256,7 +273,8 @@ function Notebook:_replace_region(start_row, end_row)
   while old_cell and old_cell ~= end_cell do
     table.insert(old_cells, old_cell)
     local row = mark_position(self.buf, self._open_namespace, old_cell.open_extmark_id)
-    if row and row >= start_row and row < end_row then
+    local anchor = vim.api.nvim_buf_get_extmark_by_id(self.buf, self._open_namespace, old_cell.open_extmark_id, { details = true })
+    if row and row >= start_row and row < end_row and anchor[3] and not anchor[3].invalid then
       reusable_by_row[row] = old_cell
     end
     old_cell = old_cell.next
@@ -273,8 +291,10 @@ function Notebook:_replace_region(start_row, end_row)
     end
     table.insert(replacement, self:_materialize_cell(raw, reusable))
   end
+  local retired_ids = {}
   for _, cell in ipairs(old_cells) do
     if not reused[cell.id] then
+      table.insert(retired_ids, cell.id)
       self:_delete_cell_marks(cell, false)
       self._cell_by_id[cell.id] = nil
       cell.prev = nil
@@ -309,6 +329,7 @@ function Notebook:_replace_region(start_row, end_row)
   for _, raw in ipairs(parsed.diagnostics) do
     self:_add_diagnostic(raw, replacement)
   end
+  self:_notify_retired(retired_ids)
   return replacement, #lines, math.max(#old_cells, #replacement)
 end
 
@@ -331,18 +352,61 @@ function Notebook:_structural_region(first_line, new_last_line)
   return start_row, end_row
 end
 
-function Notebook:_on_lines(first_line, _old_last_line, new_last_line)
-  if self._detached then
-    return
-  end
-  local is_local, cell = self:_is_local_text_edit(first_line, new_last_line)
-  if is_local then
-    cell.text_revision = cell.text_revision + 1
-    self.metrics.body_edit_count = self.metrics.body_edit_count + 1
-    self.last_change = { kind = "body", scanned_line_count = new_last_line - first_line, affected_cell_ids = { cell.id } }
-    return
+function Notebook:_notify_text_changed(id)
+  if not self.on_text_changed then return end
+  if self._pending_text_changes then self._pending_text_changes[id] = true; return end
+  self._pending_text_changes = { [id] = true }
+  vim.schedule(function()
+    local changed = self._pending_text_changes
+    self._pending_text_changes = nil
+    if not self._detached and self.on_text_changed then self.on_text_changed(vim.tbl_keys(changed)) end
+  end)
+end
+
+function Notebook:_on_lines(first_line, old_last_line, new_last_line)
+  if self._detached then return end
+  if not self._dirty then
+    local is_local, cell, open_row = self:_is_local_text_edit(first_line, new_last_line)
+    if is_local then
+      if first_line <= open_row + 1 then self:_update_header(cell, open_row) end
+      cell.text_revision = cell.text_revision + 1
+      self.metrics.body_edit_count = self.metrics.body_edit_count + 1
+      self.last_change = { kind = "body", scanned_line_count = new_last_line - first_line, affected_cell_ids = { cell.id } }
+      self:_notify_text_changed(cell.id)
+      return
+    end
   end
 
+  -- Undo applies extmark adjustments after on_lines. Creating or replacing
+  -- anchors inside that callback lets undo move the new anchors a second time.
+  -- Keep only a local dirty span here; reconcile after the edit has settled.
+  local dirty = self._dirty
+  if dirty then
+    local delta = new_last_line - old_last_line
+    local function moved(row)
+      if row >= old_last_line then return row + delta end
+      if row >= first_line then return new_last_line end
+      return row
+    end
+    dirty.first = math.min(first_line, moved(dirty.first))
+    dirty.last = math.max(new_last_line, moved(dirty.last))
+  else
+    self._dirty = { first = first_line, last = new_last_line }
+  end
+  if not self._flush_scheduled then
+    self._flush_scheduled = true
+    vim.schedule(function()
+      self._flush_scheduled = false
+      self:flush()
+    end)
+  end
+end
+
+function Notebook:flush()
+  if self._detached or not self._dirty then return end
+  local dirty = self._dirty
+  self._dirty = nil
+  local first_line, new_last_line = dirty.first, dirty.last
   local start_row, end_row = self:_structural_region(first_line, new_last_line)
   local affected, scanned, reconciled_cells = self:_replace_region(start_row, end_row)
   local ids = {}
@@ -354,9 +418,11 @@ function Notebook:_on_lines(first_line, _old_last_line, new_last_line)
   self.metrics.max_structural_scan = math.max(self.metrics.max_structural_scan, scanned)
   self.metrics.max_structural_cells = math.max(self.metrics.max_structural_cells, reconciled_cells)
   self.last_change = { kind = "structural", scanned_line_count = scanned, affected_cell_ids = ids }
+  self:_notify_cells_changed(ids)
 end
 
 function Notebook:cell_snapshot(cell_or_id)
+  self:flush()
   local cell = type(cell_or_id) == "table" and cell_or_id or self:cell_by_id(cell_or_id)
   if not cell then
     return nil
@@ -369,7 +435,10 @@ function Notebook:cell_snapshot(cell_or_id)
   if vim.api.nvim_buf_get_lines(self.buf, open_row, open_row + 1, false)[1] ~= parser.lines.open then
     return nil
   end
-  local body_end = rows.history or rows.close
+  local end_row = rows.close and (rows.close + 1)
+    or (cell.next and mark_position(self.buf, self._open_namespace, cell.next.open_extmark_id))
+    or vim.api.nvim_buf_line_count(self.buf)
+  local body_end = rows.history or rows.close or end_row
   local history_entries = {}
   if rows.history and rows.close then
     local entry_start = rows.history + 1
@@ -389,28 +458,32 @@ function Notebook:cell_snapshot(cell_or_id)
     history_row = rows.history,
     history_entries = history_entries,
     close_row = rows.close,
+    end_row = end_row,
     open_extmark_id = cell.open_extmark_id,
   }
 end
 
 function Notebook:cell_by_id(cell_id)
+  self:flush()
   return self._cell_by_id[cell_id]
 end
 
 function Notebook:cell_at_row(row)
+  self:flush()
   vim.validate("row", row, "number")
   local cell = self:_nearest_open_before(row)
   if not cell then
     return nil
   end
   local snapshot = self:cell_snapshot(cell)
-  if snapshot and row >= snapshot.open_row and row <= snapshot.close_row then
+  if snapshot and row >= snapshot.open_row and row < snapshot.end_row then
     return cell
   end
   return nil
 end
 
 function Notebook:ordered_cells()
+  self:flush()
   local result = {}
   local cell = self._head
   while cell do
@@ -441,6 +514,7 @@ function Notebook:history(cell_or_id)
 end
 
 function Notebook:diagnostics()
+  self:flush()
   local result = {}
   local marks = vim.api.nvim_buf_get_extmarks(self.buf, self._diagnostic_namespace, 0, -1, {})
   for _, mark in ipairs(marks) do

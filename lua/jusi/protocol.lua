@@ -20,13 +20,16 @@ local command_fields = {
   start_kernel = { "notebook_id", "kernel_name" },
   execute = { "kernel_id", "notebook_id", "cell_id", "code" },
   interrupt = { "kernel_id", "execution_id" },
+  submit_input = { "kernel_id", "execution_id", "input_request_id", "value" },
   stop_kernel = { "kernel_id" },
+  complete = { "kernel_id", "notebook_id", "cell_id", "body" },
+  followup = { "client_id", "body" },
   close_client = { "client_id" },
   restart_notebook = { "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name" },
 }
 local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
-local operations = set({ "service_start", "start_kernel", "stop_kernel", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "cleanup", "inspect", "connect_events" })
-local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
+local operations = set({ "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events" })
+local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
 local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
@@ -105,6 +108,17 @@ local function validate_client(client)
     seen[capability] = true
   end
   if not ({ noninteractive = true, request_response = true, terminal_interactive = true })[client.interaction] then return false, "invalid client interaction" end
+  return true
+end
+
+local function validate_input_request(value)
+  if type(value) ~= "table" then return false, "input request must be an object" end
+  local ok, err = exact_fields(value, { "input_request_id", "execution_id", "kernel_id", "notebook_id", "cell_id", "prompt", "password" })
+  if not ok then return false, err end
+  for _, field in ipairs({ "input_request_id", "execution_id", "kernel_id", "notebook_id", "cell_id" }) do
+    if not nonempty_string(value[field]) then return false, "invalid input request identity" end
+  end
+  if type(value.prompt) ~= "string" or type(value.password) ~= "boolean" then return false, "invalid input prompt or password flag" end
   return true
 end
 
@@ -211,6 +225,16 @@ local function validate_event_payload(event)
     if kind == "execution.started" and (payload.outcome ~= "running" or not null(payload.completed_at)) then return false, "execution.started must be running and incomplete" end
     if kind == "execution.completed" and ((payload.outcome == "pending" or payload.outcome == "running") or not nonempty_string(payload.completed_at)) then return false, "execution.completed has invalid outcome or time" end
     if event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "execution event resource mismatch" end
+  elseif kind == "execution.input_requested" or kind == "execution.input_replied" then
+    local ok, err
+    if kind == "execution.input_requested" then
+      ok, err = validate_input_request(payload)
+    else
+      ok, err = exact_fields(payload, { "execution_id", "input_request_id" })
+      if not nonempty_string(payload.execution_id) or not nonempty_string(payload.input_request_id) then return false, "invalid input reply identity" end
+    end
+    if not ok then return false, err end
+    if event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "input event resource mismatch" end
   elseif kind == "execution.output" then
     ok, err = exact_fields(payload, { "execution_id", "client_id", "output_kind", "media_type", "data" })
     if not ok then return false, err end
@@ -269,7 +293,7 @@ function M.validate_command(command, expected_kind)
     return false, "unsupported command kind"
   end
   for _, field in ipairs(fields) do
-    if type(command[field]) ~= "string" or (field ~= "code" and command[field] == "") then
+    if type(command[field]) ~= "string" or (field ~= "code" and field ~= "value" and field ~= "body" and command[field] == "") then
       return false, field .. " must be a string"
     end
   end
@@ -282,6 +306,16 @@ function M.validate_command(command, expected_kind)
   }
   for _, field in ipairs(fields) do
     allowed[field] = true
+  end
+  if expected_kind == "complete" then
+    allowed.cursor_pos, allowed.client_id = true, true
+    local pos = command.cursor_pos
+    if type(pos) ~= "number" or pos % 1 ~= 0 or pos < 0 or pos > vim.fn.strchars(command.body) then
+      return false, "invalid completion cursor offset"
+    end
+    if command.client_id ~= nil and not nonempty_string(command.client_id) then
+      return false, "invalid completion client identity"
+    end
   end
   for field, _ in pairs(command) do
     if not allowed[field] then
@@ -453,6 +487,14 @@ function M.validate_health_response(response)
       return false, "execution runtime ownership mismatch"
     end
   end
+  if not null(response.pending_input) then
+    local input_ok, input_error = validate_input_request(response.pending_input)
+    if not input_ok then return false, input_error end
+    if #response.executions ~= 1 then return false, "input request needs an active execution" end
+    for _, field in ipairs({ "kernel_id", "execution_id", "notebook_id", "cell_id" }) do
+      if response.pending_input[field] ~= response.executions[1][field] then return false, "input request execution ownership mismatch" end
+    end
+  end
   if type(response.surfaces) ~= "table" or not vim.islist(response.surfaces) then return false, "surfaces must be present as an array" end
   local surface_ids = {}
   for _, surface in ipairs(response.surfaces) do
@@ -506,12 +548,18 @@ function M.validate_plugin_catalog(catalog)
       local claim = family.family_id .. "\0" .. family.magic_name
       if family_claims[claim] or not family.magic_name:match("^[A-Za-z][A-Za-z0-9_-]*$") then return false, "duplicate or invalid family claim" end
       family_claims[claim] = true
-      for field, _ in pairs(family) do if field ~= "family_id" and field ~= "magic_name" and field ~= "capabilities" and field ~= "presentation" then return false, "unknown family field" end end
+      for field, _ in pairs(family) do if field ~= "family_id" and field ~= "magic_name" and field ~= "capabilities" and field ~= "presentation" and field ~= "provider_presentation" then return false, "unknown family field" end end
       local seen = {}
       for _, value in ipairs(family.capabilities) do if not capabilities[value] or seen[value] then return false, "invalid family capability" end seen[value] = true end
-      if family.presentation ~= nil then
-        if type(family.presentation) ~= "table" then return false, "invalid family presentation" end
-        for field, value in pairs(family.presentation) do if (field ~= "syntax" and field ~= "indent") or type(value) ~= "string" then return false, "invalid family presentation" end end
+      for _, name in ipairs({ "presentation", "provider_presentation" }) do
+        local profile = family[name]
+        if profile ~= nil then
+          if type(profile) ~= "table" or profile == vim.NIL or vim.islist(profile) and #profile > 0 then return false, "invalid editing profile" end
+          for field, value in pairs(profile) do
+            if (field ~= "syntax" and field ~= "indent") or type(value) ~= "string" or #value > 64
+              or value ~= "" and not value:match("^[a-z][a-z0-9_]*$") then return false, "invalid editing profile" end
+          end
+        end
       end
       local sorted_capabilities = vim.deepcopy(family.capabilities)
       table.sort(sorted_capabilities)
@@ -615,6 +663,27 @@ function M.validate_plugin_kernel_message(message)
     return validate_kernel_families({ { family_id = message.family_id, magic_name = message.magic_name } })
   end
   return false, "unsupported plugin kernel message kind"
+end
+
+function M.validate_completion(result, cursor_pos)
+  if type(result) ~= "table" or type(result.items) ~= "table" or not vim.islist(result.items) or #result.items > 500 then
+    return false, "completion.items must be a bounded array"
+  end
+  for _, item in ipairs(result.items) do
+    if type(item) ~= "table" then return false, "invalid completion item" end
+    local first, last = item.start, item["end"]
+    if type(first) ~= "number" or type(last) ~= "number" or first % 1 ~= 0 or last % 1 ~= 0
+      or first < 0 or first > last or last > cursor_pos then return false, "completion range must lie before cursor" end
+    if type(item.text) ~= "string" or vim.fn.strchars(item.text) > 65536 or item.text:find("%z") then
+      return false, "invalid completion text"
+    end
+    for _, key in ipairs({ "label", "detail", "documentation", "kind" }) do
+      if item[key] ~= nil and (type(item[key]) ~= "string" or vim.fn.strchars(item[key]) > 4096 or item[key]:find("%z")) then
+        return false, "invalid completion metadata"
+      end
+    end
+  end
+  return true
 end
 
 return M
