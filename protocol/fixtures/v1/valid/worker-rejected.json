@@ -1,0 +1,13 @@
+{
+  "protocol_version": 1,
+  "kind": "worker.rejected",
+  "plugin_worker_id": "pwrk_fixture",
+  "request_id": "op_followup",
+  "trace_id": "trace_followup",
+  "operation": "followup",
+  "failure": {
+    "reason": "cancelled",
+    "message": "Cancelled",
+    "retryable": false
+  }
+}

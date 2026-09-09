@@ -245,3 +245,68 @@ def test_non_json_and_oversized_results_fail_inside_owned_worker(tmp_path: Path)
     with pytest.raises(PluginWorkerError) as size_error:
         large_worker.request("complete", {}, trace_id="trace_large", timeout=2)
     assert size_error.value.reason == "plugin_error"
+
+
+def test_interrupt_is_concurrent_exact_and_preserves_worker(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from jusi.application.ports import PluginOperationError
+    import time
+    entry_point = write_worker(tmp_path, '''
+        import threading
+        from pathlib import Path
+        from jusi.plugin_api import OperationInterrupted, OperationRejected
+        class Worker:
+            def __init__(self):
+                self.owner_thread = threading.get_ident()
+                self.cancel = threading.Event()
+                self.hook_fails = False
+            def handle(self, operation, payload):
+                assert threading.get_ident() == self.owner_thread
+                if payload.get("reject"):
+                    raise OperationRejected("no selection")
+                if payload.get("wait"):
+                    self.hook_fails = payload.get("hook_fails", False)
+                    Path(payload["ready"]).touch()
+                    try:
+                        if not self.cancel.wait(5):
+                            return {"completed": True}
+                        raise OperationInterrupted()
+                    finally:
+                        self.cancel.clear()
+                return {"alive": True}
+            def interrupt(self):
+                if self.hook_fails:
+                    self.hook_fails = False
+                    raise ValueError("hook failed once")
+                self.cancel.set()
+        def create_worker(context):
+            return Worker()
+    ''')
+    worker = factory(tmp_path).start(spec(entry_point), timeout=2)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for number in range(2):
+                target = f"op_work_{number}"
+                ready = tmp_path / f"ready_{number}"
+                future = pool.submit(worker.request, "followup", {"wait": True, "ready": str(ready), "hook_fails": True},
+                                     trace_id="trace_work", timeout=6, request_id=target)
+                deadline = time.monotonic() + 2
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(.005)
+                assert ready.exists()
+                with pytest.raises(PluginOperationError) as stale:
+                    worker.interrupt("op_old", trace_id="trace_stale", timeout=1)
+                assert stale.value.reason == "conflict" and not future.done()
+                with pytest.raises(PluginOperationError) as hook:
+                    worker.interrupt(target, trace_id="trace_hook", timeout=1)
+                assert hook.value.reason == "plugin_error" and not future.done()
+                assert worker.interrupt(target, trace_id="trace_interrupt", timeout=1)["result"] == "requested"
+                with pytest.raises(PluginOperationError) as cancelled:
+                    future.result(timeout=2)
+                assert cancelled.value.reason == "cancelled"
+                assert worker.request("followup", {}, trace_id="trace_next", timeout=2).result == {"alive": True}
+        with pytest.raises(PluginOperationError):
+            worker.request("editor_action", {"reject": True}, trace_id="trace_reject", timeout=2)
+        assert worker.request("followup", {}, trace_id="trace_next", timeout=2).result["alive"]
+    finally:
+        worker.stop(trace_id="trace_cleanup", timeout=2)

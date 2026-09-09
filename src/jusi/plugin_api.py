@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from jusi.protocol import ProtocolValidationError, validate_plugin_catalog
-from jusi.application.ports import TerminalSurfaceRequest
+from jusi.application.ports import TerminalSurfaceRequest, PluginOperationError
 
 
 ENTRY_POINT_GROUP = "jusi.plugins.v1"
@@ -73,3 +73,33 @@ def validate_discovered_entry(
 def validate_catalog_claims(catalog: object) -> dict[str, Any]:
     """Validate cross-provider family semantics not expressible in JSON Schema."""
     return validate_plugin_catalog(catalog)
+
+
+class OperationRejected(PluginOperationError):
+    """Raise for a recoverable request failure, never for a broken session."""
+
+    def __init__(self, message: str, *, reason: str = "plugin_error") -> None:
+        if reason not in {"invalid_request", "unsupported", "conflict", "timeout", "cancelled", "plugin_error", "internal_error"}:
+            raise ValueError("Unsupported recoverable operation reason")
+        super().__init__(message, reason=reason, retryable=False)
+
+
+class OperationInterrupted(OperationRejected):
+    def __init__(self, message: str = "Plugin operation interrupted") -> None:
+        super().__init__(message, reason="cancelled")
+
+
+def copy_text(text: str, *, linewise: bool = False) -> WorkerResult:
+    return _editor_result({"action": "copy", "text": text, "regtype": "V" if linewise else "v"}, "copy")
+
+
+def open_text(text: str, *, name: str = "export.txt", filetype: str = "") -> WorkerResult:
+    return _editor_result({"action": "open", "text": text, "name": name, "filetype": filetype}, "open")
+
+
+def _editor_result(result: dict[str, Any], action: str) -> WorkerResult:
+    from jusi.protocol import validate_editor_action
+    try:
+        return WorkerResult(validate_editor_action(result, action))
+    except (ProtocolValidationError, UnicodeError) as exc:
+        raise OperationRejected(str(exc), reason="invalid_request") from exc

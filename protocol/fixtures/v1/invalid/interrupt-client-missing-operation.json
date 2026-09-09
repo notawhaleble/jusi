@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_action",
+  "trace_id": "trace_action",
+  "kind": "interrupt_client",
+  "client_id": "client_existing"
+}

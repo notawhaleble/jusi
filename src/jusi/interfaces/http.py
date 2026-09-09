@@ -289,6 +289,48 @@ class ClientFollowupHandler(BaseHandler):
         self.write_json(200, {"ok": True, **result})
 
 
+class ClientEditorActionHandler(BaseHandler):
+    async def post(self, client_id: str) -> None:
+        command = self.parse_command("editor_action")
+        if command is None:
+            return
+        if command["client_id"] != client_id:
+            failure = Failure(failure_id=new_id("fail"), trace_id=command["trace_id"], layer="protocol",
+                operation="editor_action", reason="invalid_request", message="Client identity must match URL",
+                retryable=False, scope="request", resource=ResourceRef("client", client_id))
+            self.supervisor.record_failure(failure)
+            self.write_json(400, {"ok": False, "failure": failure.to_dict()})
+            return
+        try:
+            result = await asyncio.to_thread(self.supervisor.editor_action, client_id=client_id,
+                action=command["action"], selection=command["selection"], trace_id=command["trace_id"])
+        except SupervisorError as exc:
+            self.write_supervisor_error(exc)
+            return
+        self.write_json(200, {"ok": True, **result})
+
+
+class ClientInterruptHandler(BaseHandler):
+    async def post(self, client_id: str) -> None:
+        command = self.parse_command("interrupt_client")
+        if command is None:
+            return
+        if command["client_id"] != client_id:
+            failure = Failure(failure_id=new_id("fail"), trace_id=command["trace_id"], layer="protocol",
+                operation="interrupt_client", reason="invalid_request", message="Client identity must match URL",
+                retryable=False, scope="request", resource=ResourceRef("client", client_id))
+            self.supervisor.record_failure(failure)
+            self.write_json(400, {"ok": False, "failure": failure.to_dict()})
+            return
+        try:
+            result = await asyncio.to_thread(self.supervisor.interrupt_client,
+                client_id=client_id, operation_id=command["operation_id"], trace_id=command["trace_id"])
+        except SupervisorError as exc:
+            self.write_supervisor_error(exc)
+            return
+        self.write_json(202, {"ok": True, **result})
+
+
 class ClientHandler(BaseHandler):
     async def delete(self, client_id: str) -> None:
         command = self.parse_command("close_client")
@@ -570,6 +612,8 @@ def make_application(supervisor: Supervisor) -> tornado.web.Application:
             (r"/v1/kernels/([^/]+)/executions/([^/]+)/interrupt", ExecutionInterruptHandler, handler_args),
             (r"/v1/kernels/([^/]+)/executions/([^/]+)/input", ExecutionInputHandler, handler_args),
             (r"/v1/kernels/([^/]+)/completions", CompletionHandler, handler_args),
+            (r"/v1/clients/([^/]+)/editor-actions", ClientEditorActionHandler, handler_args),
+            (r"/v1/clients/([^/]+)/interrupt", ClientInterruptHandler, handler_args),
             (r"/v1/clients/([^/]+)/followups", ClientFollowupHandler, handler_args),
             (r"/v1/clients/([^/]+)", ClientHandler, handler_args),
             (r"/v1/notebook-runtimes/([^/]+)/restart", NotebookRuntimeRestartHandler, handler_args),

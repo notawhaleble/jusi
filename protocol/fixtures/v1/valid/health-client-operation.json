@@ -1,0 +1,115 @@
+{
+  "ok": true,
+  "status": "ready",
+  "supervisor_id": "sup_fixture_1",
+  "earliest_event_sequence": 1,
+  "event_sequence": 4,
+  "kernel": {
+    "kernel_id": "krn_fixture",
+    "notebook_id": "nb_fixture",
+    "kernel_name": "python3",
+    "state": "on",
+    "pid": 1234
+  },
+  "runtime": {
+    "runtime_id": "run_fixture",
+    "notebook_id": "nb_fixture",
+    "discovery_id": "discovery_fixture_1",
+    "kernel_id": "krn_fixture",
+    "plugin_catalog": {
+      "protocol_version": 1,
+      "catalog_version": 1,
+      "discovery_id": "discovery_fixture_1",
+      "plugins": [
+        {
+          "plugin_id": "sqlite_provider",
+          "plugin_version": "1.0.0",
+          "distribution": "jusi-sqlite",
+          "families": [
+            {
+              "family_id": "sql",
+              "magic_name": "sql",
+              "capabilities": [
+                "execute",
+                "followup",
+                "complete"
+              ],
+              "presentation": {
+                "syntax": "sql",
+                "indent": "sql"
+              }
+            }
+          ],
+          "kernel_extensions": [
+            "jusi_sqlite.kernel"
+          ],
+          "worker_entry_point": "jusi_sqlite.worker:main",
+          "media_types": [
+            "text/plain",
+            "text/x-ansi"
+          ],
+          "interaction": "request_response"
+        },
+        {
+          "plugin_id": "postgres_provider",
+          "plugin_version": "1.0.0",
+          "distribution": "jusi-postgres",
+          "families": [
+            {
+              "family_id": "sql",
+              "magic_name": "sql",
+              "capabilities": [
+                "execute",
+                "followup",
+                "complete"
+              ],
+              "presentation": {
+                "syntax": "sql",
+                "indent": "sql"
+              }
+            }
+          ],
+          "kernel_extensions": [
+            "jusi_postgres.kernel"
+          ],
+          "worker_entry_point": "jusi_postgres.worker:main",
+          "media_types": [
+            "text/plain",
+            "text/x-ansi"
+          ],
+          "interaction": "request_response"
+        }
+      ]
+    }
+  },
+  "executions": [],
+  "clients": [
+    {
+      "client_id": "cli_fixture",
+      "runtime_id": "run_fixture",
+      "kernel_id": "krn_fixture",
+      "notebook_id": "nb_fixture",
+      "cell_id": "cell_fixture",
+      "execution_id": "exe_fixture",
+      "plugin_worker_id": "pwrk_fixture",
+      "plugin_id": "sqlite_provider",
+      "plugin_version": "1.0.0",
+      "family_id": "sql",
+      "capabilities": [
+        "execute",
+        "followup",
+        "complete"
+      ],
+      "interaction": "request_response",
+      "created_at": "2026-09-01T08:00:00Z"
+    }
+  ],
+  "surfaces": [],
+  "client_operations": [
+    {
+      "operation_id": "op_followup",
+      "client_id": "cli_fixture",
+      "kind": "followup"
+    }
+  ]
+}

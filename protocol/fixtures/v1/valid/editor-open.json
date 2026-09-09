@@ -1,0 +1,6 @@
+{
+  "action": "open",
+  "text": "a,b\nα,β\n",
+  "name": "selection.csv",
+  "filetype": "csv"
+}

@@ -79,7 +79,7 @@ There is no kernel reconnect transition.
 
 ### Operation
 
-A bounded attempt to change or inspect resources.
+An attempt to change or inspect resources. Execution and followup work have no default deadline; connection and lifecycle controls remain bounded.
 
 - identity: `operation_id`
 - trace: `trace_id`
@@ -176,8 +176,10 @@ An isolated plugin-owned runtime when plugin behavior needs a separate process o
 - lifetime: explicitly fenced and stopped; never silently promoted to kernel or
   supervisor lifetime
 
-The initial worker control path serializes bounded `execute`, `followup`,
-`complete`, and `editor_action` requests. Application payloads and results are
+The worker control path serializes ordinary `execute`, `followup`,
+`complete`, and `editor_action` requests. ADR 0034 adds an independent exact
+interrupt lane and recoverable operation rejections. Health exposes active
+established-client operation IDs; these are not new client or kernel states. Application payloads and results are
 opaque JSON-compatible objects; core validates identity and declared capability.
 ADR 0027 gives the generic editor `complete` result an explicit source-range
 contract, while followup application results remain opaque.

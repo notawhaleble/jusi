@@ -209,7 +209,7 @@ class FakePluginWorkerHandle:
         self.operation_result = operation_result or PluginWorkerOperationResult({"accepted": True})
         self.stop_count = 0
 
-    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float) -> PluginWorkerOperationResult:
+    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float, request_id=None) -> PluginWorkerOperationResult:
         if self.request_error is not None:
             raise self.request_error
         return self.operation_result
@@ -1408,7 +1408,7 @@ def test_plugin_completion_context_identity_ranges_and_lifetime() -> None:
                                    cell_id="cell", code="%%sql", trace_id="trace_execute")
     client_id = execution["execution"]["client_id"]
     calls = []
-    def complete(operation, payload, *, trace_id, timeout):
+    def complete(operation, payload, *, trace_id, timeout, request_id=None):
         calls.append((operation, payload))
         return PluginWorkerOperationResult({"items": [{"text": "public", "start": payload["cursor_pos"], "end": payload["cursor_pos"]}]})
     workers.handles[0].request = complete
@@ -1478,3 +1478,60 @@ def test_teardown_interrupts_unbounded_execution_without_input(restart: bool) ->
             kernel.released.set()
     current = supervisor.health()["kernel"]
     supervisor.stop_kernel(kernel_id=current["kernel_id"], trace_id="trace_cleanup")
+
+
+def test_client_work_snapshot_exact_interrupt_and_recoverable_export():
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from jusi.application.ports import PluginOperationError
+    from jusi.protocol import validate_health_response
+    plugin = plugin_entry()
+    plugin["families"][0]["capabilities"] += ["followup", "interrupt", "editor_actions"]
+    handoff = PluginHandoff(plugin_id="exact_sql", plugin_version="1.0.0", family_id="sql", magic_name="sql", payload={})
+    workers = FakePluginWorkerFactory()
+    supervisor = Supervisor(FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+                            FakeDiscovery(plugins=[plugin]), PluginWorkerManager(workers))
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    client_id = supervisor.execute(kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+                                   code="%%sql", trace_id="trace_execute")["execution"]["client_id"]
+    handle = workers.handles[0]
+    ready, cancelled = threading.Event(), threading.Event()
+    target = []
+    def request(operation, payload, *, trace_id, timeout, request_id):
+        target.append(request_id)
+        ready.set()
+        assert cancelled.wait(3)
+        raise PluginOperationError("Interrupted", reason="cancelled", retryable=False)
+    def interrupt(request_id, *, trace_id, timeout):
+        assert request_id == target[0]
+        cancelled.set()
+        return {"result": "requested"}
+    original_request = handle.request
+    handle.request, handle.interrupt = request, interrupt
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(supervisor.followup, client_id=client_id, body="private input", trace_id="trace_followup")
+            assert ready.wait(2)
+            snapshot = validate_health_response({"ok": True, **supervisor.health()})
+            assert snapshot["client_operations"] == [{"client_id": client_id, "operation_id": target[0], "kind": "followup"}]
+            for wrong_client, wrong_operation in [("client_wrong", target[0]), (client_id, "operation_old")]:
+                with pytest.raises(SupervisorError) as stale:
+                    supervisor.interrupt_client(client_id=wrong_client, operation_id=wrong_operation, trace_id="trace_stale")
+                assert stale.value.failure.reason == "conflict" and not cancelled.is_set()
+            supervisor.interrupt_client(client_id=client_id, operation_id=target[0], trace_id="trace_interrupt")
+            assert future.result(timeout=2)["operation"]["outcome"] == "cancelled"
+    finally:
+        cancelled.set()
+        handle.request = original_request
+    assert supervisor.health()["client_operations"] == [] and handle.stop_count == 0
+    assert not any(e["kind"] == "failure.occurred" for e in supervisor.events.events_after(0)
+                   if e["trace_id"] in {"trace_interrupt", "trace_followup"})
+    handle.operation_result = PluginWorkerOperationResult({"action": "open", "path": "/remote/data"})
+    with pytest.raises(SupervisorError) as malformed:
+        supervisor.editor_action(client_id=client_id, action="open", selection={}, trace_id="trace_bad_export")
+    assert malformed.value.failure.reason == "protocol_violation" and handle.stop_count == 0
+    handle.operation_result = PluginWorkerOperationResult({"action": "copy", "text": "private selection", "regtype": "v"})
+    result = supervisor.editor_action(client_id=client_id, action="copy", selection={}, trace_id="trace_export")
+    assert result["editor_action"]["text"] == "private selection"
+    assert "private selection" not in str(supervisor.events.events_after(0))
+    supervisor.close_client(client_id=client_id, trace_id="trace_close")

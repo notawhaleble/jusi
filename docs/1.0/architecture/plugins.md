@@ -82,8 +82,7 @@ capabilities are never presented as authoritative.
 
 The isolated adapter is an application port used by initial start and full
 notebook restart. Its validated catalog is owned by the resulting notebook
-runtime and is present in authoritative health/start/restart snapshots. Plugin
-runtime execution and kernel-extension loading remain deferred.
+runtime and is present in authoritative health/start/restart snapshots. Kernel adapter loading and exact-provider worker handoff are implemented.
 
 ## Worker Control
 
@@ -91,7 +90,9 @@ The exact worker host and runtime-owned registry are now implemented behind an
 internal application boundary. Core allocates `plugin_worker_id`, selects the
 entry point from the current catalog, validates the exact family and operation
 capability, and starts a fresh child. The provider factory receives an immutable
-`WorkerContext`; its object handles one bounded request at a time.
+`WorkerContext`; its object handles one ordinary request at a time. ADR 0034 adds concurrent
+exact interruption and explicit recoverable rejection without moving ordinary
+handlers between threads.
 
 Control uses private duplicated descriptors and length-prefixed JSON. Ordinary
 plugin stdin is null and stdout is redirected into bounded stderr diagnostics,
@@ -168,3 +169,11 @@ timeout, non-JSON and oversized results, exit/signal distinction, bounded
 stderr, catalog-only selection, capability rejection, idempotent cleanup, and
 restart teardown fencing. End-to-end exact-provider handoff and two-worker
 failure containment remain for the kernel-adapter slice.
+
+## Established Client Controls
+
+See [ADR 0034](../adr/0034-concurrent-plugin-operation-interruption.md) for exact
+interrupt and failure semantics, and [ADR 0035](../adr/0035-editor-actions-transfer-content-over-http.md)
+for content-based copy/open. `src/jusi/plugin_api.py` is the current Python
+helper API. The terminal fixture exercises these contracts; it is not a
+production plugin or a migration of bundled `%%vd`.

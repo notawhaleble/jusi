@@ -32,7 +32,7 @@ function Controller:_request(method, path, command, callback)
   return self.transport:request(method, path, command, {
     operation = command.kind,
     trace_id = command.trace_id,
-    timeout_ms = command.kind == "execute" and 0 or nil,
+    timeout_ms = (command.kind == "execute" or command.kind == "followup") and 0 or nil,
   }, on_complete)
 end
 
@@ -75,6 +75,10 @@ function Controller:_accept_health_snapshot(response)
     self.pending_input = nil
     self.input_submissions = {}
     self.clients = {}
+    self.client_operations = {}
+    for _, operation in ipairs(response.client_operations or {}) do
+      self.client_operations[operation.operation_id] = operation
+    end
     self.surfaces = {}
     for _, client in ipairs(response.clients) do
       self.clients[client.client_id] = client
@@ -375,6 +379,18 @@ function Controller:_on_event(event)
   elseif event.kind == "failure.occurred" and self.on_failure then
     self.on_failure(event.payload)
   end
+  if event.resource.kind == "client" then
+    local id = event.payload.operation_id
+    if event.kind == "operation.started" and vim.tbl_contains({ "followup", "complete", "editor_action" }, event.operation) then
+      self.client_operations[id] = { operation_id = id, client_id = event.resource.id, kind = event.operation }
+    elseif event.kind == "operation.completed" then
+      self.client_operations[id] = nil
+    elseif event.kind == "client.closed" then
+      for key, operation in pairs(self.client_operations) do
+        if operation.client_id == event.resource.id then self.client_operations[key] = nil end
+      end
+    end
+  end
   if self.on_status_event then self.on_status_event(event) end
   if self.on_event then
     self.on_event(event)
@@ -510,6 +526,47 @@ function Controller:complete(context, callback)
   return self:_request("POST", "/v1/kernels/" .. context.kernel_id .. "/completions", command, callback)
 end
 
+function Controller:editor_action(cell_id, action, selection, callback)
+  local client, count = nil, 0
+  for _, candidate in pairs(self.clients) do
+    if candidate.cell_id == cell_id and candidate.notebook_id == self.notebook.notebook_id then
+      client, count = candidate, count + 1
+    end
+  end
+  if count ~= 1 or not vim.tbl_contains(client.capabilities, "editor_actions") then
+    callback(nil, { layer = "frontend_model", operation = "editor_action", reason = "unsupported",
+      message = "cell needs one live client supporting editor actions", scope = "request", retryable = false,
+      trace_id = "", resource = { kind = "cell", id = cell_id } })
+    return nil
+  end
+  local epoch = self.supervisor_id
+  local command = self:_command("editor_action", { client_id = client.client_id, action = action,
+    selection = selection or vim.empty_dict() })
+  return self:_request("POST", "/v1/clients/" .. client.client_id .. "/editor-actions", command, function(response, failure)
+    if not failure and (self.supervisor_id ~= epoch or self.clients[client.client_id] ~= client
+        or not self.notebook:cell_by_id(cell_id)) then
+      failure = { layer = "frontend_model", operation = "editor_action", reason = "conflict",
+        message = "editor action source was retired before delivery", scope = "request", retryable = false,
+        trace_id = command.trace_id, resource = { kind = "client", id = client.client_id } }
+    end
+    if not failure and response and response.operation and response.operation.outcome == "cancelled" then
+      callback(nil, nil)
+      return
+    end
+    if not failure then
+      local valid, err = protocol.validate_editor_action(response and response.editor_action, action)
+      if not valid or not vim.deep_equal(response.client, client)
+          or type(response.operation) ~= "table" or response.operation.kind ~= "editor_action"
+          or response.operation.outcome ~= "succeeded" or response.operation.trace_id ~= command.trace_id then
+        failure = { layer = "protocol", operation = "editor_action", reason = "protocol_violation",
+          message = err or "editor action client mismatch", scope = "request", retryable = false,
+          trace_id = command.trace_id, resource = { kind = "client", id = client.client_id } }
+      end
+    end
+    callback(failure and nil or response, failure)
+  end)
+end
+
 function Controller:followup(cell_id, callback)
   local body, body_error = self.notebook:body(cell_id)
   local client, count = nil, 0
@@ -577,6 +634,11 @@ function Controller:submit_input(cell_id, callback)
       if response and self.pending_input == request then self.pending_input = nil end
       if callback then callback(response, failure) end
     end)
+end
+
+function Controller:interrupt_client(client_id, operation_id, callback)
+  local command = self:_command("interrupt_client", { client_id = client_id, operation_id = operation_id })
+  return self:_request("POST", "/v1/clients/" .. client_id .. "/interrupt", command, callback)
 end
 
 function Controller:interrupt(execution_id, callback)
@@ -696,6 +758,7 @@ function M.new(options)
     executions = {},
     input_submissions = {},
     clients = {},
+    client_operations = {},
     surfaces = {},
     on_event = opts.on_event,
     on_execution_started = opts.on_execution_started,

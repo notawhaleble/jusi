@@ -10,6 +10,8 @@
     {"$ref": "#/$defs/stop_kernel"},
     {"$ref": "#/$defs/complete"},
     {"$ref": "#/$defs/followup"},
+    {"$ref": "#/$defs/interrupt_client"},
+    {"$ref": "#/$defs/editor_action"},
     {"$ref": "#/$defs/close_client"},
     {"$ref": "#/$defs/restart_notebook"}
   ],
@@ -199,6 +201,72 @@
       ],
       "unevaluatedProperties": false
     },
+    "interrupt_client": {
+  "allOf": [
+    {
+      "$ref": "#/$defs/base"
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "client_id",
+        "operation_id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "interrupt_client"
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+},
+    "editor_action": {
+  "allOf": [
+    {
+      "$ref": "#/$defs/base"
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "client_id",
+        "action",
+        "selection"
+      ],
+      "properties": {
+        "kind": {
+          "const": "editor_action"
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "action": {
+          "enum": [
+            "copy",
+            "open"
+          ]
+        },
+        "selection": {
+          "type": "object"
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+},
     "close_client": {
       "allOf": [
         {"$ref": "#/$defs/base"},

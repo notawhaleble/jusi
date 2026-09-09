@@ -9,10 +9,11 @@ from pathlib import Path
 import signal
 import sys
 import tty
+import threading
 
 from IPython.display import display
 
-from jusi.plugin_api import WorkerResult, terminal_surface
+from jusi.plugin_api import WorkerResult, terminal_surface, copy_text, open_text, OperationInterrupted, OperationRejected
 
 
 HANDOFF_MIME = "application/vnd.jusi.handoff.v1+json"
@@ -26,7 +27,7 @@ def catalog_entry() -> dict:
         "families": [{
             "family_id": "terminal_fixture",
             "magic_name": "terminal_fixture",
-            "capabilities": ["execute", "followup", "complete"],
+            "capabilities": ["execute", "followup", "complete", "interrupt", "editor_actions"],
         }],
         "kernel_extensions": ["jusi_terminal_fixture"],
         "worker_entry_point": "jusi_terminal_fixture:create_worker",
@@ -62,6 +63,8 @@ class FixtureWorker:
     def __init__(self, context) -> None:  # type: ignore[no-untyped-def]
         self.context = context
         self.followup_count = 0
+        self.cancel = threading.Event()
+        self.selection = ""
         self.directory = tempfile.TemporaryDirectory(prefix="jusi-terminal-fixture-")
         self.submissions = Path(self.directory.name) / "submissions.jsonl"
         self.submissions.touch(mode=0o600)
@@ -73,7 +76,16 @@ class FixtureWorker:
     def close(self) -> None:
         self.directory.cleanup()
 
+    def interrupt(self) -> None:
+        self.cancel.set()
+
     def handle(self, operation: str, payload: dict) -> WorkerResult:
+        if operation == "editor_action":
+            if payload["selection"].get("scope") == "missing":
+                raise OperationRejected("No selection")
+            if payload["action"] == "copy":
+                return copy_text(self.selection)
+            return open_text(self.selection, name="selection.txt", filetype="text")
         if operation == "complete":
             assert payload["prefix"] == payload["body"][:payload["cursor_pos"]]
             return WorkerResult({"items": [
@@ -83,12 +95,22 @@ class FixtureWorker:
                  "start": payload["cursor_pos"], "end": payload["cursor_pos"]},
             ]})
         if operation == "followup":
+            if payload["body"] == "fixture:wait":
+                self.publish("waiting", "interruptible fixture operation")
+                try:
+                    if not self.cancel.wait(60):
+                        raise OperationRejected("Test fixture wait expired")
+                    raise OperationInterrupted()
+                finally:
+                    self.cancel.clear()
+            self.selection = payload["body"]
             self.followup_count += 1
             self.publish(f"followup {self.followup_count}", payload["body"])
             return WorkerResult({"body": payload["body"], "count": self.followup_count})
         if operation != "execute":
             raise ValueError(f"unsupported fixture operation: {operation}")
-        self.publish("initial submission", payload.get("body", ""))
+        self.selection = payload.get("body", "")
+        self.publish("initial submission", self.selection)
         return WorkerResult(
             {"accepted": True},
             (terminal_surface(
@@ -107,9 +129,13 @@ def create_worker(context) -> FixtureWorker:  # type: ignore[no-untyped-def]
 def run_application() -> int:
     tty.setraw(sys.stdin.fileno())
 
+    typed = ""
+
     def draw_size(prefix: str) -> None:
         size = os.get_terminal_size(sys.stdin.fileno())
         os.write(sys.stdout.fileno(), f"\r\n\x1b[36m{prefix}={size.columns}x{size.lines}\x1b[0m\r\n".encode())
+        if prefix == "resized":
+            os.write(sys.stdout.fileno(), ("> " + typed).encode())
 
     signal.signal(signal.SIGWINCH, lambda *_: draw_size("resized"))
     draw_size("initial")

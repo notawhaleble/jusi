@@ -1,0 +1,5 @@
+{
+  "action": "copy",
+  "text": "a\u0000b",
+  "regtype": "v"
+}

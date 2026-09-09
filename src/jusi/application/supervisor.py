@@ -4,7 +4,7 @@ import threading
 import uuid
 from typing import Any
 
-from jusi.protocol import ProtocolValidationError, validate_completion
+from jusi.protocol import ProtocolValidationError, validate_completion, validate_editor_action
 from jusi.application.events import EventLog
 from jusi.application.ports import (
     KernelAdapterError,
@@ -15,6 +15,7 @@ from jusi.application.ports import (
     PluginCatalogDiscovery,
     PluginCatalogDiscoveryError,
     PluginWorkerError,
+    PluginOperationError,
     RuntimeConfigurationError,
     RuntimeConfigurationLoader,
 )
@@ -72,9 +73,11 @@ class Supervisor:
         self._known_runtime_ids: set[str] = set()
         self._clients: dict[str, ClientResource] = {}
         self._known_client_ids: set[str] = set()
+        self._closing_clients: set[str] = set()
         self._surfaces: dict[str, SurfaceResource] = {}
         self._active_kernel_execution: tuple[ExecutionResource, KernelHandle] | None = None
         self._interrupt_requested: set[str] = set()
+        self._client_operations: dict[str, dict[str, str]] = {}
         self._pending_input: dict[str, Any] | None = None
         self._input_teardown: set[str] = set()
         self.events.append(
@@ -97,6 +100,7 @@ class Supervisor:
                 "kernel": self._current_kernel.to_dict() if self._current_kernel is not None else None,
                 "runtime": self._current_runtime.to_dict() if self._current_runtime is not None else None,
                 "executions": [active_execution[0].to_dict()] if active_execution is not None else [],
+                "client_operations": list(self._client_operations.values()),
                 "pending_input": dict(self._pending_input) if self._pending_input is not None else None,
                 "clients": [client.to_dict() for client in self._clients.values()],
                 "surfaces": [surface.to_dict() for surface in self._surfaces.values()],
@@ -165,46 +169,47 @@ class Supervisor:
         self, surface: SurfaceResource, error: TerminalSurfaceError,
     ) -> None:
         """Fence one client after an independently observed target-surface death."""
-        with self._operation_lock:
-            with self._state_lock:
-                current = self._surfaces.get(surface.surface_id)
-                client = self._clients.get(surface.client_id)
+        with self._state_lock:
+            current = self._surfaces.get(surface.surface_id)
+            client = self._clients.get(surface.client_id)
             if current is None or client is None:
                 return
-            trace_id = new_id("trace")
-            failure = self._failure(
-                trace_id=trace_id,
-                layer="client",
-                operation="run_terminal_surface",
-                reason="channel_closed",
-                message=str(error),
-                retryable=True,
-                scope="client",
-                resource=ResourceRef("surface", surface.surface_id),
-                process=error.diagnostics,
-                details={**error.details, "client_id": client.client_id},
-            )
-            self._emit_failure(failure)
-            if self._plugin_workers is not None:
-                try:
-                    self._plugin_workers.stop(
-                        client.plugin_worker_id, trace_id=trace_id, timeout=5.0,
-                    )
-                except (PluginWorkerSelectionError, PluginWorkerError) as exc:
-                    worker_failure = self._failure(
-                        trace_id=trace_id,
-                        layer="plugin_worker",
-                        operation="run_terminal_surface",
-                        reason=exc.reason,
-                        message=str(exc),
-                        retryable=exc.retryable if isinstance(exc, PluginWorkerError) else False,
-                        scope="plugin_worker",
-                        resource=ResourceRef("plugin_worker", client.plugin_worker_id),
-                        process=exc.diagnostics if isinstance(exc, PluginWorkerError) else None,
-                        details=exc.details if isinstance(exc, PluginWorkerError) else {},
-                        caused_by_failure_id=failure.failure_id,
-                    )
-                    self._emit_failure(worker_failure)
+            self._closing_clients.add(client.client_id)
+        trace_id = new_id("trace")
+        failure = self._failure(
+            trace_id=trace_id,
+            layer="client",
+            operation="run_terminal_surface",
+            reason="channel_closed",
+            message=str(error),
+            retryable=True,
+            scope="client",
+            resource=ResourceRef("surface", surface.surface_id),
+            process=error.diagnostics,
+            details={**error.details, "client_id": client.client_id},
+        )
+        self._emit_failure(failure)
+        if self._plugin_workers is not None:
+            try:
+                self._plugin_workers.stop(
+                    client.plugin_worker_id, trace_id=trace_id, timeout=5.0,
+                )
+            except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+                worker_failure = self._failure(
+                    trace_id=trace_id,
+                    layer="plugin_worker",
+                    operation="run_terminal_surface",
+                    reason=exc.reason,
+                    message=str(exc),
+                    retryable=exc.retryable if isinstance(exc, PluginWorkerError) else False,
+                    scope="plugin_worker",
+                    resource=ResourceRef("plugin_worker", client.plugin_worker_id),
+                    process=exc.diagnostics if isinstance(exc, PluginWorkerError) else None,
+                    details=exc.details if isinstance(exc, PluginWorkerError) else {},
+                    caused_by_failure_id=failure.failure_id,
+                )
+                self._emit_failure(worker_failure)
+        with self._operation_lock:
             self._retire_client(
                 client.client_id,
                 trace_id=trace_id,
@@ -1081,33 +1086,39 @@ class Supervisor:
             self._operation_lock.release()
 
     def followup(
-        self, *, client_id: str, body: str, trace_id: str, timeout: float = 10.0,
+        self, *, client_id: str, body: str, trace_id: str, timeout: float | None = None,
     ) -> dict[str, Any]:
         return self._client_operation(client_id=client_id, payload={"body": body},
                                       kind="followup", trace_id=trace_id, timeout=timeout)
 
     def _client_operation(
-        self, *, client_id: str, payload: dict[str, Any], kind: str, trace_id: str, timeout: float,
+        self, *, client_id: str, payload: dict[str, Any], kind: str, trace_id: str, timeout: float | None,
     ) -> dict[str, Any]:
-        """Route a bounded operation to an existing client without a kernel execution."""
+        """Route an operation to an existing client without a kernel execution."""
         with self._operation_lock:
             client_ref = ResourceRef("client", client_id)
-            operation = self._begin_operation(kind, trace_id, resource=client_ref)
             with self._state_lock:
+                operation = self._begin_operation(kind, trace_id, resource=client_ref)
                 client = self._clients.get(client_id)
                 known = client_id in self._known_client_ids
+                capability = "editor_actions" if kind == "editor_action" else kind
+                if client and client_id not in self._closing_clients and capability in client.capabilities:
+                    self._client_operations[operation.operation_id] = {
+                        "operation_id": operation.operation_id, "client_id": client_id, "kind": kind,
+                    }
             try:
-                if client is None:
+                if client is None or client_id in self._closing_clients:
                     raise PluginWorkerSelectionError(
                         "Client is closed" if known else "Unknown client",
                         reason="conflict" if known else "not_found",
                     )
-                if kind not in client.capabilities:
+                capability = "editor_actions" if kind == "editor_action" else kind
+                if capability not in client.capabilities:
                     raise PluginWorkerSelectionError(f"Client does not support {kind}", reason="unsupported")
                 assert self._plugin_workers is not None
                 result = self._plugin_workers.request(
                     client.plugin_worker_id, kind, payload,
-                    trace_id=trace_id, timeout=timeout,
+                    trace_id=trace_id, timeout=timeout, request_id=operation.operation_id,
                 )
                 if result.core_requests:
                     # The original handoff owns presentation creation. Later
@@ -1116,15 +1127,28 @@ class Supervisor:
                         "Client operations cannot request new terminal surfaces",
                         reason="protocol_violation", retryable=False,
                     )
+                if kind == "editor_action":
+                    try:
+                        validate_editor_action(result.result, payload["action"])
+                    except (ProtocolValidationError, UnicodeError) as exc:
+                        raise PluginOperationError(str(exc), reason="protocol_violation", retryable=False) from exc
                 if kind == "complete":
                     try:
                         validate_completion(result.result, payload["cursor_pos"])
                     except ProtocolValidationError as exc:
                         raise PluginWorkerError(str(exc), reason="protocol_violation", retryable=False) from exc
             except (PluginWorkerSelectionError, PluginWorkerError) as exc:
-                fatal = isinstance(exc, PluginWorkerError)
+                with self._state_lock:
+                    self._client_operations.pop(operation.operation_id, None)
+                fatal = isinstance(exc, PluginWorkerError) and not isinstance(exc, PluginOperationError)
+                if (isinstance(exc, PluginOperationError) and exc.reason == "cancelled") or (
+                    client_id in self._closing_clients and isinstance(exc, PluginWorkerError)
+                    and exc.reason in {"process_signalled", "process_exited", "channel_closed"}
+                ):
+                    self._complete_operation(operation, "cancelled", resource=client_ref)
+                    return {"operation": operation.to_dict(), "client": client.to_dict(), "result": {"items": []} if kind == "complete" else {}}
                 failure = self._failure(
-                    trace_id=trace_id, layer="plugin_worker" if fatal else "supervisor",
+                    trace_id=trace_id, layer="plugin_worker" if isinstance(exc, PluginWorkerError) else "supervisor",
                     operation=kind, reason=exc.reason, message=str(exc),
                     retryable=exc.retryable if fatal else False,
                     scope="client" if fatal else "request", resource=client_ref,
@@ -1138,7 +1162,7 @@ class Supervisor:
                     try:
                         # Also handles an already fenced/terminated worker.
                         self._close_client(
-                            client_id=client_id, trace_id=trace_id, timeout=timeout,
+                            client_id=client_id, trace_id=trace_id, timeout=timeout or 5.0,
                             reason="fatal_failure", failure_id=failure.failure_id,
                         )
                     except SupervisorError:
@@ -1149,10 +1173,71 @@ class Supervisor:
                 raise SupervisorError(
                     503 if fatal else (404 if exc.reason == "not_found" else 409), failure,
                 ) from exc
+            finally:
+                with self._state_lock:
+                    self._client_operations.pop(operation.operation_id, None)
             self._complete_operation(operation, "succeeded", resource=client_ref)
             return {"operation": operation.to_dict(), "client": client.to_dict(), "result": result.result}
 
+    def editor_action(self, *, client_id: str, action: str, selection: dict[str, Any], trace_id: str):
+        # Do not queue a selection request behind unrelated work: the selection
+        # in the application may have changed by the time that work finishes.
+        if not self._operation_lock.acquire(blocking=False):
+            raise self._request_failure(status_code=409, trace_id=trace_id, layer="supervisor",
+                operation="editor_action", reason="conflict", message="Runtime is busy", retryable=True,
+                scope="request", resource=ResourceRef("client", client_id))
+        try:
+            response = self._client_operation(client_id=client_id, kind="editor_action",
+                payload={"action": action, "selection": selection}, trace_id=trace_id, timeout=10.0)
+            return {"operation": response["operation"], "client": response["client"],
+                    "editor_action": response["result"] if response["operation"]["outcome"] == "succeeded" else None}
+        finally:
+            self._operation_lock.release()
+
+    def interrupt_client(self, *, client_id: str, operation_id: str, trace_id: str, timeout: float = 3.0):
+        resource = ResourceRef("client", client_id)
+        operation = self._begin_operation("interrupt_client", trace_id, resource=resource)
+        with self._state_lock:
+            active = self._client_operations.get(operation_id)
+            client = self._clients.get(client_id)
+        try:
+            if client is None or active is None or active["client_id"] != client_id:
+                raise PluginWorkerSelectionError("Plugin operation is no longer active", reason="conflict")
+            assert self._plugin_workers is not None
+            result = self._plugin_workers.interrupt(client.plugin_worker_id, operation_id,
+                                                     trace_id=trace_id, timeout=timeout)
+        except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+            failure = self._failure(
+                trace_id=trace_id, layer="plugin_worker" if isinstance(exc, PluginWorkerError) else "supervisor",
+                operation="interrupt_client", reason=exc.reason, message=str(exc), retryable=False,
+                scope="request", resource=resource,
+                process=exc.diagnostics if isinstance(exc, PluginWorkerError) else None,
+            )
+            self._emit_failure(failure)
+            self._complete_operation(operation, "failed", resource=resource, failure=failure)
+            if isinstance(exc, PluginWorkerError) and not isinstance(exc, PluginOperationError) and client is not None:
+                # Work may have completed concurrently with this channel failure.
+                # Cleanup must not depend on a still-waiting ordinary request.
+                self._close_client(client_id=client_id, trace_id=trace_id, timeout=5.0,
+                                   reason="fatal_failure", failure_id=failure.failure_id)
+            raise SupervisorError(409, failure) from exc
+        self._complete_operation(operation, "succeeded", resource=resource)
+        return {"operation": operation.to_dict(), "interrupt": result}
+
     def close_client(self, *, client_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
+        with self._state_lock:
+            client = self._clients.get(client_id)
+            if client is not None:
+                self._closing_clients.add(client_id)
+            busy = any(item["client_id"] == client_id for item in self._client_operations.values())
+        if client is not None and busy and self._plugin_workers is not None:
+            try:
+                self._plugin_workers.stop(client.plugin_worker_id, trace_id=trace_id, timeout=timeout)
+            except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+                raise self._request_failure(status_code=503, trace_id=trace_id, layer="plugin_worker",
+                    operation="close_client", reason=exc.reason, message=str(exc), retryable=True,
+                    scope="client", resource=ResourceRef("client", client_id),
+                    process=exc.diagnostics if isinstance(exc, PluginWorkerError) else None) from exc
         return self._close_client(client_id=client_id, trace_id=trace_id, timeout=timeout)
 
     def _close_client(
@@ -1289,8 +1374,23 @@ class Supervisor:
                 kernel_id=kernel_id, execution_id=active[0].execution_id, trace_id=trace_id,
             )
 
+    def _stop_client_work_for_teardown(self, kernel_id: str, trace_id: str, *, runtime_id=None, notebook_id=None):
+        with self._state_lock:
+            runtime = self._current_runtime
+            if (runtime is None or runtime.kernel_id != kernel_id
+                    or runtime_id is not None and runtime.runtime_id != runtime_id
+                    or notebook_id is not None and runtime.notebook_id != notebook_id):
+                return
+            clients = [client for client in self._clients.values() if client.kernel_id == kernel_id]
+            busy = {item["client_id"] for item in self._client_operations.values()}
+            self._closing_clients.update(client.client_id for client in clients)
+        for client in clients:
+            if client.client_id in busy:
+                self.close_client(client_id=client.client_id, trace_id=trace_id)
+
     def stop_kernel(self, *, kernel_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
         self._cancel_execution_for_teardown(kernel_id, trace_id)
+        self._stop_client_work_for_teardown(kernel_id, trace_id)
         with self._operation_lock:
             operation = self._begin_operation("stop_kernel", trace_id, resource=ResourceRef("kernel", kernel_id))
             if self._current_kernel is None or self._current_kernel.kernel_id != kernel_id or self._current_kernel.state == "off":
@@ -1406,6 +1506,7 @@ class Supervisor:
         timeout: float = 10.0,
     ) -> dict[str, Any]:
         self._cancel_execution_for_teardown(kernel_id, trace_id, runtime_id=runtime_id, notebook_id=notebook_id)
+        self._stop_client_work_for_teardown(kernel_id, trace_id, runtime_id=runtime_id, notebook_id=notebook_id)
         with self._operation_lock:
             runtime = self._current_runtime
             kernel = self._current_kernel

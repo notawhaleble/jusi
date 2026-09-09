@@ -3,6 +3,71 @@
   "$id": "https://jusi.dev/protocol/v1/responses.schema.json",
   "title": "Jusi Protocol v1 HTTP Responses",
   "$defs": {
+    "editor_action": {
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "text",
+        "regtype"
+      ],
+      "properties": {
+        "action": {
+          "const": "copy"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 524288,
+          "pattern": "^[^\\u0000]*$"
+        },
+        "regtype": {
+          "enum": [
+            "v",
+            "V"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "required": [
+        "action",
+        "text",
+        "name",
+        "filetype"
+      ],
+      "properties": {
+        "action": {
+          "const": "open"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 524288,
+          "pattern": "^[^\\u0000]*$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
+          "not": {
+            "enum": [
+              ".",
+              ".."
+            ]
+          }
+        },
+        "filetype": {
+          "type": "string",
+          "pattern": "^([a-z][a-z0-9_]{0,63}|)$"
+        }
+      },
+      "additionalProperties": false
+    }
+  ]
+},
     "completion": {
       "type": "object",
       "required": [
@@ -197,6 +262,13 @@
           "required": ["runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog"],
           "additionalProperties": false
         },
+        "client_operations": {"type": "array", "maxItems": 1, "items": {
+          "type": "object", "required": ["operation_id", "client_id", "kind"],
+          "properties": {"operation_id": {"type": "string", "minLength": 1},
+                         "client_id": {"type": "string", "minLength": 1},
+                         "kind": {"enum": ["followup", "complete", "editor_action"]}},
+          "additionalProperties": false
+        }},
         "clients": {"type": "array", "items": {"$ref": "#/$defs/client"}},
         "pending_input": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/input_request"}]},
         "input_reply": {
@@ -220,6 +292,7 @@
         "executions": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/execution"}},
         "surfaces": {"type": "array", "items": {"$ref": "#/$defs/surface"}},
         "execution": {"type": "object"},
+        "editor_action": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/editor_action"}]},
         "completion": {"$ref": "#/$defs/completion"},
         "result": {"type": "object"},
         "cleanup": {"type": "object"},

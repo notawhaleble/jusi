@@ -11,6 +11,7 @@ from typing import Any, BinaryIO, Sequence
 
 from jusi.application.ports import (
     PluginWorkerError,
+    PluginOperationError,
     PluginWorkerHandle,
     PluginWorkerOperationResult,
     PluginWorkerSpec,
@@ -58,18 +59,41 @@ class _BoundedStderrReader(threading.Thread):
 
 
 class _MessageReader(threading.Thread):
+    """Demultiplex replies without placing interrupt behind a blocked request."""
+
     def __init__(self, stream: BinaryIO, messages: queue.Queue[object], limit: int) -> None:
         super().__init__(daemon=True)
-        self._stream = stream
-        self._messages = messages
-        self._limit = limit
+        self._stream, self._limit = stream, limit
+        self._lock = threading.Lock()
+        self._pending: dict[str | None, queue.Queue[object]] = {None: messages}
+        self._failure: BaseException | None = None
+
+    def register(self, request_id: str) -> queue.Queue[object]:
+        with self._lock:
+            channel: queue.Queue[object] = queue.Queue()
+            self._pending[request_id] = channel
+            if self._failure is not None:
+                channel.put(self._failure)
+            return channel
 
     def run(self) -> None:
         while True:
             try:
-                self._messages.put(read_frame(self._stream, limit=self._limit))
+                try:
+                    message = validate_plugin_worker_message(read_frame(self._stream, limit=self._limit))
+                except ProtocolValidationError as exc:
+                    raise WorkerFrameError(str(exc)) from exc
+                with self._lock:
+                    channel = self._pending.pop(message.get("request_id"), None)
+                    if channel is None:
+                        raise WorkerFrameError("Unexpected worker response identity")
+                    channel.put(message)
             except (WorkerChannelClosed, WorkerFrameError, OSError) as exc:
-                self._messages.put(exc)
+                with self._lock:
+                    self._failure = exc
+                    for channel in self._pending.values():
+                        channel.put(exc)
+                    self._pending.clear()
                 return
 
 
@@ -90,6 +114,8 @@ class FreshProcessPluginWorker:
         self._messages = messages
         self._frame_limit = frame_limit
         self._lock = threading.Lock()
+        self._write_lock = threading.Lock()
+        self._termination_lock = threading.Lock()
         self._fenced = False
 
     @property
@@ -102,11 +128,12 @@ class FreshProcessPluginWorker:
         payload: dict[str, Any],
         *,
         trace_id: str,
-        timeout: float,
+        timeout: float | None,
+        request_id: str | None = None,
     ) -> PluginWorkerOperationResult:
-        if timeout <= 0:
+        if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be positive")
-        request_id = f"wreq_{uuid.uuid4().hex}"
+        request_id = request_id or f"wreq_{uuid.uuid4().hex}"
         request = validate_plugin_worker_message({
             "protocol_version": 1,
             "kind": "worker.request",
@@ -119,9 +146,14 @@ class FreshProcessPluginWorker:
         with self._lock:
             if self._fenced or self._process.poll() is not None:
                 raise self._error("Plugin worker is not running", reason="channel_closed", retryable=False)
+            channel = self._message_reader.register(request_id)
             self._send(request)
-            response = self._receive(timeout, operation=operation)
+            response = self._receive(timeout, operation=operation, messages=channel)
             self._require_correlation(response, request)
+            if response["kind"] == "worker.rejected":
+                failure = response["failure"]
+                raise PluginOperationError(failure["message"], reason=failure["reason"],
+                                           retryable=failure["retryable"])
             if response["kind"] == "worker.failure":
                 failure = response["failure"]
                 self._fenced = True
@@ -150,10 +182,41 @@ class FreshProcessPluginWorker:
                 ),
             )
 
+    def interrupt(self, target_request_id: str, *, trace_id: str, timeout: float) -> dict[str, Any]:
+        request = {
+            "protocol_version": 1, "kind": "worker.request", "operation": "interrupt",
+            "plugin_worker_id": self._spec.plugin_worker_id,
+            "request_id": f"wreq_{uuid.uuid4().hex}", "trace_id": trace_id,
+            "payload": {"target_request_id": target_request_id},
+        }
+        channel = self._message_reader.register(request["request_id"])
+        self._send(request)
+        try:
+            response = self._receive(timeout, operation="interrupt", messages=channel, terminate_on_failure=False)
+        except PluginWorkerError as exc:
+            if exc.reason == "timeout":
+                raise PluginOperationError(str(exc), reason="timeout", retryable=False) from exc
+            self._fenced = True
+            self._terminate()
+            raise
+        self._require_correlation(response, request)
+        if response["kind"] == "worker.rejected":
+            failure = response["failure"]
+            raise PluginOperationError(failure["message"], reason=failure["reason"], retryable=failure["retryable"])
+        if response["kind"] != "worker.result":
+            self._fenced = True
+            self._terminate()
+            raise self._error("Invalid interrupt response", reason="protocol_violation", retryable=False)
+        return response["result"]
+
     def stop(self, *, trace_id: str, timeout: float) -> str:
         if timeout <= 0:
             raise ValueError("timeout must be positive")
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            self._fenced = True
+            self._terminate()
+            return "stopped"
+        try:
             if self._process.poll() is not None:
                 self._fenced = True
                 self._finish_readers()
@@ -167,8 +230,9 @@ class FreshProcessPluginWorker:
                 "trace_id": trace_id,
             }
             try:
+                channel = self._message_reader.register(request["request_id"])
                 self._send(request)
-                response = self._receive(timeout, operation="cleanup", terminate_on_failure=False)
+                response = self._receive(timeout, operation="cleanup", terminate_on_failure=False, messages=channel)
                 self._require_correlation(response, request)
                 if response["kind"] != "worker.stopped":
                     raise self._error("Plugin worker did not acknowledge shutdown", reason="protocol_violation", retryable=False)
@@ -184,19 +248,22 @@ class FreshProcessPluginWorker:
             finally:
                 self._finish_readers()
             return "stopped"
+        finally:
+            self._lock.release()
 
     def _send(self, message: dict[str, Any]) -> None:
         assert self._process.stdin is not None
         try:
-            write_frame(self._process.stdin, message, limit=self._frame_limit)
+            with self._write_lock:
+                write_frame(self._process.stdin, message, limit=self._frame_limit)
         except (OSError, WorkerFrameError) as exc:
             self._fenced = True
             self._terminate()
             raise self._error("Could not send plugin worker control message", reason="channel_closed", retryable=False) from exc
 
-    def _receive(self, timeout: float, *, operation: str, terminate_on_failure: bool = True) -> dict[str, Any]:
+    def _receive(self, timeout: float | None, *, operation: str, terminate_on_failure: bool = True, messages: queue.Queue[object] | None = None) -> dict[str, Any]:
         try:
-            value = self._messages.get(timeout=timeout)
+            value = (messages if messages is not None else self._messages).get(timeout=timeout)
         except queue.Empty as exc:
             if terminate_on_failure:
                 self._fenced = True
@@ -284,27 +351,28 @@ class FreshProcessPluginWorker:
         )
 
     def _terminate(self) -> None:
-        if self._process.poll() is None:
-            try:
-                if os.name != "nt":
-                    os.killpg(self._process.pid, signal.SIGTERM)
-                else:
-                    self._process.terminate()
-                self._process.wait(timeout=1)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-        if self._process.poll() is None:
-            try:
-                if os.name != "nt":
-                    os.killpg(self._process.pid, signal.SIGKILL)
-                else:
-                    self._process.kill()
-                self._process.wait(timeout=1)
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-        if os.name != "nt":
-            self._kill_remaining_group()
-        self._finish_readers()
+        with self._termination_lock:
+            if self._process.poll() is None:
+                try:
+                    if os.name != "nt":
+                        os.killpg(self._process.pid, signal.SIGTERM)
+                    else:
+                        self._process.terminate()
+                    self._process.wait(timeout=1)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            if self._process.poll() is None:
+                try:
+                    if os.name != "nt":
+                        os.killpg(self._process.pid, signal.SIGKILL)
+                    else:
+                        self._process.kill()
+                    self._process.wait(timeout=1)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            if os.name != "nt":
+                self._kill_remaining_group()
+            self._finish_readers()
 
     def _kill_remaining_group(self) -> None:
         if os.name == "nt":

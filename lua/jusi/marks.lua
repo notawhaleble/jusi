@@ -151,6 +151,14 @@ function Marks:resync(snapshot)
   end
   for _, execution in pairs(self.controller.executions) do self:execution(execution) end
   for _, client in pairs(self.controller.clients) do self:client(client) end
+  for _, operation in pairs(self.controller.client_operations or {}) do
+    local client = self.controller.clients[operation.client_id]
+    local record = client and self.records[client.cell_id]
+    if record and operation.kind == "followup" then
+      record.operation_id, record.state = operation.operation_id, "busy"
+      self:render(client.cell_id)
+    end
+  end
 end
 function Marks:close()
   if self.closed then return end

@@ -503,6 +503,22 @@ function M.complete()
   end)
 end
 
+function M.editor_action(action, opts)
+  opts = opts or {}
+  local context_buf = opts.buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
+  if not session then return nil end
+  local cell = cell_from_context(session, context_buf, opts.row)
+  if not cell then notify("cursor is not inside a cell", vim.log.levels.ERROR); return nil end
+  local win = vim.api.nvim_get_current_win()
+  return session.controller:editor_action(cell.id, action, opts.selection, function(response, failure)
+    if failure then notify(failure_text(failure), vim.log.levels.ERROR); return end
+    if not response then return end
+    local delivered, err = require("jusi.editor_actions").apply(response.editor_action, { register = opts.register, win = win })
+    if not delivered then notify(err, vim.log.levels.ERROR) end
+  end)
+end
+
 function M.followup(buf, row)
   local context_buf = buf or vim.api.nvim_get_current_buf()
   local session = require_session(context_buf)
@@ -541,6 +557,14 @@ function M.interrupt(buf, row)
   if not cell then
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
+  end
+  for id, operation in pairs(session.controller.client_operations) do
+    local client = session.controller.clients[operation.client_id]
+    if client and client.cell_id == cell.id then
+      return session.controller:interrupt_client(client.client_id, id, function(_, failure)
+        if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
+      end)
+    end
   end
   local execution_id
   for id, execution in pairs(session.controller.executions) do
@@ -706,6 +730,11 @@ local function create_commands()
   end, {})
   vim.api.nvim_create_user_command("JusiComplete", function() M.complete() end, {})
   vim.keymap.set("i", "<Plug>(JusiComplete)", function() M.complete() end, { desc = "Complete Jusi cell" })
+  vim.api.nvim_create_user_command("JusiCopy", function(opts)
+    M.editor_action("copy", { register = opts.args ~= "" and opts.args or nil })
+  end, { nargs = "?", desc = "Copy plugin selection to a register" })
+  vim.api.nvim_create_user_command("JusiOpen", function() M.editor_action("open") end,
+    { desc = "Open plugin selection in an independent local buffer" })
   vim.api.nvim_create_user_command("JusiFollowup", function()
     M.followup()
   end, {})

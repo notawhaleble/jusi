@@ -42,29 +42,91 @@
       ]
     },
     "request": {
-      "type": "object",
-      "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "payload"],
-      "properties": {
-        "protocol_version": {"const": 1},
-        "kind": {"const": "worker.request"},
-        "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
-        "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
-        "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
-        "operation": {"enum": ["execute", "followup", "complete", "editor_action"]},
-        "payload": {"type": "object"}
-      },
-      "additionalProperties": false
+  "type": "object",
+  "required": [
+    "protocol_version",
+    "kind",
+    "plugin_worker_id",
+    "request_id",
+    "trace_id",
+    "operation",
+    "payload"
+  ],
+  "properties": {
+    "protocol_version": {
+      "const": 1
     },
+    "kind": {
+      "const": "worker.request"
+    },
+    "plugin_worker_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 128
+    },
+    "operation": {
+      "enum": [
+        "execute",
+        "followup",
+        "complete",
+        "editor_action",
+        "interrupt"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "interrupt"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": [
+              "target_request_id"
+            ],
+            "properties": {
+              "target_request_id": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  ]
+},
     "response": {
       "type": "object",
       "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation"],
       "properties": {
         "protocol_version": {"const": 1},
-        "kind": {"enum": ["worker.result", "worker.failure"]},
+        "kind": {"enum": ["worker.result", "worker.failure", "worker.rejected"]},
         "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
         "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
         "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
-        "operation": {"enum": ["execute", "followup", "complete", "editor_action"]}
+        "operation": {"enum": ["execute", "followup", "complete", "editor_action", "interrupt"]}
       }
     },
     "result": {
@@ -79,7 +141,7 @@
             "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
             "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
             "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
-            "operation": {"enum": ["execute", "followup", "complete", "editor_action"]},
+            "operation": {"enum": ["execute", "followup", "complete", "editor_action", "interrupt"]},
             "result": {"type": "object"},
             "core_requests": {
               "type": "array",
@@ -135,16 +197,16 @@
           "required": ["protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "failure"],
           "properties": {
             "protocol_version": {"const": 1},
-            "kind": {"const": "worker.failure"},
+            "kind": {"enum": ["worker.failure", "worker.rejected"]},
             "plugin_worker_id": {"type": "string", "minLength": 3, "maxLength": 128},
             "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
             "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
-            "operation": {"enum": ["execute", "followup", "complete", "editor_action"]},
+            "operation": {"enum": ["execute", "followup", "complete", "editor_action", "interrupt"]},
             "failure": {
               "type": "object",
               "required": ["reason", "message", "retryable"],
               "properties": {
-                "reason": {"enum": ["invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error"]},
+                "reason": {"enum": ["conflict", "invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error"]},
                 "message": {"type": "string", "minLength": 1, "maxLength": 1000},
                 "retryable": {"type": "boolean"},
                 "details": {"type": "object"}

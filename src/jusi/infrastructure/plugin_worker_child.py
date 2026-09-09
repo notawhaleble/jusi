@@ -5,10 +5,13 @@ import importlib
 import os
 import sys
 import traceback
+import threading
+import queue
+from jusi.infrastructure.plugin_worker_channel import WorkerFrameError
 from typing import Any
 
 from jusi.infrastructure.plugin_worker_channel import read_frame, write_frame
-from jusi.plugin_api import WorkerContext, WorkerResult
+from jusi.plugin_api import WorkerContext, WorkerResult, OperationRejected
 from jusi.protocol import ProtocolValidationError, validate_plugin_worker_message
 
 
@@ -84,15 +87,112 @@ def run(args: argparse.Namespace) -> int:
         "pid": os.getpid(),
     }, limit=args.frame_limit)
 
-    while True:
+    write_lock = threading.Lock()
+    active_lock = threading.Lock()
+    active: dict[str, Any] = {}
+
+    def send(response: dict[str, Any]) -> None:
+        validate_plugin_worker_message(response)
+        with write_lock:
+            write_frame(control_output, response, limit=args.frame_limit)
+
+    def response_for(message: dict[str, Any], result: dict[str, Any], core_requests=None):
+        return {
+            **{key: message[key] for key in ("protocol_version", "plugin_worker_id", "request_id", "trace_id", "operation")},
+            "kind": "worker.result", "result": result, "core_requests": core_requests or [],
+        }
+
+    def reject(message: dict[str, Any], exc: OperationRejected) -> None:
+        response = _failure(message, exc)
+        response["kind"] = "worker.rejected"
+        response["failure"]["reason"] = exc.reason
+        send(response)
+
+    def handle(message: dict[str, Any]) -> None:
         try:
-            message = validate_plugin_worker_message(read_frame(control_input, limit=args.frame_limit))
-        except (EOFError, ValueError, ProtocolValidationError):
+            handled = worker.handle(message["operation"], message["payload"])
+            if isinstance(handled, WorkerResult):
+                result = handled.result
+                core_requests = [request.to_dict() for request in handled.core_requests]
+            elif isinstance(handled, dict):
+                result, core_requests = handled, []
+            else:
+                raise TypeError("worker handle result must be an object or WorkerResult")
+            with active_lock:
+                send(response_for(message, result, core_requests))
+                active.clear()
+        except WorkerFrameError as exc:
+            if message["operation"] != "editor_action":
+                traceback.print_exc()
+                send(_failure(message, exc))
+                return
+            with active_lock:
+                reject(message, OperationRejected("Export exceeds the worker control frame limit", reason="invalid_request"))
+                active.clear()
+        except OperationRejected as exc:
+            with active_lock:
+                reject(message, exc)
+                active.clear()
+        except BaseException as exc:
             traceback.print_exc()
-            return 21
-        if message["plugin_worker_id"] != context.plugin_worker_id:
-            print("plugin worker identity mismatch", file=sys.stderr)
-            return 21
+            send(_failure(message, exc))
+            # Keep the process available for supervisor-owned fatal cleanup.
+            sys.stderr.flush()
+
+    requests: queue.Queue[dict[str, Any] | int] = queue.Queue()
+
+    def receive() -> None:
+        while True:
+            try:
+                message = validate_plugin_worker_message(read_frame(control_input, limit=args.frame_limit))
+            except (EOFError, ValueError, ProtocolValidationError):
+                traceback.print_exc()
+                requests.put(21)
+                return
+            if message["plugin_worker_id"] != context.plugin_worker_id:
+                requests.put(21)
+                return
+            if message["kind"] == "worker.shutdown":
+                requests.put(message)
+                return
+            if message["kind"] != "worker.request":
+                requests.put(21)
+                return
+            if message["operation"] == "interrupt":
+                with active_lock:
+                    if active.get("request_id") != message["payload"].get("target_request_id") or not active:
+                        reject(message, OperationRejected("Work identity is no longer active", reason="conflict"))
+                        continue
+                    hook = getattr(worker, "interrupt", None)
+                    if not callable(hook):
+                        reject(message, OperationRejected("Worker has no interrupt hook", reason="unsupported"))
+                        continue
+                    if active.get("interrupted"):
+                        send(response_for(message, {"result": "already_requested"}))
+                        continue
+                    try:
+                        # Runs concurrently with handle(); must request cancellation
+                        # promptly, never wait for handle() to finish.
+                        hook()
+                        active["interrupted"] = True
+                        send(response_for(message, {"result": "requested"}))
+                    except Exception as exc:
+                        reject(message, OperationRejected(str(exc) or type(exc).__name__))
+                continue
+            with active_lock:
+                if active:
+                    reject(message, OperationRejected("Worker is busy", reason="conflict"))
+                    continue
+                active["request_id"] = message["request_id"]
+            requests.put(message)
+
+    threading.Thread(target=receive, daemon=True).start()
+    # Factory, all ordinary handlers, and close share one thread. Database
+    # connections and other thread-affine sessions retain their owning thread.
+    while True:
+        message = requests.get()
+        if isinstance(message, int):
+            return message
         if message["kind"] == "worker.shutdown":
             try:
                 close = getattr(worker, "close", None)
@@ -101,43 +201,11 @@ def run(args: argparse.Namespace) -> int:
             except BaseException:
                 traceback.print_exc()
                 return 22
-            write_frame(control_output, {
-                "protocol_version": 1,
-                "kind": "worker.stopped",
-                "plugin_worker_id": context.plugin_worker_id,
-                "request_id": message["request_id"],
-                "trace_id": message["trace_id"],
-            }, limit=args.frame_limit)
+            send({"protocol_version": 1, "kind": "worker.stopped",
+                  "plugin_worker_id": context.plugin_worker_id,
+                  "request_id": message["request_id"], "trace_id": message["trace_id"]})
             return 0
-        if message["kind"] != "worker.request":
-            print("unexpected plugin worker control kind", file=sys.stderr)
-            return 21
-        try:
-            handled = worker.handle(message["operation"], message["payload"])
-            if isinstance(handled, WorkerResult):
-                result = handled.result
-                core_requests = [request.to_dict() for request in handled.core_requests]
-            elif isinstance(handled, dict):
-                result = handled
-                core_requests = []
-            else:
-                raise TypeError("worker handle result must be an object or WorkerResult")
-            response = {
-                "protocol_version": 1,
-                "kind": "worker.result",
-                "plugin_worker_id": context.plugin_worker_id,
-                "request_id": message["request_id"],
-                "trace_id": message["trace_id"],
-                "operation": message["operation"],
-                "result": result,
-                "core_requests": core_requests,
-            }
-            validate_plugin_worker_message(response)
-            write_frame(control_output, response, limit=args.frame_limit)
-        except BaseException as exc:
-            traceback.print_exc()
-            write_frame(control_output, _failure(message, exc), limit=args.frame_limit)
-            return 23
+        handle(message)
 
 
 def build_parser() -> argparse.ArgumentParser:

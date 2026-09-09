@@ -7,6 +7,7 @@ from typing import Any
 
 from jusi.application.ports import (
     PluginWorkerError,
+    PluginOperationError,
     PluginWorkerFactory,
     PluginWorkerHandle,
     PluginWorkerSpec,
@@ -103,7 +104,8 @@ class PluginWorkerManager:
         payload: dict[str, Any],
         *,
         trace_id: str,
-        timeout: float,
+        timeout: float | None,
+        request_id: str | None = None,
     ) -> PluginWorkerOperationResult:
         with self._lock:
             owned = self._workers.get(plugin_worker_id)
@@ -121,11 +123,23 @@ class PluginWorkerManager:
                 )
             handle = owned.handle
         try:
-            return handle.request(operation, payload, trace_id=trace_id, timeout=timeout)
+            return handle.request(operation, payload, trace_id=trace_id, timeout=timeout,
+                                  **({"request_id": request_id} if request_id else {}))
+        except PluginOperationError:
+            raise
         except PluginWorkerError:
             with self._lock:
                 self._workers.pop(plugin_worker_id, None)
             raise
+
+    def interrupt(self, plugin_worker_id: str, request_id: str, *, trace_id: str, timeout: float):
+        with self._lock:
+            owned = self._workers.get(plugin_worker_id)
+            if owned is None:
+                raise PluginWorkerSelectionError("Worker is no longer active", reason="conflict")
+            if "interrupt" not in owned.resource.capabilities:
+                raise PluginWorkerSelectionError("Worker does not support interrupt", reason="unsupported")
+        return owned.handle.interrupt(request_id, trace_id=trace_id, timeout=timeout)
 
     def stop(self, plugin_worker_id: str, *, trace_id: str, timeout: float) -> dict[str, Any]:
         with self._lock:

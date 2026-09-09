@@ -4,6 +4,10 @@ Updated: 2026-09-09
 
 ## Current Facts
 
+- Established plugin operations now support concurrent exact `JusiInterrupt`, recoverable worker rejections, deadline-free followups, and full close of busy work. Health publishes active client operation identities; cancellation preserves the client/surface. See [ADR 0034](adr/0034-concurrent-plugin-operation-interruption.md).
+- `JusiCopy [register]` and `JusiOpen` deliver plugin-selected UTF-8 content in HTTP responses for both local and remote target placement. Exports are bounded independent snapshots, with no remote filesystem path or writeback. See [ADR 0035](adr/0035-editor-actions-transfer-content-over-http.md). Terminal-application-initiated actions/work leases remain an explicit extension.
+- Work is paused before bundled `%%vd` implementation or production plugin migration. Two personal development skill drafts are prepared for review: `jusi-plugin-development` and `jusi-plugin-family-development`. The next plugin implementation should use the agreed skills.
+
 - Accepted new executions now close final unparked outputs on the same kernel through full artifact cleanup, including Enter's execution branch. Busy work and followup clients survive; `JusiPark` or cell-mode `S` toggles explicit retention, shown by `~` beside the status symbol (ADR 0033). Folded history inherits Normal through a window-local mapping, preventing stale/destructive backgrounds after theme changes (Incident 0013).
 
 - Folded history now displays plain `history: N entries` with a muted foreground and blank fill; expanded history retains its delimiter. The terminal development fixture visibly displays initial/followup bodies and supports readable line input. Followup success notifications are removed; failures remain visible.
@@ -22,7 +26,7 @@ Updated: 2026-09-09
 
 - Cell status now uses opener-anchored extmarks with symbols after the opener and matching opener/closer colors, with purple busy *, green done ✓, red error ✗, orange interrupted !, blue followup >, and yellow never-executed delimiters. RGB and 256-color terminal palettes are provided. No sign or status columns are used. Execution/input, client lifecycle and exact followup operations drive the projection; ordinary typing only moves existing extmarks. See [ADR 0028](adr/0028-cell-status-is-an-inline-extmark-projection.md).
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0033 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0035 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
@@ -117,8 +121,7 @@ input and fences late presentation (see [Incident 0006](incidents/0006-input-con
 to the same capability-checked worker, preserving client and surface identity
 ([ADR 0026](adr/0026-followups-target-durable-clients.md)). Shared contract,
 frontend, supervisor, real-worker and terminal end-to-end tests cover delivery,
-empty bodies, stale rejection, and isolated failure. Concurrent plugin-specific
-interrupt remains planned. `JusiComplete` and `<Plug>(JusiComplete)` now implement
+empty bodies, stale rejection, and isolated failure. Concurrent established-client interruption is implemented (ADR 0034). `JusiComplete` and `<Plug>(JusiComplete)` now implement
 kernel-scope completion and active-client plugin completion, with explicit Unicode
 ranges, empty-prefix menus, cancellation, and untouched suffixes. Tab invokes
 Vim's native popup; navigation, acceptance, cancellation, and `completeopt` remain

@@ -180,6 +180,10 @@ class PluginWorkerError(RuntimeError):
         self.details = details or {}
 
 
+class PluginOperationError(PluginWorkerError):
+    """An explicitly recoverable operation failure; the worker remains usable."""
+
+
 @dataclass(frozen=True)
 class TerminalSurfaceRequest:
     request_id: str
@@ -215,8 +219,11 @@ class PluginWorkerHandle(Protocol):
         payload: dict[str, Any],
         *,
         trace_id: str,
-        timeout: float,
+        timeout: float | None,
+        request_id: str | None = None,
     ) -> PluginWorkerOperationResult: ...
+
+    def interrupt(self, target_request_id: str, *, trace_id: str, timeout: float) -> dict[str, Any]: ...
 
     def stop(self, *, trace_id: str, timeout: float) -> str: ...
 

@@ -1,0 +1,12 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_action",
+  "trace_id": "trace_action",
+  "kind": "editor_action",
+  "client_id": "client_existing",
+  "action": "copy",
+  "selection": {
+    "scope": "rows"
+  },
+  "path": "/remote/data"
+}

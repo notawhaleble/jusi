@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "kind": "worker.request",
+  "plugin_worker_id": "pwrk_fixture",
+  "request_id": "wreq_interrupt",
+  "trace_id": "trace_interrupt",
+  "operation": "interrupt",
+  "payload": {}
+}

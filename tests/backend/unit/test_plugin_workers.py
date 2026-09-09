@@ -14,7 +14,7 @@ class FakeHandle:
         self.requests: list[tuple[str, dict, str]] = []
         self.stop_count = 0
 
-    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float) -> PluginWorkerOperationResult:
+    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float, request_id=None) -> PluginWorkerOperationResult:
         assert timeout > 0
         self.requests.append((operation, payload, trace_id))
         return PluginWorkerOperationResult({"accepted": True})

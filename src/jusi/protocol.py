@@ -28,17 +28,19 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
     "complete": ("kernel_id", "notebook_id", "cell_id", "body"),
     "followup": ("client_id", "body"),
     "close_client": ("client_id",),
+    "interrupt_client": ("client_id", "operation_id"),
+    "editor_action": ("client_id", "action"),
     "restart_notebook": ("runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"),
 }
 LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
-OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"}
+OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"}
 EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
 RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
 FAILURE_SCOPES = {"request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor"}
-WORKER_OPERATIONS = {"execute", "followup", "complete", "editor_action"}
-WORKER_FAILURE_REASONS = {"invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error"}
+WORKER_OPERATIONS = {"interrupt", "execute", "followup", "complete", "editor_action"}
+WORKER_FAILURE_REASONS = {"conflict", "invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error"}
 TERMINAL_STREAM_KINDS = {"attach", "attached", "resize", "resized", "failure"}
 TERMINAL_STREAM_FAILURE_REASONS = {"busy", "cursor_expired", "not_found", "protocol_violation", "channel_closed"}
 TERMINAL_STREAM_FAILURE_OPERATIONS = {"attach", "resize", "stream"}
@@ -363,6 +365,10 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
             raise ProtocolValidationError("cursor_pos must be a Unicode character offset within body")
         if "client_id" in data:
             _required_strings(data, ("client_id",), "complete")
+    if expected_kind == "editor_action":
+        allowed.add("selection")
+        if data["action"] not in {"copy", "open"} or not isinstance(data.get("selection"), dict):
+            raise ProtocolValidationError("editor_action requires copy/open and an object selection")
     unknown = sorted(set(data) - allowed)
     if unknown:
         raise ProtocolValidationError(f"Unknown command fields: {', '.join(unknown)}")
@@ -488,6 +494,15 @@ def validate_health_response(data: object) -> dict[str, Any]:
             raise ProtocolValidationError("surface client ownership mismatch")
         if owner["interaction"] != "terminal_interactive":
             raise ProtocolValidationError("terminal surface owner is not interactive")
+    operations = data.get("client_operations", [])
+    if not isinstance(operations, list) or len(operations) > 1:
+        raise ProtocolValidationError("client_operations must contain at most one active operation")
+    for operation in operations:
+        if (not isinstance(operation, dict) or set(operation) != {"operation_id", "client_id", "kind"}
+                or operation["kind"] not in {"followup", "complete", "editor_action"}
+                or operation["client_id"] not in {client["client_id"] for client in data["clients"]}):
+            raise ProtocolValidationError("Invalid active client operation")
+        _required_strings(operation, ("operation_id", "client_id"), "client_operations")
     return dict(data)
 
 
@@ -578,6 +593,7 @@ def validate_plugin_worker_message(data: object) -> dict[str, Any]:
         "worker.request",
         "worker.result",
         "worker.failure",
+        "worker.rejected",
         "worker.shutdown",
         "worker.stopped",
     }:
@@ -616,6 +632,10 @@ def validate_plugin_worker_message(data: object) -> dict[str, Any]:
     if kind == "worker.request":
         if set(data) != common_fields | {"payload"} or not isinstance(data.get("payload"), dict):
             raise ProtocolValidationError("Plugin worker request fields are invalid")
+        if data["operation"] == "interrupt":
+            if set(data["payload"]) != {"target_request_id"}:
+                raise ProtocolValidationError("Interrupt must name one exact worker request")
+            _required_strings(data["payload"], ("target_request_id",), "interrupt")
     elif kind == "worker.result":
         if set(data) != common_fields | {"result", "core_requests"} or not isinstance(data.get("result"), dict) or not isinstance(data.get("core_requests"), list):
             raise ProtocolValidationError("Plugin worker result fields are invalid")
@@ -722,4 +742,27 @@ def validate_completion(result: object, cursor_pos: int) -> dict[str, Any]:
         for key in ("label", "detail", "documentation", "kind"):
             if key in item and (not isinstance(item[key], str) or len(item[key]) > 4096 or "\x00" in item[key]):
                 raise ProtocolValidationError("completion metadata must be bounded text")
+    return result
+
+
+def validate_editor_action(result: object, action: str) -> dict[str, Any]:
+    """Content is transferred, never a target-side filesystem path or command."""
+    if not isinstance(result, dict) or result.get("action") != action or action not in {"copy", "open"}:
+        raise ProtocolValidationError("Editor action does not match the requested action")
+    fields = {"action", "text", "regtype"} if action == "copy" else {"action", "text", "name", "filetype"}
+    if set(result) != fields:
+        raise ProtocolValidationError("Editor action fields are invalid")
+    text = result["text"]
+    if not isinstance(text, str) or "\x00" in text or len(text.encode("utf-8")) > 524288:
+        raise ProtocolValidationError("Editor text must be UTF-8 without NUL, at most 512 KiB")
+    if action == "copy":
+        if result["regtype"] not in {"v", "V"}:
+            raise ProtocolValidationError("Copy register type must be v or V")
+    else:
+        if (not isinstance(result["name"], str) or not 1 <= len(result["name"]) <= 128
+                or any(ord(char) < 32 or ord(char) == 127 or char in "/\\" for char in result["name"])
+                or result["name"] in {".", ".."}):
+            raise ProtocolValidationError("Open name must be a filename hint, not a path")
+        if not isinstance(result["filetype"], str) or re.fullmatch(r"(?:[a-z][a-z0-9_]{0,63}|)", result["filetype"]) is None:
+            raise ProtocolValidationError("Open filetype is invalid")
     return result

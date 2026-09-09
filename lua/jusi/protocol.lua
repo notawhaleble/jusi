@@ -25,16 +25,18 @@ local command_fields = {
   complete = { "kernel_id", "notebook_id", "cell_id", "body" },
   followup = { "client_id", "body" },
   close_client = { "client_id" },
+  interrupt_client = { "client_id", "operation_id" },
+  editor_action = { "client_id", "action" },
   restart_notebook = { "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name" },
 }
 local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
-local operations = set({ "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events" })
+local operations = set({ "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events" })
 local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
 local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
-local worker_operations = set({ "execute", "followup", "complete", "editor_action" })
-local worker_failure_reasons = set({ "invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error" })
+local worker_operations = set({ "interrupt", "execute", "followup", "complete", "editor_action" })
+local worker_failure_reasons = set({ "conflict", "invalid_request", "unsupported", "timeout", "cancelled", "plugin_error", "internal_error" })
 local terminal_stream_kinds = set({ "attach", "attached", "resize", "resized", "failure" })
 local terminal_stream_failure_reasons = set({ "busy", "cursor_expired", "not_found", "protocol_violation", "channel_closed" })
 local terminal_stream_failure_operations = set({ "attach", "resize", "stream" })
@@ -317,6 +319,11 @@ function M.validate_command(command, expected_kind)
       return false, "invalid completion client identity"
     end
   end
+  if expected_kind == "editor_action" then
+    allowed.selection = true
+    if not set({ "copy", "open" })[command.action] or type(command.selection) ~= "table"
+        or (#command.selection > 0) then return false, "invalid editor action selection" end
+  end
   for field, _ in pairs(command) do
     if not allowed[field] then
       return false, "unknown command field: " .. field
@@ -509,6 +516,17 @@ function M.validate_health_response(response)
     if owner == nil or surface.runtime_id ~= owner.runtime_id then return false, "surface client ownership mismatch" end
     if owner.interaction ~= "terminal_interactive" then return false, "terminal surface owner is not interactive" end
   end
+  local active = response.client_operations or {}
+  if type(active) ~= "table" or not vim.islist(active) or #active > 1 then return false, "invalid client_operations" end
+  for _, operation in ipairs(active) do
+    local ok = type(operation) == "table" and exact_fields(operation, { "operation_id", "client_id", "kind" })
+    if not ok then return false, "invalid active client operation" end
+    local client_found = false
+    for _, client in ipairs(response.clients) do if client.client_id == operation.client_id then client_found = true end end
+    if not ok or not bounded_string(operation.operation_id, 1, 128) or not client_found
+        or not set({ "followup", "complete", "editor_action" })[operation.kind] then return false, "invalid active client operation" end
+  end
+
   return true
 end
 
@@ -582,7 +600,7 @@ end
 function M.validate_plugin_worker_message(message)
   if type(message) ~= "table" or message.protocol_version ~= 1 then return false, "invalid plugin worker envelope" end
   local kind = message.kind
-  if not set({ "worker.ready", "worker.request", "worker.result", "worker.failure", "worker.shutdown", "worker.stopped" })[kind] then
+  if not set({ "worker.ready", "worker.request", "worker.result", "worker.failure", "worker.rejected", "worker.shutdown", "worker.stopped" })[kind] then
     return false, "unsupported plugin worker message kind"
   end
   if not bounded_string(message.plugin_worker_id, 3, 128) then return false, "invalid plugin worker identity" end
@@ -603,6 +621,10 @@ function M.validate_plugin_worker_message(message)
   if not worker_operations[message.operation] then return false, "unsupported worker operation" end
   if kind == "worker.request" then
     if type(message.payload) ~= "table" then return false, "worker payload must be an object" end
+    if message.operation == "interrupt" then
+      local ok = exact_fields(message.payload, { "target_request_id" })
+      if not ok or not nonempty_string(message.payload.target_request_id) then return false, "invalid interrupt target" end
+    end
     return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "payload" })
   elseif kind == "worker.result" then
     if type(message.result) ~= "table" then return false, "worker result must be an object" end
@@ -682,6 +704,25 @@ function M.validate_completion(result, cursor_pos)
         return false, "invalid completion metadata"
       end
     end
+  end
+  return true
+end
+
+function M.validate_editor_action(result, action)
+  if type(result) ~= "table" or result.action ~= action or not set({ "copy", "open" })[action] then
+    return false, "editor action does not match request"
+  end
+  local fields = action == "copy" and { "action", "text", "regtype" } or { "action", "text", "name", "filetype" }
+  local ok, err = exact_fields(result, fields)
+  if not ok then return false, err end
+  if type(result.text) ~= "string" or #result.text > 524288 or result.text:find("%z") then return false, "invalid editor text" end
+  if action == "copy" then
+    if result.regtype ~= "v" and result.regtype ~= "V" then return false, "invalid register type" end
+  else
+    if type(result.name) ~= "string" or vim.fn.strchars(result.name) < 1 or vim.fn.strchars(result.name) > 128
+        or result.name:find("[%c/\\]") or result.name == "." or result.name == ".." then return false, "invalid filename hint" end
+    if type(result.filetype) ~= "string" or #result.filetype > 64
+        or (result.filetype ~= "" and not result.filetype:match("^[a-z][a-z0-9_]*$")) then return false, "invalid filetype" end
   end
   return true
 end

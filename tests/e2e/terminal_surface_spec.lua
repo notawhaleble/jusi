@@ -89,7 +89,49 @@ function M.run()
     wait_for(5000, function()
       return terminal_text(record.buf):find("followup 2:", 1, true) ~= nil
     end, "followup was not displayed by the plugin")
-    vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "select * from SUFFIX" })
+    -- Exact concurrent plugin interruption keeps this client and terminal alive.
+    vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "fixture:wait" })
+    local interrupted_response, interrupt_failure
+    session.controller:followup(record.client.cell_id, function(result, err)
+      interrupted_response, interrupt_failure = result, err
+    end)
+    wait_for(3000, function() return terminal_text(record.buf):find("interruptible fixture operation", 1, true) end,
+      "fixture did not enter its interruptible operation")
+    wait_for(3000, function() return next(session.controller.client_operations) ~= nil end, "no active plugin identity")
+    local old_operation = next(session.controller.client_operations)
+    local snapshot
+    session.controller.transport:request("GET", "/v1/health", nil, {}, function(result) snapshot = result end)
+    wait_for(2000, function() return snapshot ~= nil end, "health blocked behind plugin work")
+    assert(snapshot.client_operations[1].operation_id == old_operation)
+    jusi.interrupt(buf, 1)
+    wait_for(3000, function() return interrupted_response or interrupt_failure end, "plugin interrupt blocked")
+    assert(not interrupt_failure, vim.inspect(interrupt_failure))
+    assert(interrupted_response.operation.outcome == "cancelled")
+    assert(session.controller.clients[original_client] and session.interactive.surfaces[original_surface] == record)
+    local stale_failure
+    session.controller:interrupt_client(original_client, old_operation, function(_, err) stale_failure = err end)
+    wait_for(3000, function() return stale_failure ~= nil end, "stale interrupt was not rejected")
+    assert(stale_failure.reason == "conflict")
+
+    -- Exports arrive in an HTTP body and mutate only the local destination.
+    local export_text = "  literal followup  \nα"
+    vim.fn.setreg("a", "before")
+    jusi.editor_action("copy", { buf = buf, row = 1, register = "a" })
+    wait_for(3000, function() return vim.fn.getreg("a") == export_text end, "HTTP copy did not arrive")
+    local rejected
+    session.controller:editor_action(record.client.cell_id, "copy", { scope = "missing" }, function(_, err) rejected = err end)
+    wait_for(3000, function() return rejected ~= nil end, "missing selection did not fail")
+    assert(rejected.reason == "plugin_error" and session.controller.clients[original_client])
+    assert(vim.fn.getreg("a") == export_text)
+    jusi.editor_action("open", { buf = buf, row = 1 })
+    wait_for(3000, function() return vim.b.jusi_export_name == "selection.txt" end, "HTTP open did not arrive")
+    local exported_buf = vim.api.nvim_get_current_buf()
+    assert(table.concat(vim.api.nvim_buf_get_lines(exported_buf, 0, -1, false), "\n") == export_text)
+    assert(vim.bo[exported_buf].modifiable and vim.bo[exported_buf].modified)
+    assert(vim.fn.filereadable(vim.api.nvim_buf_get_name(exported_buf)) == 0)
+    vim.api.nvim_win_close(0, true)
+    vim.api.nvim_set_current_buf(buf)
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "select * from SUFFIX" })
     vim.api.nvim_win_set_cursor(0, { 2, #"select * from " })
     _G.jusi_e2e_plugin_ready = function()
       wait_for(5000, function() return require("jusi.completion")._active[buf] ~= nil end, "plugin completion reply did not arrive")
@@ -129,6 +171,10 @@ function M.run()
     assert(not vim.tbl_contains(notifications, "followup delivered"))
     local first_client_id = record.client.client_id
     local first_surface_id = record.surface.surface_id
+    vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "fixture:wait" })
+    local close_response, close_failure
+    session.controller:followup(record.client.cell_id, function(result, err) close_response, close_failure = result, err end)
+    wait_for(3000, function() return next(session.controller.client_operations) ~= nil end, "close test has no active work")
     vim.fn.jobstop(record.job_id)
     wait_for(3000, function()
       return vim.fn.jobwait({ record.job_id }, 0)[1] ~= -1
@@ -144,7 +190,12 @@ function M.run()
         and next(session.interactive.surfaces) == nil
     end, "explicit client close did not retire the terminal surface")
     assert(session.controller.kernel_state == "on")
+    wait_for(3000, function() return close_response or close_failure end, "close left followup hanging")
+    assert(close_response and close_response.operation.outcome == "cancelled", vim.inspect(close_failure))
     assert(not vim.api.nvim_buf_is_valid(record.buf))
+    assert(vim.api.nvim_buf_is_valid(exported_buf), "source close destroyed independent exported buffer")
+    vim.api.nvim_buf_delete(exported_buf, { force = true })
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "%%terminal_fixture", "manual fixture" })
 
     jusi.execute(buf, 1)
     wait_for(10000, function()
