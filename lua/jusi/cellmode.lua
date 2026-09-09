@@ -39,6 +39,7 @@ function Mode:set(enabled)
       H = function() self.editor.history:toggle() end,
       C = function() self:edit() end, X = function() self:delete() end,
       Y = function() self:copy() end, P = function() self:paste() end,
+      B = function() self:insert(false) end,
       Q = function() require('jusi').close() end,
       ['<C-P>'] = function() self:history_relative(-1) end,
       ['<C-N>'] = function() self:history_relative(1) end,

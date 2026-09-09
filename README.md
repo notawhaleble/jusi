@@ -61,6 +61,7 @@ returns to cell-mode controls.
 | `C` | Clear payload and edit, keeping magic header and history |
 | `X` | Delete cell and close its resources |
 | `Y` / `P` | Copy cell / paste below with a fresh identity |
+| B | Create an empty cell below and enter Insert |
 | `Q` | Close the cell's output/client |
 
 `:JusiNextCell` and `:JusiPreviousCell` skip history and work in either mode.

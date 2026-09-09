@@ -20,6 +20,7 @@ While enabled, native Normal-mode keys select cell actions:
 | C | Clear active payload and enter Insert, preserving magic/header and history |
 | X | Delete owning cell text; existing opener retirement performs full cleanup |
 | Y / P | Copy whole cell text / paste below, with fresh runtime identity |
+| B | Create an empty cell below and enter Insert |
 | Q | Existing full artifact close |
 
 Space and mode-specific mappings are buffer-local. Prior buffer-local mappings
