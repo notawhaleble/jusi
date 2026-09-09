@@ -59,6 +59,7 @@ function InteractiveTerminals:open(surface, client)
   local command = vim.deepcopy(self.command)
   table.insert(command, self.base_url)
   table.insert(command, surface.surface_id)
+  if self.editor_id then vim.list_extend(command, { "--editor-id", self.editor_id }) end
   local record = { surface = surface, client = client, closed = false }
   local ok, launched = pcall(self.launch, {
     command = command,

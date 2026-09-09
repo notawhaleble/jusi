@@ -70,5 +70,6 @@ proves HTTP copy/open, recoverable selection failure, and exported-buffer surviv
 after source close. Tests use loopback HTTP with a separate kernel/worker; a
 remote-machine deployment test remains part of remote workflow verification.
 
-The proposed application-driven successor is described in
-[backend-driven editor actions](../architecture/backend-driven-editor-actions.md).
+Application-driven delivery is now implemented by
+[ADR 0036](0036-application-driven-editor-actions.md); it extends this content
+contract with recipient binding, an application channel and acknowledgments.

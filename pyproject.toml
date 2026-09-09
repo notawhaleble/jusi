@@ -48,6 +48,7 @@ Issues = "https://github.com/notawhaleble/jusi/issues"
 
 [project.scripts]
 jusi = "jusi.__main__:main"
+jusivim = "jusi.editor_client:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jusi"]

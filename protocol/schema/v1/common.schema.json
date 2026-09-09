@@ -24,7 +24,7 @@
         "service_start",
         "start_kernel",
         "stop_kernel",
-        "complete", "followup", "close_client", "interrupt_client", "editor_action",
+        "ack_editor_action", "complete", "followup", "close_client", "interrupt_client", "editor_action",
         "restart_notebook",
         "execute",
         "run_terminal_surface",

@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "action": {
+    "action_id": "action_id_fixture",
+    "client_id": "client_id_fixture",
+    "runtime_id": "runtime_id_fixture",
+    "notebook_id": "notebook_id_fixture",
+    "cell_id": "cell_id_fixture",
+    "editor_id": "editor_id_fixture",
+    "trace_id": "trace_id_fixture",
+    "action": "copy"
+  },
+  "content": {
+    "action": "open",
+    "text": "hello",
+    "name": "hello.txt",
+    "filetype": ""
+  },
+  "remaining_ms": 29000
+}

@@ -62,6 +62,7 @@ class TerminalBridge:
         base_url: str,
         surface_id: str,
         *,
+        editor_id: str | None = None,
         stdin_fd: int = 0,
         stdout_fd: int = 1,
         stderr_fd: int = 2,
@@ -75,6 +76,7 @@ class TerminalBridge:
             raise ValueError("terminal reconnect delays must be positive and ordered")
         self.url = terminal_websocket_url(base_url, surface_id)
         self.surface_id = surface_id
+        self.editor_id = editor_id
         self.attachment_id = ""
         self.stdin_fd = stdin_fd
         self.stdout_fd = stdout_fd
@@ -181,6 +183,7 @@ class TerminalBridge:
                 "rows": size.lines,
                 "columns": size.columns,
                 "cursor": str(self._last_cursor),
+                **({"editor_id": self.editor_id} if self.editor_id else {}),
             })
             await self._wait_attached(size)
             self._attachment_succeeded = True
@@ -376,13 +379,13 @@ class TerminalBridge:
             view = view[written:]
 
 
-async def run_terminal_bridge(base_url: str, surface_id: str) -> None:
-    await TerminalBridge(base_url, surface_id).run()
+async def run_terminal_bridge(base_url: str, surface_id: str, editor_id: str | None = None) -> None:
+    await TerminalBridge(base_url, surface_id, editor_id=editor_id).run()
 
 
-def terminal_bridge_main(base_url: str, surface_id: str) -> int:
+def terminal_bridge_main(base_url: str, surface_id: str, editor_id: str | None = None) -> int:
     try:
-        asyncio.run(run_terminal_bridge(base_url, surface_id))
+        asyncio.run(run_terminal_bridge(base_url, surface_id, editor_id))
     except (OSError, ValueError, HTTPClientError, WebSocketError, TerminalBridgeError) as exc:
         print(f"jusi terminal bridge: {exc}", file=sys.stderr)
         return 1

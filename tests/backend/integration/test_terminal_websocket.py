@@ -68,15 +68,17 @@ async def scenario() -> None:
             "kind": "attach",
             "surface_id": "srf_test",
             "attachment_id": "att_test",
+            "editor_id": "editor_test",
             "cursor": "0",
             "rows": 21,
             "columns": 79,
         }))
-        attached = json.loads(await connection.read_message())
+        attached = json.loads(await asyncio.wait_for(connection.read_message(), 2))
         assert validate_terminal_stream_control(attached)["kind"] == "attached"
         assert supervisor.attaches == [{
             "surface_id": "srf_test",
             "attachment_id": "att_test",
+            "editor_id": "editor_test",
             "rows": 21,
             "cols": 79,
             "after_cursor": 0,
@@ -101,7 +103,7 @@ async def scenario() -> None:
             "rows": 30,
             "columns": 100,
         }))
-        resized = json.loads(await connection.read_message())
+        resized = json.loads(await asyncio.wait_for(connection.read_message(), 2))
         assert validate_terminal_stream_control(resized)["kind"] == "resized"
         assert supervisor.resizes == [(30, 100)]
     finally:
@@ -119,7 +121,7 @@ class RealSurfaceSupervisor:
     def __init__(self, manager: TerminalSurfaceManager) -> None:
         self.manager = manager
 
-    def attach_terminal_surface(self, surface_id: str, **kwargs):  # type: ignore[no-untyped-def]
+    def attach_terminal_surface(self, surface_id: str, *, editor_id=None, **kwargs):  # type: ignore[no-untyped-def]
         return self.manager.attach(surface_id, **kwargs)
 
     def write_terminal_surface(self, surface_id: str, attachment_id: str, data: bytes) -> None:
@@ -163,7 +165,7 @@ async def real_pty_scenario() -> None:
             "protocol_version": 1, "kind": "attach", "surface_id": "srf_real",
             "attachment_id": "att_real", "cursor": "0", "rows": 17, "columns": 73,
         }))
-        attached = json.loads(await connection.read_message())
+        attached = json.loads(await asyncio.wait_for(connection.read_message(), 2))
         assert attached["kind"] == "attached"
         while b"ready\xff" not in received:
             start, payload = decode_terminal_output_frame(await asyncio.wait_for(connection.read_message(), 2))

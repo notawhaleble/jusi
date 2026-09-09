@@ -171,7 +171,7 @@ function Transport:connect_events(after, callbacks)
     "--no-buffer",
     "--header",
     "Accept: text/event-stream",
-    self.base_url .. "/v1/events?after=" .. tostring(after),
+    self.base_url .. "/v1/events?after=" .. tostring(after) .. (handlers.editor_id and ("&editor_id=" .. handlers.editor_id) or ""),
   }
   connection.process = vim.system(command, {
     text = true,

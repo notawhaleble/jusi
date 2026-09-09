@@ -1,0 +1,8 @@
+{
+  "protocol_version": 1,
+  "kind": "application.action_result",
+  "request_id": "areq_fixture",
+  "action_id": "action_id_fixture",
+  "outcome": "delivered",
+  "reason": ""
+}

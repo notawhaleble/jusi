@@ -27,11 +27,12 @@ local command_fields = {
   close_client = { "client_id" },
   interrupt_client = { "client_id", "operation_id" },
   editor_action = { "client_id", "action" },
+  ack_editor_action = { "action_id", "editor_id", "outcome" },
   restart_notebook = { "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name" },
 }
 local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
-local operations = set({ "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events" })
-local event_kinds = set({ "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
+local operations = set({ "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "ack_editor_action", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events" })
+local event_kinds = set({ "editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
 local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
@@ -198,7 +199,12 @@ local function validate_event_payload(event)
   local payload = event.payload
   local kind = event.kind
   local ok, err
-  if kind == "service.ready" then
+  if kind == "editor_action.requested" then
+    local valid, error = M.validate_editor_action_metadata(payload)
+    if not valid then return false, error end
+    if event.resource.kind ~= "client" or event.resource.id ~= payload.client_id or event.trace_id ~= payload.trace_id
+        or event.operation ~= "editor_action" then return false, "editor action event identity mismatch" end
+  elseif kind == "service.ready" then
     ok, err = exact_fields(payload, { "supervisor_id" })
     if not ok then return false, err end
     if not nonempty_string(payload.supervisor_id) or payload.supervisor_id ~= event.supervisor_id then return false, "service.ready supervisor identity mismatch" end
@@ -324,6 +330,9 @@ function M.validate_command(command, expected_kind)
     if not set({ "copy", "open" })[command.action] or type(command.selection) ~= "table"
         or (#command.selection > 0) then return false, "invalid editor action selection" end
   end
+  if expected_kind == "ack_editor_action" and command.outcome ~= "delivered" and command.outcome ~= "failed" then
+    return false, "invalid editor acknowledgment outcome"
+  end
   for field, _ in pairs(command) do
     if not allowed[field] then
       return false, "unknown command field: " .. field
@@ -341,7 +350,11 @@ function M.validate_terminal_stream_control(message)
   end
   local common = { "protocol_version", "kind", "surface_id", "attachment_id" }
   if message.kind == "attach" or message.kind == "attached" then
-    local ok, err = exact_fields(message, vim.list_extend(vim.deepcopy(common), { "cursor", "rows", "columns" }))
+    local ok, err = exact_fields(message, vim.list_extend(vim.deepcopy(common), { "cursor", "rows", "columns" }),
+      message.kind == "attach" and { "editor_id" } or {})
+    if message.editor_id ~= nil and (not bounded_string(message.editor_id, 3, 128) or not message.editor_id:match("^[A-Za-z0-9_]+$")) then
+      return false, "invalid editor recipient identity"
+    end
     if not ok then return false, err end
     if not valid_terminal_cursor(message.cursor) then return false, "invalid terminal stream cursor" end
     if not valid_terminal_geometry(message) then return false, "invalid terminal geometry" end
@@ -525,6 +538,20 @@ function M.validate_health_response(response)
     for _, client in ipairs(response.clients) do if client.client_id == operation.client_id then client_found = true end end
     if not ok or not bounded_string(operation.operation_id, 1, 128) or not client_found
         or not set({ "followup", "complete", "editor_action" })[operation.kind] then return false, "invalid active client operation" end
+  end
+
+  local actions = response.editor_actions or {}
+  if type(actions) ~= "table" or not vim.islist(actions) or #actions > 32 then return false, "invalid pending editor actions" end
+  local seen_actions = {}
+  for _, action in ipairs(actions) do
+    if not M.validate_editor_action_metadata(action) or seen_actions[action.action_id] then return false, "invalid editor action" end
+    seen_actions[action.action_id] = true
+    local found = false
+    for _, client in ipairs(response.clients) do
+      if client.client_id == action.client_id and client.runtime_id == action.runtime_id
+          and client.cell_id == action.cell_id and client.notebook_id == action.notebook_id then found = true end
+    end
+    if not found then return false, "editor action client ownership mismatch" end
   end
 
   return true
@@ -723,6 +750,53 @@ function M.validate_editor_action(result, action)
         or result.name:find("[%c/\\]") or result.name == "." or result.name == ".." then return false, "invalid filename hint" end
     if type(result.filetype) ~= "string" or #result.filetype > 64
         or (result.filetype ~= "" and not result.filetype:match("^[a-z][a-z0-9_]*$")) then return false, "invalid filetype" end
+  end
+  return true
+end
+
+function M.validate_editor_action_metadata(value)
+  if type(value) ~= "table" then return false, "invalid editor action metadata" end
+  local fields = { "action_id", "client_id", "runtime_id", "notebook_id", "cell_id", "editor_id", "trace_id", "action" }
+  local ok, err = exact_fields(value, fields)
+  if not ok then return false, err end
+  for _, key in ipairs(fields) do if not bounded_string(value[key], 1, 128) then return false, "invalid editor action identity" end end
+  if value.action ~= "copy" and value.action ~= "open" then return false, "invalid editor action type" end
+  return true
+end
+
+function M.validate_application_action(value)
+  if type(value) ~= "table" or value.protocol_version ~= 1 or not bounded_string(value.request_id, 3, 128) then
+    return false, "invalid application action envelope"
+  end
+  if value.kind == "application.editor_action" then
+    local ok = exact_fields(value, { "protocol_version", "kind", "request_id", "content" })
+    if not ok or type(value.content) ~= "table" then return false, "invalid application action request" end
+    return M.validate_editor_action(value.content, value.content.action)
+  elseif value.kind == "application.action_result" then
+    local ok = exact_fields(value, { "protocol_version", "kind", "request_id", "action_id", "outcome", "reason" })
+    if not ok or not bounded_string(value.action_id, 0, 128) or not bounded_string(value.reason, 0, 128)
+        or not set({ "delivered", "failed", "cancelled", "unknown" })[value.outcome] then return false, "invalid action result" end
+    return true
+  end
+  return false, "unknown application action kind"
+end
+
+function M.validate_editor_action_fetch(value)
+  if type(value) ~= "table" or value.ok ~= true
+      or not exact_fields(value, { "ok", "action", "content", "remaining_ms" })
+      or not M.validate_editor_action_metadata(value.action) then return false, "invalid action fetch response" end
+  if type(value.remaining_ms) ~= "number" or value.remaining_ms ~= math.floor(value.remaining_ms)
+      or value.remaining_ms < 0 or value.remaining_ms > 30000 then return false, "invalid delivery lifetime" end
+  return M.validate_editor_action(value.content, value.action.action)
+end
+
+function M.validate_editor_action_ack(value)
+  if type(value) ~= "table" or value.ok ~= true or not exact_fields(value, { "ok", "delivery" })
+      or type(value.delivery) ~= "table" then return false, "invalid acknowledgment response" end
+  local d = value.delivery
+  if not exact_fields(d, { "action_id", "outcome", "reason" }) or not bounded_string(d.action_id, 1, 128)
+      or not bounded_string(d.reason, 0, 128) or (d.outcome ~= "delivered" and d.outcome ~= "failed") then
+    return false, "invalid acknowledgment result"
   end
   return true
 end

@@ -1,8 +1,9 @@
 # Backend-driven editor actions
 
-Status: proposal, not implemented. Public `JusiCopy`/`JusiOpen` commands are
-withdrawn; ADR 0035's content validators and internal delivery helpers remain.
-No production VisiData or shell plugin is changed by this review.
+Status: implemented in [ADR 0036](../adr/0036-application-driven-editor-actions.md),
+with fixtures. Public `JusiCopy`/`JusiOpen` commands remain withdrawn. No production
+VisiData or shell plugin is changed. The ADR specifies the accepted wire contract
+and bounds; the legacy review below records the design rationale.
 
 ## User workflows
 
@@ -42,12 +43,12 @@ filesystem paths, optimistic “copied” status before delivery, or implicit ed
 completion on buffer hiding. Register a result waiter before publishing its
 request: legacy blocking edit publishes first, leaving a possible fast-reply race.
 
-## Proposed flow
+## Implemented flow
 
 1. Core gives each target application a client-scoped action channel at launch.
    A small helper API is usable by Python applications and a shell CLI alike.
    It must not depend on a running `handle()` request or use terminal escapes.
-   A private local socket to a runtime-owned service adapter is a candidate;
+   The private Unix socket belongs to the client in its target runtime;
    this is target-local IPC, not a frontend-local service or remote file relay.
 2. The application snapshots text and submits a generic copy/open action.
    Core derives client/runtime ownership from the channel, rather than trusting
@@ -66,7 +67,7 @@ in its own execution context and sends bytes; neither the service nor Neovim
 needs access to that filesystem path. Large/binary content can extend the
 transport later without making open depend on SCP or shared storage.
 
-## Ownership and failure details to settle in the wire contract
+## Ownership and failure requirements implemented by ADR 0036
 
 - Introduce an explicit editor recipient binding. A terminal attachment ID is
   transport identity and can change on reconnect; it is not sufficient as the
@@ -95,10 +96,27 @@ content returned over HTTP. “Opened successfully” must not mean “editing i
 finished”; hiding a buffer must not silently commit or cancel changes. Remote
 file writeback additionally needs its target owner and conflict policy.
 
-## Implementation gate
+## Fixture coverage before plugin migration
 
-Prove the generic channel with fixtures before touching `%%vd`: copy, open,
+The generic channel is proven with fixtures before touching `%%vd`: copy, open,
 helper-read file content, unavailable recipient, wrong/stale ownership, duplicate
 notification/ack, disconnect/reconnect, close while waiting, and delivery while
 ordinary plugin work is active. Keep the real plugin migration and its keybinding
 hooks for the subsequent plugin-development step.
+
+
+## Try the development fixture
+
+Launch the service with the terminal fixture's explicit test `PYTHONPATH` as in
+`tests/e2e/terminal_surface_spec.lua`, then execute a cell beginning with
+`%%terminal_fixture`. Initial/followup bodies become the fixture's selection.
+In the terminal client, enter `action:copy`, `action:open`, or `action:file` and
+press Enter. Confirmation appears only after Neovim acknowledges delivery.
+The file case creates and reads a file beside the target application's private
+journal, then deletes it; its open buffer survives source-client close.
+
+For production application hooks, use `jusi.editor_client.copy(...)` or
+`open_text(...)`. In a shell inheriting the client's environment, use
+`jusivim PATH`; `python -m jusi.editor_client PATH` is the equivalent module form.
+Restart the service to load the channel implementation and reinstall the package
+when console entry points change. No new Neovim copy/open command is needed.

@@ -12,6 +12,7 @@
     {"$ref": "#/$defs/followup"},
     {"$ref": "#/$defs/interrupt_client"},
     {"$ref": "#/$defs/editor_action"},
+    {"$ref": "#/$defs/ack_editor_action"},
     {"$ref": "#/$defs/close_client"},
     {"$ref": "#/$defs/restart_notebook"}
   ],
@@ -261,6 +262,42 @@
         },
         "selection": {
           "type": "object"
+        }
+      }
+    }
+  ],
+  "unevaluatedProperties": false
+},
+    "ack_editor_action": {
+  "allOf": [
+    {
+      "$ref": "#/$defs/base"
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "action_id",
+        "editor_id",
+        "outcome"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ack_editor_action"
+        },
+        "action_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "editor_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "enum": [
+            "delivered",
+            "failed"
+          ]
         }
       }
     }

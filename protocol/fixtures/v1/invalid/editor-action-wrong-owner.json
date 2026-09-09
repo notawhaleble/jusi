@@ -1,0 +1,25 @@
+{
+  "protocol_version": 1,
+  "event_id": "evt_action",
+  "supervisor_id": "sup_fixture",
+  "sequence": 1,
+  "occurred_at": "2026-09-09T00:00:00Z",
+  "trace_id": "trace_id_fixture",
+  "layer": "client",
+  "operation": "editor_action",
+  "kind": "editor_action.requested",
+  "resource": {
+    "kind": "client",
+    "id": "client_wrong"
+  },
+  "payload": {
+    "action_id": "action_id_fixture",
+    "client_id": "client_id_fixture",
+    "runtime_id": "runtime_id_fixture",
+    "notebook_id": "notebook_id_fixture",
+    "cell_id": "cell_id_fixture",
+    "editor_id": "editor_id_fixture",
+    "trace_id": "trace_id_fixture",
+    "action": "copy"
+  }
+}

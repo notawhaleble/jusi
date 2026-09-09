@@ -17,6 +17,7 @@ from jusi.infrastructure.plugin_discovery import FreshProcessPluginCatalogDiscov
 from jusi.infrastructure.plugin_worker import FreshProcessPluginWorkerFactory
 from jusi.infrastructure.terminal_pty import PosixTerminalBroker
 from jusi.interfaces.http import make_application
+from jusi.infrastructure.editor_action_socket import LocalEditorActionBroker
 
 
 async def serve(host: str, port: int, *, config_path: str | None = None) -> None:
@@ -26,6 +27,7 @@ async def serve(host: str, port: int, *, config_path: str | None = None) -> None
         PluginWorkerManager(FreshProcessPluginWorkerFactory()),
         TerminalSurfaceManager(PosixTerminalBroker()),
         TomlRuntimeConfigurationLoader(config_path, required=config_path is not None),
+        LocalEditorActionBroker(),
     )
     application = make_application(supervisor)
     sockets = tornado.netutil.bind_sockets(port, address=host)

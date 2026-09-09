@@ -112,6 +112,7 @@ class TerminalSurfaceManager:
         rows: int,
         cols: int,
         after_cursor: int,
+        before_launch: Callable[[], None] | None = None,
     ) -> tuple[TerminalAttachment, dict[str, int]]:
         owned = self._owned(surface_id)
         with owned.lock:
@@ -127,6 +128,8 @@ class TerminalSurfaceManager:
                 )
             if after_cursor > owned.next_cursor:
                 raise TerminalSurfaceError("Terminal stream cursor is ahead of the surface", reason="protocol_violation")
+            if before_launch is not None:
+                before_launch()
             if owned.handle is None:
                 try:
                     owned.handle = self._broker.start(

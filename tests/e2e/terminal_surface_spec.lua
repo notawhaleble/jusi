@@ -98,6 +98,13 @@ function M.run()
     wait_for(3000, function() return terminal_text(record.buf):find("interruptible fixture operation", 1, true) end,
       "fixture did not enter its interruptible operation")
     wait_for(3000, function() return next(session.controller.client_operations) ~= nil end, "no active plugin identity")
+    -- The target application can copy while ordinary worker work is blocked.
+    vim.fn.setreg('"', "before application copy")
+    vim.api.nvim_chan_send(record.job_id, "action:copy\r")
+    wait_for(3000, function() return vim.fn.getreg('"') == "  literal followup  \nα" end,
+      "application copy blocked behind followup")
+    wait_for(3000, function() return terminal_text(record.buf):find("action:copy delivered", 1, true) end,
+      "application did not receive copy acknowledgment")
     local old_operation = next(session.controller.client_operations)
     local snapshot
     session.controller.transport:request("GET", "/v1/health", nil, {}, function(result) snapshot = result end)
@@ -169,6 +176,20 @@ function M.run()
     wait_for(3000, function() return terminal_text(record.buf):find("input: hello", 1, true) ~= nil end,
       "terminal typing did not produce a readable complete line")
     assert(not vim.tbl_contains(notifications, "followup delivered"))
+    -- Open requests originate solely in the terminal application/helper.
+    local application_exports = {}
+    for _, action in ipairs({ "open", "file" }) do
+      vim.api.nvim_chan_send(record.job_id, "action:" .. action .. "\r")
+      local expected_name = action == "open" and "application.txt" or "application-file.txt"
+      wait_for(4000, function() return vim.b.jusi_export_name == expected_name end, "application open did not arrive")
+      local exported = vim.api.nvim_get_current_buf()
+      table.insert(application_exports, exported)
+      assert(table.concat(vim.api.nvim_buf_get_lines(exported, 0, -1, false), "\n") == export_text)
+      wait_for(3000, function() return terminal_text(record.buf):find("action:" .. action .. " delivered", 1, true) end,
+        "application open was not acknowledged")
+      vim.api.nvim_win_close(0, true)
+      vim.api.nvim_set_current_buf(buf)
+    end
     local first_client_id = record.client.client_id
     local first_surface_id = record.surface.surface_id
     vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "fixture:wait" })
@@ -193,6 +214,10 @@ function M.run()
     wait_for(3000, function() return close_response or close_failure end, "close left followup hanging")
     assert(close_response and close_response.operation.outcome == "cancelled", vim.inspect(close_failure))
     assert(not vim.api.nvim_buf_is_valid(record.buf))
+    for _, exported in ipairs(application_exports) do
+      assert(vim.api.nvim_buf_is_valid(exported), "client close destroyed application export")
+      vim.api.nvim_buf_delete(exported, { force = true })
+    end
     assert(vim.api.nvim_buf_is_valid(exported_buf), "source close destroyed independent exported buffer")
     vim.api.nvim_buf_delete(exported_buf, { force = true })
     vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "%%terminal_fixture", "manual fixture" })

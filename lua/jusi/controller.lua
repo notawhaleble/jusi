@@ -54,6 +54,7 @@ function Controller:_accept_health_snapshot(response)
   if not valid then
     return nil, self:_transport_failure("protocol_violation", validation_error)
   end
+  self.pending_editor_actions = response.editor_actions or {}
   local kernel = response.kernel
   if kernel == vim.NIL then
     kernel = nil
@@ -176,8 +177,12 @@ function Controller:connect(callback)
       return
     end
     self.event_connection = self.transport:connect_events(self.event_sequence, {
+      editor_id = self.editor_id,
       on_open = function()
         self.transport_state = "connected"
+        if self.on_editor_action then
+          for _, action in ipairs(self.pending_editor_actions or {}) do self.on_editor_action(action) end
+        end
         if callback then
           local ready_callback = callback
           callback = nil
@@ -391,6 +396,7 @@ function Controller:_on_event(event)
       end
     end
   end
+  if event.kind == "editor_action.requested" and self.on_editor_action then self.on_editor_action(event.payload) end
   if self.on_status_event then self.on_status_event(event) end
   if self.on_event then
     self.on_event(event)
@@ -757,6 +763,7 @@ function M.new(options)
     transport_state = "disconnected",
     executions = {},
     input_submissions = {},
+    editor_id = new_id("editor"),
     clients = {},
     client_operations = {},
     surfaces = {},

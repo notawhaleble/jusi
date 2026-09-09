@@ -30,11 +30,12 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
     "close_client": ("client_id",),
     "interrupt_client": ("client_id", "operation_id"),
     "editor_action": ("client_id", "action"),
+    "ack_editor_action": ("action_id", "editor_id", "outcome"),
     "restart_notebook": ("runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"),
 }
 LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
-OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"}
-EVENT_KINDS = {"service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
+OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "ack_editor_action", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"}
+EVENT_KINDS = {"editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
 RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
@@ -158,7 +159,11 @@ def _validate_input_request(value: object) -> dict[str, Any]:
 def _validate_event_payload(data: dict[str, Any]) -> None:
     kind = data["kind"]
     payload = data["payload"]
-    if kind == "service.ready":
+    if kind == "editor_action.requested":
+        validate_editor_action_metadata(payload)
+        if data["resource"] != {"kind": "client", "id": payload["client_id"]} or data["trace_id"] != payload["trace_id"] or data["operation"] != "editor_action":
+            raise ProtocolValidationError("Editor action event identity mismatch")
+    elif kind == "service.ready":
         _exact_fields(payload, {"supervisor_id"}, set(), "payload")
         _required_strings(payload, ("supervisor_id",), "payload")
         if payload["supervisor_id"] != data["supervisor_id"]:
@@ -297,7 +302,12 @@ def validate_terminal_stream_control(data: object) -> dict[str, Any]:
         if not _bounded_string(data.get(field), 3, 128):
             raise ProtocolValidationError(f"{field} length is invalid")
     if kind in {"attach", "attached"}:
-        if set(data) != common | {"cursor", "rows", "columns"}:
+        fields = common | {"cursor", "rows", "columns"}
+        if kind == "attach" and "editor_id" in data:
+            fields.add("editor_id")
+            if not _bounded_string(data["editor_id"], 3, 128) or re.fullmatch(r"[A-Za-z0-9_]+", data["editor_id"]) is None:
+                raise ProtocolValidationError("Invalid editor recipient identity")
+        if set(data) != fields:
             raise ProtocolValidationError(f"Terminal stream {kind} fields are invalid")
         _validate_terminal_cursor(data["cursor"], "cursor")
         _validate_terminal_geometry(data, kind)
@@ -369,6 +379,8 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
         allowed.add("selection")
         if data["action"] not in {"copy", "open"} or not isinstance(data.get("selection"), dict):
             raise ProtocolValidationError("editor_action requires copy/open and an object selection")
+    if expected_kind == "ack_editor_action" and data["outcome"] not in {"delivered", "failed"}:
+        raise ProtocolValidationError("Editor acknowledgment outcome is invalid")
     unknown = sorted(set(data) - allowed)
     if unknown:
         raise ProtocolValidationError(f"Unknown command fields: {', '.join(unknown)}")
@@ -503,6 +515,18 @@ def validate_health_response(data: object) -> dict[str, Any]:
                 or operation["client_id"] not in {client["client_id"] for client in data["clients"]}):
             raise ProtocolValidationError("Invalid active client operation")
         _required_strings(operation, ("operation_id", "client_id"), "client_operations")
+    actions = data.get("editor_actions", [])
+    if not isinstance(actions, list) or len(actions) > 32:
+        raise ProtocolValidationError("Invalid pending editor actions")
+    seen_actions = set()
+    for action in actions:
+        validate_editor_action_metadata(action)
+        if action["action_id"] in seen_actions:
+            raise ProtocolValidationError("Duplicate editor action")
+        seen_actions.add(action["action_id"])
+        client = next((c for c in data["clients"] if c["client_id"] == action["client_id"]), None)
+        if client is None or any(client[key] != action[key] for key in ("runtime_id", "notebook_id", "cell_id")):
+            raise ProtocolValidationError("Editor action client ownership mismatch")
     return dict(data)
 
 
@@ -766,3 +790,54 @@ def validate_editor_action(result: object, action: str) -> dict[str, Any]:
         if not isinstance(result["filetype"], str) or re.fullmatch(r"(?:[a-z][a-z0-9_]{0,63}|)", result["filetype"]) is None:
             raise ProtocolValidationError("Open filetype is invalid")
     return result
+
+
+def validate_editor_action_metadata(value: object) -> dict[str, str]:
+    fields = {"action_id", "client_id", "runtime_id", "notebook_id", "cell_id", "editor_id", "trace_id", "action"}
+    if not isinstance(value, dict) or set(value) != fields or value["action"] not in {"copy", "open"}:
+        raise ProtocolValidationError("Invalid editor action metadata")
+    for key in fields:
+        if not _bounded_string(value[key], 1, 128):
+            raise ProtocolValidationError("Invalid editor action identity")
+    return value
+
+
+def validate_application_action(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict) or value.get("protocol_version") != 1 or not _bounded_string(value.get("request_id"), 3, 128):
+        raise ProtocolValidationError("Invalid application action envelope")
+    base = {"protocol_version", "kind", "request_id"}
+    if value.get("kind") == "application.editor_action":
+        if set(value) != base | {"content"} or not isinstance(value["content"], dict):
+            raise ProtocolValidationError("Invalid application action request")
+        validate_editor_action(value["content"], value["content"].get("action"))
+    elif value.get("kind") == "application.action_result":
+        if (set(value) != base | {"action_id", "outcome", "reason"}
+                or value["outcome"] not in {"delivered", "failed", "cancelled", "unknown"}
+                or not _bounded_string(value["action_id"], 0, 128)
+                or not _bounded_string(value["reason"], 0, 128)):
+            raise ProtocolValidationError("Invalid application action result")
+    else:
+        raise ProtocolValidationError("Unknown application action kind")
+    return value
+
+
+def validate_editor_action_fetch(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"ok", "action", "content", "remaining_ms"} or value["ok"] is not True:
+        raise ProtocolValidationError("Invalid editor action fetch response")
+    validate_editor_action_metadata(value["action"])
+    validate_editor_action(value["content"], value["action"]["action"])
+    if type(value["remaining_ms"]) is not int or not 0 <= value["remaining_ms"] <= 30000:
+        raise ProtocolValidationError("Invalid delivery lifetime")
+    return value
+
+
+def validate_editor_action_ack(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != {"ok", "delivery"} or value["ok"] is not True or not isinstance(value["delivery"], dict):
+        raise ProtocolValidationError("Invalid editor acknowledgment response")
+    delivery = value["delivery"]
+    if set(delivery) != {"action_id", "outcome", "reason"} or not _bounded_string(delivery["action_id"], 1, 128):
+        raise ProtocolValidationError("Invalid editor acknowledgment identity")
+    validate_application_action({"protocol_version": 1, "kind": "application.action_result", "request_id": "ack", **delivery})
+    if delivery["outcome"] not in {"delivered", "failed"}:
+        raise ProtocolValidationError("Invalid editor acknowledgment outcome")
+    return value

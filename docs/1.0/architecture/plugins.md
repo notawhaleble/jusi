@@ -177,3 +177,12 @@ interrupt and failure semantics, and [ADR 0035](../adr/0035-editor-actions-trans
 for content-based copy/open. `src/jusi/plugin_api.py` is the current Python
 helper API. The terminal fixture exercises these contracts; it is not a
 production plugin or a migration of bundled `%%vd`.
+
+
+Application-originated copy/open uses [ADR 0036](../adr/0036-application-driven-editor-actions.md)
+and `src/jusi/editor_client.py`. Interactive clients advertising `editor_actions`
+receive the core-owned channel at terminal launch. Capture selection before
+calling the blocking delivery helper; success means editor acknowledgment.
+`jusivim PATH` reads at the application target. No plugin-specific Lua, terminal
+escape command, or shared frontend filesystem is involved. Writeback and
+application-originated interruptible work publication remain separate contracts.

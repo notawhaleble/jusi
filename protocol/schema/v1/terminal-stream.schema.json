@@ -29,7 +29,8 @@
         "attachment_id": {"$ref": "#/$defs/opaque_id"},
         "cursor": {"$ref": "#/$defs/cursor"},
         "rows": {"$ref": "#/$defs/rows"},
-        "columns": {"$ref": "#/$defs/columns"}
+        "columns": {"$ref": "#/$defs/columns"},
+        "editor_id": {"type": "string", "minLength": 3, "maxLength": 128, "pattern": "^[A-Za-z0-9_]+$"}
       },
       "additionalProperties": false
     },

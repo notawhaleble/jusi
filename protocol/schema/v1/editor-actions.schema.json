@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/editor-actions.schema.json",
+  "title": "Application-originated editor actions",
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": [
+        "action_id",
+        "client_id",
+        "runtime_id",
+        "notebook_id",
+        "cell_id",
+        "editor_id",
+        "trace_id",
+        "action"
+      ],
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "notebook_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "cell_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "editor_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "trace_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "action": {
+          "enum": [
+            "copy",
+            "open"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "kind",
+        "request_id",
+        "content"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "application.editor_action"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "content": {
+          "$ref": "responses.schema.json#/$defs/editor_action"
+        }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "kind",
+        "request_id",
+        "action_id",
+        "outcome",
+        "reason"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "application.action_result"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "action_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "outcome": {
+          "enum": [
+            "delivered",
+            "failed",
+            "cancelled",
+            "unknown"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "fetch": {
+      "type": "object",
+      "required": [
+        "ok",
+        "action",
+        "content",
+        "remaining_ms"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "action": {
+          "$ref": "#/$defs/metadata"
+        },
+        "content": {
+          "$ref": "responses.schema.json#/$defs/editor_action"
+        },
+        "remaining_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "copy"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "copy"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "open"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "open"
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ack": {
+      "type": "object",
+      "required": [
+        "ok",
+        "delivery"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "delivery": {
+          "type": "object",
+          "required": [
+            "action_id",
+            "outcome",
+            "reason"
+          ],
+          "properties": {
+            "action_id": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1
+            },
+            "outcome": {
+              "enum": [
+                "delivered",
+                "failed"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/result"
+    }
+  ]
+}

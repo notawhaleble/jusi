@@ -10,6 +10,7 @@ import tornado.websocket
 from tornado.iostream import StreamClosedError
 
 from jusi.application.events import EventCursorExpired
+from jusi.application.editor_actions import EditorActionError
 from jusi.application.supervisor import Supervisor, SupervisorError, new_id
 from jusi.application.terminal_surfaces import (
     TerminalAttachment,
@@ -399,13 +400,45 @@ class NotebookRuntimeRestartHandler(BaseHandler):
         self.write_json(200, {"ok": True, **result})
 
 
+class EditorActionDeliveryHandler(BaseHandler):
+    def action_error(self, action_id: str, exc: EditorActionError) -> None:
+        failure = Failure(failure_id=new_id("fail"), trace_id=new_id("trace"), layer="client",
+            operation="editor_action", reason=exc.reason, message=str(exc), retryable=False,
+            scope="request", resource=ResourceRef("supervisor", self.supervisor.supervisor_id))
+        self.write_json(409, {"ok": False, "failure": failure.to_dict()})
+
+    def get(self, action_id: str) -> None:
+        try:
+            result = self.supervisor.editor_actions.fetch(action_id, self.get_query_argument("editor_id", ""))
+        except EditorActionError as exc:
+            self.action_error(action_id, exc)
+            return
+        self.write_json(200, {"ok": True, **result})
+
+    def post(self, action_id: str) -> None:
+        command = self.parse_command("ack_editor_action")
+        if command is None:
+            return
+        try:
+            if command["action_id"] != action_id:
+                raise EditorActionError("Action identity must match URL", "invalid_request")
+            result = self.supervisor.editor_actions.acknowledge(action_id, command["editor_id"], command["outcome"])
+        except EditorActionError as exc:
+            self.action_error(action_id, exc)
+            return
+        self.write_json(200, {"ok": True, "delivery": result})
+
+
 class EventsHandler(BaseHandler):
     def initialize(self, supervisor: Supervisor) -> None:
         super().initialize(supervisor)
         self._connection_closed = False
+        self.editor_id = ""
+        self.connection_id = new_id("econn")
 
     def on_connection_close(self) -> None:
         self._connection_closed = True
+        self.supervisor.editor_actions.disconnect(self.editor_id, self.connection_id)
 
     async def get(self) -> None:
         try:
@@ -421,14 +454,19 @@ class EventsHandler(BaseHandler):
             self.write_json(409, {"ok": False, "error": "event_cursor_expired", "earliest_sequence": exc.earliest})
             return
 
+        self.editor_id = self.get_query_argument("editor_id", "")
+        if self.editor_id and (len(self.editor_id) > 128 or not self.editor_id.replace("_", "").isalnum()):
+            self.write_json(400, {"ok": False, "error": "invalid editor_id"})
+            return
+        if self.editor_id:
+            self.supervisor.editor_actions.connect(self.editor_id, self.connection_id)
         self.set_header("Content-Type", "text/event-stream; charset=utf-8")
         self.set_header("Cache-Control", "no-cache")
         self.set_header("X-Accel-Buffering", "no")
-        self.write(": connected\n\n")
-        await self.flush()
-
         cursor = after
         try:
+            self.write(": connected\n\n")
+            await self.flush()
             while not self._connection_closed:
                 if not pending:
                     pending = await asyncio.to_thread(self.supervisor.events.wait_after, cursor, timeout=1.0)
@@ -445,6 +483,8 @@ class EventsHandler(BaseHandler):
                 pending = []
         except (StreamClosedError, asyncio.CancelledError):
             return
+        finally:
+            self.supervisor.editor_actions.disconnect(self.editor_id, self.connection_id)
 
 
 class TerminalSurfaceHandler(tornado.websocket.WebSocketHandler):
@@ -496,6 +536,7 @@ class TerminalSurfaceHandler(tornado.websocket.WebSocketHandler):
                     self.supervisor.attach_terminal_surface,
                     self.surface_id,
                     attachment_id=self.attachment_id,
+                    editor_id=control.get("editor_id"),
                     rows=control["rows"],
                     cols=control["columns"],
                     after_cursor=int(control["cursor"]),
@@ -605,6 +646,7 @@ def make_application(supervisor: Supervisor) -> tornado.web.Application:
         [
             (r"/v1/health", HealthHandler, handler_args),
             (r"/v1/events", EventsHandler, handler_args),
+            (r"/v1/editor-actions/([^/]+)", EditorActionDeliveryHandler, handler_args),
             (r"/v1/surfaces/([^/]+)/terminal", TerminalSurfaceHandler, handler_args),
             (r"/v1/kernels", KernelsHandler, handler_args),
             (r"/v1/kernels/([^/]+)", KernelHandler, handler_args),

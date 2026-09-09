@@ -123,6 +123,23 @@ end
 local function bind_cell_lifecycle(session)
   local model, controller = session.model, session.controller
   local presentation, interactive = session.presentation, session.interactive
+  interactive.editor_id = controller.editor_id
+  local delivery = require("jusi.editor_delivery").new(controller, function(content, action)
+    local wins = vim.fn.win_findbuf(model.buf)
+    local win = wins[1]
+    if content.action == "open" and not win then
+      for _, record in pairs(interactive.surfaces) do
+        if record.client.client_id == action.client_id and record.buf then
+          win = vim.fn.win_findbuf(record.buf)[1]
+          if win then break end
+        end
+      end
+      if not win then return nil end
+    end
+    return require("jusi.editor_actions").apply(content, { win = win })
+  end)
+  controller.on_editor_action = function(action) delivery:request(action) end
+  session.editor_delivery = delivery
   local lifecycle = cell_lifecycle.new({ model = model, controller = controller, presentation = presentation,
     on_failure = function(failure) notify(failure_text(failure), vim.log.levels.ERROR) end })
   session.lifecycle = lifecycle

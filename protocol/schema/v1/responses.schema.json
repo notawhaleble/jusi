@@ -262,6 +262,7 @@
           "required": ["runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog"],
           "additionalProperties": false
         },
+        "editor_actions": {"type": "array", "maxItems": 32, "items": {"$ref": "editor-actions.schema.json#/$defs/metadata"}},
         "client_operations": {"type": "array", "maxItems": 1, "items": {
           "type": "object", "required": ["operation_id", "client_id", "kind"],
           "properties": {"operation_id": {"type": "string", "minLength": 1},

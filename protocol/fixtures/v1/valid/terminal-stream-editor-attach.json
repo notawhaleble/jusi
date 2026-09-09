@@ -1,0 +1,10 @@
+{
+  "protocol_version": 1,
+  "kind": "attach",
+  "surface_id": "surf_fixture",
+  "attachment_id": "attach_fixture_1",
+  "cursor": "0",
+  "rows": 40,
+  "columns": 120,
+  "editor_id": "editor_fixture"
+}

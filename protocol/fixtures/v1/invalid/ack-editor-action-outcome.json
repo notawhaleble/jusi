@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "kind": "ack_editor_action",
+  "command_id": "cmd_ack",
+  "trace_id": "trace_ack",
+  "action_id": "action_id_fixture",
+  "editor_id": "editor_id_fixture",
+  "outcome": "unknown"
+}

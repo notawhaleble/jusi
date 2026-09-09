@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "kind": "application.editor_action",
+  "request_id": "areq_fixture",
+  "content": {
+    "action": "open",
+    "path": "/target/file"
+  }
+}

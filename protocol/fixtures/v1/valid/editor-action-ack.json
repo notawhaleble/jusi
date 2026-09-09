@@ -1,0 +1,8 @@
+{
+  "ok": true,
+  "delivery": {
+    "action_id": "act_fixture",
+    "outcome": "delivered",
+    "reason": ""
+  }
+}

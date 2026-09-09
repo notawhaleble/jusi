@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import threading
 import uuid
+from dataclasses import replace
 from typing import Any
+
+from jusi.application.editor_actions import EditorActionManager
 
 from jusi.protocol import ProtocolValidationError, validate_completion, validate_editor_action
 from jusi.application.events import EventLog
 from jusi.application.ports import (
     KernelAdapterError,
+    EditorActionBroker,
     KernelAdapterSpec,
     KernelFactory,
     KernelHandle,
@@ -53,6 +57,7 @@ class Supervisor:
         plugin_workers: PluginWorkerManager | None = None,
         terminal_surfaces: TerminalSurfaceManager | None = None,
         runtime_configuration: RuntimeConfigurationLoader | None = None,
+        editor_action_broker: EditorActionBroker | None = None,
     ) -> None:
         self.supervisor_id = new_id("sup")
         self.events = EventLog(self.supervisor_id)
@@ -61,6 +66,8 @@ class Supervisor:
         self._plugin_workers = plugin_workers
         self._terminal_surfaces = terminal_surfaces
         self._runtime_configuration = runtime_configuration
+        self._editor_action_broker = editor_action_broker
+        self.editor_actions = EditorActionManager(self._publish_editor_action)
         if terminal_surfaces is not None:
             terminal_surfaces.set_fatal_handler(self.terminal_surface_failed)
         self._operation_lock = threading.RLock()
@@ -101,10 +108,15 @@ class Supervisor:
                 "runtime": self._current_runtime.to_dict() if self._current_runtime is not None else None,
                 "executions": [active_execution[0].to_dict()] if active_execution is not None else [],
                 "client_operations": list(self._client_operations.values()),
+                "editor_actions": self.editor_actions.pending(),
                 "pending_input": dict(self._pending_input) if self._pending_input is not None else None,
                 "clients": [client.to_dict() for client in self._clients.values()],
                 "surfaces": [surface.to_dict() for surface in self._surfaces.values()],
             }
+
+    def _publish_editor_action(self, metadata: dict[str, str]) -> None:
+        self.events.append(trace_id=metadata["trace_id"], layer="client", operation="editor_action",
+            kind="editor_action.requested", resource=ResourceRef("client", metadata["client_id"]), payload=metadata)
 
     def record_failure(self, failure: Failure) -> None:
         self._emit_failure(failure)
@@ -135,18 +147,21 @@ class Supervisor:
         rows: int,
         cols: int,
         after_cursor: int,
+        editor_id: str | None = None,
     ) -> tuple[Any, dict[str, int]]:
         if self._terminal_surfaces is None:
             raise TerminalSurfaceError("Terminal surfaces are not configured", reason="not_found")
         with self._state_lock:
             if surface_id not in self._surfaces:
                 raise TerminalSurfaceError(f"Unknown terminal surface {surface_id}", reason="not_found")
+            client_id = self._surfaces[surface_id].client_id
         return self._terminal_surfaces.attach(
             surface_id,
             attachment_id=attachment_id,
             rows=rows,
             cols=cols,
             after_cursor=after_cursor,
+            before_launch=lambda: self.editor_actions.bind(client_id, editor_id),
         )
 
     def detach_terminal_surface(self, surface_id: str, attachment_id: str) -> None:
@@ -815,8 +830,18 @@ class Supervisor:
                     )
                     assert self._terminal_surfaces is not None
                     try:
+                        if "editor_actions" in client.capabilities and self._editor_action_broker is not None:
+                            self.editor_actions.register(client)
+                            environment = self._editor_action_broker.open(client_id,
+                                lambda content, owner=client_id: self.editor_actions.submit(owner, content))
+                            request = replace(request, environment_overrides={**request.environment_overrides, **environment})
                         self._terminal_surfaces.prepare(surface, request)
-                    except TerminalSurfaceError as exc:
+                    except (TerminalSurfaceError, OSError) as exc:
+                        self.editor_actions.close_client(client_id)
+                        if self._editor_action_broker is not None:
+                            self._editor_action_broker.close_client(client_id)
+                        if isinstance(exc, OSError):
+                            exc = TerminalSurfaceError("Could not create application action channel", reason="spawn_failed")
                         failure = self._failure(
                             trace_id=trace_id,
                             layer="client",
@@ -1225,6 +1250,7 @@ class Supervisor:
         return {"operation": operation.to_dict(), "interrupt": result}
 
     def close_client(self, *, client_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
+        self.editor_actions.close_client(client_id)
         with self._state_lock:
             client = self._clients.get(client_id)
             if client is not None:
@@ -1763,6 +1789,9 @@ class Supervisor:
             }
 
     def close(self) -> None:
+        self.editor_actions.close()
+        if self._editor_action_broker is not None:
+            self._editor_action_broker.close()
         with self._state_lock:
             kernel = self._current_kernel
             runtime = self._current_runtime
@@ -2019,6 +2048,9 @@ class Supervisor:
         reason: str,
         failure_id: str = "",
     ) -> None:
+        self.editor_actions.close_client(client_id)
+        if self._editor_action_broker is not None:
+            self._editor_action_broker.close_client(client_id)
         with self._state_lock:
             client = self._clients.pop(client_id, None)
             surfaces = [surface for surface in self._surfaces.values() if surface.client_id == client_id]

@@ -19,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     bridge_parser.add_argument("base_url")
     bridge_parser.add_argument("surface_id")
+    bridge_parser.add_argument("--editor-id")
     return parser
 
 
@@ -26,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "terminal-bridge":
-        return terminal_bridge_main(args.base_url, args.surface_id)
+        return terminal_bridge_main(args.base_url, args.surface_id, args.editor_id)
     if args.command != "serve":
         parser.print_help()
         return 2

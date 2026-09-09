@@ -10,6 +10,7 @@ import signal
 import sys
 import tty
 import threading
+import subprocess
 
 from IPython.display import display
 
@@ -130,6 +131,7 @@ def run_application() -> int:
     tty.setraw(sys.stdin.fileno())
 
     typed = ""
+    selection = ""
 
     def draw_size(prefix: str) -> None:
         size = os.get_terminal_size(sys.stdin.fileno())
@@ -153,6 +155,8 @@ def run_application() -> int:
                     submissions.seek(offset)
                     break
                 item = json.loads(record)
+                if item["label"].startswith("followup ") or item["label"] == "initial submission":
+                    selection = item["body"]
                 body = item["body"].replace("\r", "\\r").replace("\n", "\r\n")
                 message = f"\r\x1b[2K\x1b[36m{item['label']}:\x1b[0m\r\n{body}\r\n> {typed}"
                 os.write(sys.stdout.fileno(), message.encode())
@@ -166,7 +170,25 @@ def run_application() -> int:
                 return 7
             for char in decoder.decode(value):
                 if char in "\r\n":
-                    os.write(sys.stdout.fileno(), f"\r\ninput: {typed}\r\n> ".encode())
+                    if typed in {"action:copy", "action:open", "action:file"}:
+                        from jusi import editor_client
+                        try:
+                            if typed == "action:copy":
+                                editor_client.copy(selection)
+                            elif typed == "action:open":
+                                editor_client.open_text(selection, name="application.txt", filetype="text")
+                            else:
+                                source = Path(sys.argv[2]).with_name("application-file.txt")
+                                source.write_text(selection, encoding="utf-8")
+                                try:
+                                    subprocess.run([sys.executable, "-m", "jusi.editor_client", str(source), "--filetype", "text"], check=True)
+                                finally:
+                                    source.unlink(missing_ok=True)
+                            os.write(sys.stdout.fileno(), f"\r\n{typed} delivered\r\n> ".encode())
+                        except Exception as exc:
+                            os.write(sys.stdout.fileno(), f"\r\n{typed} failed: {exc}\r\n> ".encode())
+                    else:
+                        os.write(sys.stdout.fileno(), f"\r\ninput: {typed}\r\n> ".encode())
                     typed = ""
                 elif char in "\x7f\b":
                     typed = typed[:-1]
