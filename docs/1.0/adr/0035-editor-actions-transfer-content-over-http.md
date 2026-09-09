@@ -2,6 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-09
+- Amended: user-facing editor-invoked commands withdrawn; application-driven delivery is the intended workflow.
 
 ## Decision
 
@@ -36,8 +37,8 @@ artifacts and binary exports are future extensions. Copy supports characterwise
 filetype is a validated Neovim runtime profile identifier.
 
 Neovim validates content and exact source identity before changing a destination.
-`:JusiCopy [register]` defaults to the unnamed and yank registers; an explicit
-register affects only that destination. `:JusiOpen` focuses a new listed,
+The retained Lua copy helper defaults to the unnamed and yank registers; an
+explicit register affects only that destination. The open helper focuses a new listed,
 modifiable, unsaved local buffer with a unique temporary filename derived from
 the hint. No file is written during delivery; `:write /chosen/path` is ordinary
 local editing. Final newline and empty content survive, and modeline processing
@@ -51,8 +52,9 @@ The frontend destination register and window remain frontend-owned.
 
 ## Boundary
 
-These commands can be invoked from source cells or their client projections.
-Lua callers can pass plugin-owned `selection` options through
+`JusiCopy` and `JusiOpen` are removed from the public command surface at the
+user's request. The request API and local delivery helpers remain available for
+reuse and fixture coverage. Lua callers can pass plugin-owned `selection` options through
 `require('jusi').editor_action(action, opts)`. This is an export snapshot, without
 writeback. Actions initiated solely by keys inside a target application still
 need an explicit frontend recipient/delivery contract; terminal escape sequences
@@ -67,3 +69,6 @@ final newlines, register types, and mutation-free rejection. The terminal fixtur
 proves HTTP copy/open, recoverable selection failure, and exported-buffer survival
 after source close. Tests use loopback HTTP with a separate kernel/worker; a
 remote-machine deployment test remains part of remote workflow verification.
+
+The proposed application-driven successor is described in
+[backend-driven editor actions](../architecture/backend-driven-editor-actions.md).
