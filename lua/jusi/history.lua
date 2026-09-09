@@ -68,8 +68,14 @@ function History:refresh()
   for _, win in ipairs(vim.fn.win_findbuf(self.model.buf)) do
     if not self.windows[win] or not self.windows[win].active then
       local saved = {}
-      for _, name in ipairs({ 'foldmethod', 'foldtext', 'foldenable', 'foldminlines', 'fillchars' }) do saved[name] = vim.wo[win][name] end
+      for _, name in ipairs({ 'foldmethod', 'foldtext', 'foldenable', 'foldminlines', 'fillchars', 'winhighlight' }) do saved[name] = vim.wo[win][name] end
       self.windows[win] = { saved = saved, active = true, cells = self.windows[win] and self.windows[win].cells or {} }
+      local mappings = {}
+      for mapping in saved.winhighlight:gmatch('[^,]+') do
+        if not mapping:match('^Folded:') then table.insert(mappings, mapping) end
+      end
+      table.insert(mappings, 'Folded:Normal')
+      vim.wo[win].winhighlight = table.concat(mappings, ',')
       vim.wo[win].foldmethod = 'manual'
       vim.wo[win].foldtext = "v:lua.require'jusi.history'.foldtext()"
       vim.wo[win].foldenable = true

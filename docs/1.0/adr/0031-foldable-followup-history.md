@@ -30,7 +30,7 @@ force. No new escaping or notebook format is introduced.
 
 One native manual fold covers the history boundary through the final entry,
 excluding the cell closer. Fold text is `history: N entries`, with blank fold
-fill and the muted `JusiHistoryFold` foreground (RGB and 256-color terminal
+fill, window-local `Folded:Normal` background inheritance, and the muted `JusiHistoryFold` foreground (RGB and 256-color terminal
 defaults, reapplied after colorscheme changes). Expanded history retains its literal `╞══` boundary. The previous window
 fillchars setting is restored along with other folding options. History folds
 start closed on first view. Native `zo`, `zc`, `za`, and related commands remain

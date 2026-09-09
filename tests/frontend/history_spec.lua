@@ -20,6 +20,15 @@ function M.run()
   assert(vim.fn.foldclosed(8) == -1, 'closer must remain visible')
   assert(vim.fn.foldtextresult(4) == 'history: 2 entries')
   assert(vim.opt_local.fillchars:get().fold == ' ')
+  local background = vim.o.background
+  for _, value in ipairs({ 'light', 'dark' }) do
+    vim.o.background = value
+    vim.cmd('colorscheme default')
+    assert(vim.wo.winhighlight:find('Folded:Normal', 1, true), 'fold background is not inherited from the current Normal group')
+    assert(not vim.api.nvim_get_hl(0, { name = 'JusiHistoryFold', link = false }).bg, 'summary pinned a background color')
+    assert(vim.fn.foldtextresult(4) == 'history: 2 entries' and vim.fn.foldclosed(4) == 4)
+  end
+  vim.o.background = background
   assert(vim.api.nvim_buf_get_lines(buf, 3, 4, false)[1] == '╞══')
   vim.api.nvim_win_set_cursor(0, { 2, 0 }); assert(history:toggle())
   assert(vim.fn.foldclosed(4) == -1)
