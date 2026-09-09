@@ -8,7 +8,15 @@ When the directory is explicitly placed on `PYTHONPATH`, fresh discovery finds
 the `terminal_fixture` exact plugin. A `%%terminal_fixture` cell then traverses
 the real kernel adapter, handoff, worker, terminal-surface request, target PTY,
 WebSocket, bridge, and Neovim terminal projection. The application reports its
-first and later terminal geometries and echoes input with ANSI styling.
+first and later terminal geometries, displays initial/followup bodies, and
+provides a simple editable input line. It is a presentation fixture, not a code
+or SQL evaluator. Enter displays the typed line, Backspace edits it, and Ctrl-C
+exits the target application.
+
+A worker-owned temporary JSON-lines journal delivers submissions to the terminal
+application, including submissions made before it attaches. The journal is
+private to that worker and removed by its close hook. Core transport remains
+unaware of this fixture-specific communication.
 
 For a manual run, create an untracked `/tmp/jusi-terminal.vipynb` containing:
 
@@ -32,6 +40,9 @@ PYTHONPATH="$PWD/tests/fixtures/terminal_plugin${PYTHONPATH:+:$PYTHONPATH}" \
 
 Run `:JusiServiceStart`, `:JusiStartKernel`, place the cursor in the cell, and
 run `:JusiExecute`. The interactive split should report its initial geometry;
-typing there should echo through the target PTY. Return to the notebook and run
+typing there should appear immediately through the target PTY. Change the active
+cell payload and use `:JusiSubmit` to send a followup: the same terminal shows a
+numbered followup and its body, while the notebook captures history. Successful
+followups produce no frontend notification. Return to the notebook and run
 `:JusiClose`, then `:JusiServiceStop`. Explicit close must remove the
 terminal while the kernel remains on until service stop.

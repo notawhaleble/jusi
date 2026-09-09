@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import codecs
+import json
 import os
+import select
+import tempfile
+from pathlib import Path
 import signal
 import sys
 import tty
@@ -57,6 +62,16 @@ class FixtureWorker:
     def __init__(self, context) -> None:  # type: ignore[no-untyped-def]
         self.context = context
         self.followup_count = 0
+        self.directory = tempfile.TemporaryDirectory(prefix="jusi-terminal-fixture-")
+        self.submissions = Path(self.directory.name) / "submissions.jsonl"
+        self.submissions.touch(mode=0o600)
+
+    def publish(self, label: str, body: str) -> None:
+        with self.submissions.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps({"label": label, "body": body}) + "\n")
+
+    def close(self) -> None:
+        self.directory.cleanup()
 
     def handle(self, operation: str, payload: dict) -> WorkerResult:
         if operation == "complete":
@@ -69,14 +84,16 @@ class FixtureWorker:
             ]})
         if operation == "followup":
             self.followup_count += 1
+            self.publish(f"followup {self.followup_count}", payload["body"])
             return WorkerResult({"body": payload["body"], "count": self.followup_count})
         if operation != "execute":
             raise ValueError(f"unsupported fixture operation: {operation}")
+        self.publish("initial submission", payload.get("body", ""))
         return WorkerResult(
             {"accepted": True},
             (terminal_surface(
                 "terminal_fixture_main",
-                (sys.executable, "-m", "jusi_terminal_fixture", "--application"),
+                (sys.executable, "-m", "jusi_terminal_fixture", "--application", str(self.submissions)),
                 environment_overrides={"TERM": "xterm-256color"},
                 signal=True,
             ),),
@@ -96,18 +113,44 @@ def run_application() -> int:
 
     signal.signal(signal.SIGWINCH, lambda *_: draw_size("resized"))
     draw_size("initial")
-    os.write(sys.stdout.fileno(), b"Type in this terminal; the target echoes opaque bytes. Close with :JusiClose.\r\n> ")
-    while True:
-        value = os.read(sys.stdin.fileno(), 4096)
-        if not value:
-            return 0
-        if b"\x03" in value:
-            os.write(sys.stdout.fileno(), b"\r\ntarget received control-c and will exit\r\n")
-            return 7
-        os.write(sys.stdout.fileno(), b"\x1b[33mtarget:" + value + b"\x1b[0m")
+    os.write(sys.stdout.fileno(), b"Followups appear here. Type a line and press Enter; Ctrl-C exits.\r\n> ")
+    typed = ""
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    with open(sys.argv[2], "rb") as submissions:
+        while True:
+            # The worker's private journal also preserves submissions made before
+            # terminal attachment. Only complete records are consumed.
+            while True:
+                offset = submissions.tell()
+                record = submissions.readline()
+                if not record.endswith(b"\n"):
+                    submissions.seek(offset)
+                    break
+                item = json.loads(record)
+                body = item["body"].replace("\r", "\\r").replace("\n", "\r\n")
+                message = f"\r\x1b[2K\x1b[36m{item['label']}:\x1b[0m\r\n{body}\r\n> {typed}"
+                os.write(sys.stdout.fileno(), message.encode())
+            if not select.select([sys.stdin], [], [], 0.05)[0]:
+                continue
+            value = os.read(sys.stdin.fileno(), 4096)
+            if not value:
+                return 0
+            if b"\x03" in value:
+                os.write(sys.stdout.fileno(), b"\r\ntarget received control-c and will exit\r\n")
+                return 7
+            for char in decoder.decode(value):
+                if char in "\r\n":
+                    os.write(sys.stdout.fileno(), f"\r\ninput: {typed}\r\n> ".encode())
+                    typed = ""
+                elif char in "\x7f\b":
+                    typed = typed[:-1]
+                    os.write(sys.stdout.fileno(), ("\r\x1b[2K> " + typed).encode())
+                elif char.isprintable():
+                    typed += char
+                    os.write(sys.stdout.fileno(), char.encode())
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] != ["--application"]:
+    if len(sys.argv) != 3 or sys.argv[1] != "--application":
         raise SystemExit("fixture module is not a user command")
     raise SystemExit(run_application())

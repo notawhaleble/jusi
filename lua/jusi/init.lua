@@ -492,8 +492,7 @@ function M.followup(buf, row)
     return nil
   end
   return session.controller:followup(cell.id, function(_, failure)
-    if failure then notify(failure_text(failure), vim.log.levels.ERROR)
-    else notify("followup delivered") end
+    if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
   end)
 end
 

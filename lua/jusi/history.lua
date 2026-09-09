@@ -10,7 +10,7 @@ function M.foldtext()
   local self = instances[vim.api.nvim_get_current_buf()]
   local cell = self and self.model:cell_at_row(vim.v.foldstart - 1)
   local s = cell and self.model:cell_snapshot(cell)
-  return '╞══ history: ' .. (s and #s.history_entries or 0) .. ' entries'
+  return 'history: ' .. (s and #s.history_entries or 0) .. ' entries'
 end
 function History:update(win, id)
   local state = self.windows[win]
@@ -65,12 +65,13 @@ function History:refresh()
   for _, win in ipairs(vim.fn.win_findbuf(self.model.buf)) do
     if not self.windows[win] or not self.windows[win].active then
       local saved = {}
-      for _, name in ipairs({ 'foldmethod', 'foldtext', 'foldenable', 'foldminlines' }) do saved[name] = vim.wo[win][name] end
+      for _, name in ipairs({ 'foldmethod', 'foldtext', 'foldenable', 'foldminlines', 'fillchars' }) do saved[name] = vim.wo[win][name] end
       self.windows[win] = { saved = saved, active = true, cells = self.windows[win] and self.windows[win].cells or {} }
       vim.wo[win].foldmethod = 'manual'
       vim.wo[win].foldtext = "v:lua.require'jusi.history'.foldtext()"
       vim.wo[win].foldenable = true
       vim.wo[win].foldminlines = 0
+      vim.api.nvim_win_call(win, function() vim.opt_local.fillchars:append({ fold = ' ' }) end)
       for _, cell in ipairs(self.model:ordered_cells()) do self:update(win, cell.id) end
     else
       for id in pairs(dirty) do self:update(win, id) end

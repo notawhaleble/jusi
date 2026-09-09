@@ -77,14 +77,18 @@ function M.run()
     assert(not followup_failure, vim.inspect(followup_failure))
     assert(response.result.body == "  literal followup  \nα" and response.result.count == 1)
     assert(response.client.client_id == original_client)
+    wait_for(3000, function()
+      local text = terminal_text(record.buf)
+      return text:find("followup 1:", 1, true) and text:find("literal followup", 1, true) and text:find("α", 1, true)
+    end, "plugin did not visibly display its followup body")
     assert(vim.deep_equal(session.model:history(record.client.cell_id)[1], { "  literal followup  ", "α" }), "followup history lost submitted text")
     wait_for(3000, function() return session.marks.records[record.client.cell_id].state == "followup" end,
       "followup mark stayed busy after delivery")
     assert(session.interactive.surfaces[original_surface] == record, "followup replaced the surface")
     jusi.submit(buf, 1)
     wait_for(5000, function()
-      return vim.tbl_contains(notifications, "followup delivered")
-    end, "JusiFollowup did not report acceptance")
+      return terminal_text(record.buf):find("followup 2:", 1, true) ~= nil
+    end, "followup was not displayed by the plugin")
     vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "select * from SUFFIX" })
     vim.api.nvim_win_set_cursor(0, { 2, #"select * from " })
     _G.jusi_e2e_plugin_ready = function()
@@ -116,9 +120,13 @@ function M.run()
 
     vim.api.nvim_chan_send(record.job_id, "h")
     wait_for(3000, function()
-      return terminal_text(record.buf):find("target:h", 1, true) ~= nil
+      return terminal_text(record.buf):find("> h", 1, true) ~= nil
     end, "single terminal key did not immediately round-trip through the target PTY")
 
+    vim.api.nvim_chan_send(record.job_id, "ello\r")
+    wait_for(3000, function() return terminal_text(record.buf):find("input: hello", 1, true) ~= nil end,
+      "terminal typing did not produce a readable complete line")
+    assert(not vim.tbl_contains(notifications, "followup delivered"))
     local first_client_id = record.client.client_id
     local first_surface_id = record.surface.surface_id
     vim.fn.jobstop(record.job_id)
