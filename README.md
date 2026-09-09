@@ -54,7 +54,7 @@ returns to cell-mode controls.
 
 | Cell-mode key | Action |
 | --- | --- |
-| `j` / `n`, `k` | Next / previous cell or expanded history entry; counts work |
+| `j`, `k` | Next / previous cell or expanded history entry; counts work |
 | Enter | Execute, send pending input, send a followup, or restore history by context |
 | `H` | Toggle history |
 | Ctrl-P / Ctrl-N | Restore older / newer history |

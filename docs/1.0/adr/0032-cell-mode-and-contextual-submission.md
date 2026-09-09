@@ -13,7 +13,7 @@ While enabled, native Normal-mode keys select cell actions:
 
 | Key | Action |
 | --- | --- |
-| j / n, k | Next / previous cell or expanded history entry, with a count |
+| j, k | Next / previous cell or expanded history entry, with a count |
 | Enter | Contextual submission or history restoration |
 | H | Toggle owning cell history |
 | Ctrl-P / Ctrl-N | Restore older / newer history body, clamped at the ends |

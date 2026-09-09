@@ -33,7 +33,7 @@ function Mode:set(enabled)
   for key in pairs(vim.deepcopy(self.maps)) do if key ~= '<Space>' then self:unmap(key) end end
   if enabled then
     local actions = {
-      j = function() self:move(1, true) end, n = function() self:move(1, true) end,
+      j = function() self:move(1, true) end,
       k = function() self:move(-1, true) end,
       ['<CR>'] = function() require('jusi').submit() end,
       H = function() self.editor.history:toggle() end,
