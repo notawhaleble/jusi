@@ -2,6 +2,9 @@ local M = {}
 local History = {}
 History.__index = History
 local instances = {}
+local function highlights()
+  vim.api.nvim_set_hl(0, 'JusiHistoryFold', { fg = '#7f848e', ctermfg = 102, default = true })
+end
 local function position(self, mark)
   local p = vim.api.nvim_buf_get_extmark_by_id(self.model.buf, self.ns, mark, {})
   return p[1] and p[1] + 1
@@ -10,7 +13,7 @@ function M.foldtext()
   local self = instances[vim.api.nvim_get_current_buf()]
   local cell = self and self.model:cell_at_row(vim.v.foldstart - 1)
   local s = cell and self.model:cell_snapshot(cell)
-  return 'history: ' .. (s and #s.history_entries or 0) .. ' entries'
+  return { { 'history: ' .. (s and #s.history_entries or 0) .. ' entries', 'JusiHistoryFold' } }
 end
 function History:update(win, id)
   local state = self.windows[win]
@@ -250,11 +253,13 @@ function History:close()
   if vim.api.nvim_buf_is_valid(self.model.buf) then vim.api.nvim_buf_clear_namespace(self.model.buf, self.ns, 0, -1) end
 end
 function M.new(model)
+  highlights()
   local self = setmetatable({ model = model, windows = {}, dirty = {}, pending = {}, deferred = {}, restored = vim.b[model.buf].jusi_history_views or {},
     ns = vim.api.nvim_create_namespace('jusi_history_' .. model.notebook_id) }, History)
   instances[model.buf] = self
   vim.b[model.buf].jusi_history_views = nil
   self.group = vim.api.nvim_create_augroup('jusi_history_' .. model.notebook_id, { clear = true })
+  vim.api.nvim_create_autocmd('ColorScheme', { group = self.group, callback = highlights })
   vim.api.nvim_create_autocmd('BufWinEnter', { group = self.group, buffer = model.buf, callback = function() self:changed() end })
   vim.api.nvim_create_autocmd('BufWinLeave', { group = self.group, buffer = model.buf, callback = function()
     local win = vim.api.nvim_get_current_win()

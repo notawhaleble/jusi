@@ -4,7 +4,7 @@ Updated: 2026-09-09
 
 ## Current Facts
 
-- Folded history now displays plain `history: N entries` with blank fill; expanded history retains its delimiter. The terminal development fixture visibly displays initial/followup bodies and supports readable line input. Followup success notifications are removed; failures remain visible.
+- Folded history now displays plain `history: N entries` with a muted foreground and blank fill; expanded history retains its delimiter. The terminal development fixture visibly displays initial/followup bodies and supports readable line input. Followup success notifications are removed; failures remain visible.
 
 - Offline navigation and buffer-local cell mode now provide legacy-style Normal-mode keys, double-line border overlays in the existing status colors, native Insert behavior, cell text operations and contextual `JusiSubmit` dispatch. Navigation follows linked cells and expanded history; input/followup identities and full cell retirement remain unchanged. See [ADR 0032](adr/0032-cell-mode-and-contextual-submission.md). Manual interaction review is the current frontend boundary.
 

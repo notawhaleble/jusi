@@ -78,7 +78,7 @@ repeats move to the front. Magic headers are omitted. Ordinary kernel execution
 and kernel input replies do not add history.
 
 History starts folded as `history: N entries`, without a delimiter prefix or
-dot fill, with the cell closer visible. Expanded history keeps its `╞══` delimiter.
+dot fill, using the muted `JusiHistoryFold` foreground, with the cell closer visible. Expanded history keeps its `╞══` delimiter.
 Use native `zo`, `zc`, or `za`, or `:JusiHistoryToggle` from anywhere in the cell.
 Each window keeps its own fold state. Open history is editable notebook text
 with isolated syntax and indentation for each entry.
