@@ -17,7 +17,8 @@ Cleanup uses full cell-artifact close, fences late output, and closes any final
 non-followup client. It does not delete cell text or change its identity/status.
 
 `JusiPark` toggles retention of the owning cell's current output/client. Parking
-is independent of outcome and has no default binding or extra mark. Unparking
+is independent of outcome. Cell-mode `S` toggles it; `~` appears beside the existing
+status symbol in the same color. Unparking
 makes the artifact eligible on the next accepted execution. Explicit close,
 opener retirement and re-executing the parked cell itself clear its retention;
 the one-artifact-per-cell invariant remains unchanged. Runtime replacement

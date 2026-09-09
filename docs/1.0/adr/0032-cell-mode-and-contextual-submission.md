@@ -20,6 +20,7 @@ While enabled, native Normal-mode keys select cell actions:
 | C | Clear active payload and enter Insert, preserving magic/header and history |
 | X | Delete owning cell text; existing opener retirement performs full cleanup |
 | Y / P | Copy whole cell text / paste below, with fresh runtime identity |
+| S | Toggle output parking (`~` beside the status symbol) |
 | B | Create an empty cell below and enter Insert |
 | Q | Existing full artifact close |
 
@@ -74,7 +75,7 @@ presentation, so toggling one notebook does not change another.
 Explicit mode transitions rerender delimiter marks. Body typing and navigation
 do not scan status records or contact the backend. Model replacement tears down
 old mappings/autocommands and restores the buffer's mode on the new model.
-Parking, client-number navigation, and legacy rebuild shortcuts remain outside
+Client-number navigation and legacy rebuild shortcuts remain outside
 this slice; no placeholder bindings are installed for them.
 
 ## Verification

@@ -41,6 +41,7 @@ function Mode:set(enabled)
       Y = function() self:copy() end, P = function() self:paste() end,
       B = function() self:insert(false) end,
       Q = function() require('jusi').close() end,
+      S = function() require('jusi').park() end,
       ['<C-P>'] = function() self:history_relative(-1) end,
       ['<C-N>'] = function() self:history_relative(1) end,
     }

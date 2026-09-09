@@ -21,8 +21,8 @@ other kernel generations are protected. Cleanup never classifies a followup
 client as final solely from its initiating execution's completion.
 
 `JusiPark` toggles a frontend retention flag on the current artifact's cell.
-It works from source or projection context. It has no default keybinding or
-status decoration. Close, opener retirement and direct re-execution clear it;
+It works from source or projection context. Cell-mode `S` invokes it; a `~` beside the outcome symbol projects retention
+without replacing the outcome color. Close, opener retirement and direct re-execution clear it;
 restart discards it with the old runtime. Unparking defers cleanup until a new
 execution starts. Full cleanup uses the existing cell close path, including
 client teardown and late-output fencing.

@@ -4,7 +4,7 @@ Updated: 2026-09-09
 
 ## Current Facts
 
-- Accepted new executions now close final unparked outputs on the same kernel through full artifact cleanup, including Enter's execution branch. Busy work and followup clients survive; `JusiPark` toggles explicit retention (ADR 0033). Folded history inherits Normal through a window-local mapping, preventing stale/destructive backgrounds after theme changes (Incident 0013).
+- Accepted new executions now close final unparked outputs on the same kernel through full artifact cleanup, including Enter's execution branch. Busy work and followup clients survive; `JusiPark` or cell-mode `S` toggles explicit retention, shown by `~` beside the status symbol (ADR 0033). Folded history inherits Normal through a window-local mapping, preventing stale/destructive backgrounds after theme changes (Incident 0013).
 
 - Folded history now displays plain `history: N entries` with a muted foreground and blank fill; expanded history retains its delimiter. The terminal development fixture visibly displays initial/followup bodies and supports readable line input. Followup success notifications are removed; failures remain visible.
 

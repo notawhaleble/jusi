@@ -31,9 +31,15 @@ function Lifecycle:cleanup_completed(started)
   end
 end
 
+function Lifecycle:set_park(cell_id, parked)
+  local previous = self.parked[cell_id] == true
+  self.parked[cell_id] = parked and true or nil
+  if previous ~= (parked == true) and self.on_park_changed then self.on_park_changed(cell_id) end
+  return parked == true
+end
+
 function Lifecycle:toggle_park(cell_id)
-  self.parked[cell_id] = not self.parked[cell_id] or nil
-  return self.parked[cell_id] == true
+  return self:set_park(cell_id, not self.parked[cell_id])
 end
 
 function Lifecycle:close_cell(cell_id)
@@ -42,7 +48,7 @@ function Lifecycle:close_cell(cell_id)
     if self.retired[cell_id] then self.again[cell_id] = true end
     return
   end
-  self.parked[cell_id] = nil
+  self:set_park(cell_id, false)
   local controller = self.controller
   local executions, clients = {}, {}
   for id, execution in pairs(controller.executions) do

@@ -27,6 +27,8 @@ function Marks:render(cell_id)
   local snapshot = self.model:cell_snapshot(cell_id)
   if not snapshot then self:retire(cell_id); return end
   local style = record and styles[record.state] or { "", "JusiCellIdle" }
+  local symbol = style[1]
+  if self.is_parked and self.is_parked(cell_id) then symbol = symbol == "" and "~" or (symbol .. " ~") end
   local cell_mode = vim.b[self.model.buf].jusi_cell_mode_active == true
   local parser = require("jusi.notebook.parser")
   if snapshot.close_row then
@@ -43,7 +45,9 @@ function Marks:render(cell_id)
   if not record then
     self.idle[cell_id] = vim.api.nvim_buf_set_extmark(self.model.buf, self.namespace, snapshot.open_row, 0, {
       id = self.idle[cell_id], end_col = #require("jusi.notebook.parser").lines.open,
-      virt_text = cell_mode and { { "╔══", style[2] } } or {}, virt_text_pos = "overlay",
+      virt_text = cell_mode and { { "╔══" .. (symbol ~= "" and (" " .. symbol) or ""), style[2] } }
+        or (symbol ~= "" and { { symbol, style[2] } } or {}),
+      virt_text_pos = cell_mode and "overlay" or "eol",
       right_gravity = true, end_right_gravity = false, invalidate = true, undo_restore = false,
       hl_group = style[2], priority = 120,
     })
@@ -53,7 +57,6 @@ function Marks:render(cell_id)
     vim.api.nvim_buf_del_extmark(self.model.buf, self.namespace, self.idle[cell_id])
     self.idle[cell_id] = nil
   end
-  local symbol = style[1]
   record.mark = vim.api.nvim_buf_set_extmark(self.model.buf, self.namespace, snapshot.open_row, 0, {
     id = record.mark, end_col = #require("jusi.notebook.parser").lines.open,
     right_gravity = true, end_right_gravity = false, invalidate = true, undo_restore = false,

@@ -128,6 +128,8 @@ local function bind_cell_lifecycle(session)
   session.lifecycle = lifecycle
   local marks = require("jusi.marks").new(model, controller)
   session.marks = marks
+  marks.is_parked = function(id) return lifecycle.parked[id] == true end
+  lifecycle.on_park_changed = function(id) marks:render(id) end
   local editing = require("jusi.editing").new(model, controller)
   session.editing = editing
   controller.on_submission = function(command, id) editing.history:submit(command, id) end
@@ -145,7 +147,7 @@ local function bind_cell_lifecycle(session)
     controller[name] = function(cell_id, ...)
       if lifecycle:accepts(cell_id) then
         if name == "on_execution_started" then
-          lifecycle.parked[cell_id] = nil
+          lifecycle:set_park(cell_id, false)
           lifecycle:cleanup_completed(select(1, ...))
         end
         callbacks[name](cell_id, ...)
