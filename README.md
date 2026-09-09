@@ -47,8 +47,9 @@ notebook; editing does not call the backend. See [ADR 0030](docs/1.0/adr/0030-ce
 
 ## Navigation And Cell Mode
 
-Press Space in Normal mode to toggle cell mode. Its delimiter/status colors are
-inverted; Insert mode uses normal colors and native editing/completion, and Esc
+Press Space in Normal mode to toggle cell mode. Its borders display as
+`╔══` / `╚══` in the existing status colors; Insert mode restores the rounded
+borders and native editing/completion, and Esc
 returns to cell-mode controls.
 
 | Cell-mode key | Action |

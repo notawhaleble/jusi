@@ -26,7 +26,7 @@ Space and mode-specific mappings are buffer-local. Prior buffer-local mappings
 are restored on exit/detach; global mappings become visible again. User remaps
 made while cell mode is active are not removed on exit. No Insert-mode mappings
 are introduced. Native editing and completion remain available. Insert mode
-suspends inverted colors; leaving Insert resumes the selected cell mode.
+restores rounded borders; leaving Insert resumes the selected cell mode.
 
 `JusiNextCell` and `JusiPreviousCell` navigate only cells, with counts, outside
 cell mode as well. `JusiCellNewAbove` and `JusiCellNewBelow` insert an empty valid
@@ -62,12 +62,13 @@ cell identity rather than interpreting terminal screen rows as notebook rows.
 
 ## Presentation And Ownership
 
-Status extmarks retain their symbols and colors. Cell mode uses reverse-video
-variants of the same highlight groups on both delimiters and the status symbol;
-RGB and terminal-color paths are both supported. The body text and sign/status
-columns are unchanged. Offline notebooks now receive idle delimiter marks too.
-Highlight groups are global definitions, but each buffer chooses its own normal
-or inverted groups, so toggling one notebook does not recolor another.
+Status extmarks retain their symbols and colors. Following manual review, cell
+mode replaces reverse-video styling with overlay virtual text: `╔══` and `╚══`.
+The status symbol stays after the opener. The actual rounded delimiters remain
+unchanged in the buffer; no conceal settings or sign/status columns are needed.
+RGB and terminal-color paths use the same existing highlight groups. Offline
+notebooks receive idle delimiter marks too. Each buffer selects its own overlay
+presentation, so toggling one notebook does not change another.
 
 Explicit mode transitions rerender delimiter marks. Body typing and navigation
 do not scan status records or contact the backend. Model replacement tears down
@@ -79,6 +80,6 @@ this slice; no placeholder bindings are installed for them.
 
 `tests/frontend/cellmode_spec.lua` exercises real mapped keys, count/boundary
 navigation, expanded/folded history, offline restore, clipboard identity,
-localized deletion, mapping restoration, Insert transitions, inverted marks,
+localized deletion, mapping restoration, Insert transitions, double-line overlays,
 payload replacement, and submission precedence. Real service tests exercise
 `JusiSubmit` for new execution, kernel input and durable-client followups.
