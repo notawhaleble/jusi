@@ -4,6 +4,8 @@ Updated: 2026-09-09
 
 ## Current Facts
 
+- Accepted new executions now close final unparked outputs on the same kernel through full artifact cleanup, including Enter's execution branch. Busy work and followup clients survive; `JusiPark` toggles explicit retention (ADR 0033). Folded history inherits Normal through a window-local mapping, preventing stale/destructive backgrounds after theme changes (Incident 0013).
+
 - Folded history now displays plain `history: N entries` with a muted foreground and blank fill; expanded history retains its delimiter. The terminal development fixture visibly displays initial/followup bodies and supports readable line input. Followup success notifications are removed; failures remain visible.
 
 - Offline navigation and buffer-local cell mode now provide legacy-style Normal-mode keys, double-line border overlays in the existing status colors, native Insert behavior, cell text operations and contextual `JusiSubmit` dispatch. Navigation follows linked cells and expanded history; input/followup identities and full cell retirement remain unchanged. See [ADR 0032](adr/0032-cell-mode-and-contextual-submission.md). Manual interaction review is the current frontend boundary.
@@ -20,7 +22,7 @@ Updated: 2026-09-09
 
 - Cell status now uses opener-anchored extmarks with symbols after the opener and matching opener/closer colors, with purple busy *, green done ✓, red error ✗, orange interrupted !, blue followup >, and yellow never-executed delimiters. RGB and 256-color terminal palettes are provided. No sign or status columns are used. Execution/input, client lifecycle and exact followup operations drive the projection; ordinary typing only moves existing extmarks. See [ADR 0028](adr/0028-cell-status-is-an-inline-extmark-projection.md).
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0032 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0033 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
@@ -129,7 +131,7 @@ full cell close outside the typing callback: exact execution interrupt, client
 cleanup, and late-output fencing. Merge keeps A; B fully closes; undo creates
 fresh C. See [ADR 0025](adr/0025-opener-retirement-closes-cell-resources.md) and
 [structural edit policy](architecture/cell-structural-edits.md).
-Kernel-wide cleanup of final outputs with explicit parking is recorded in
-[output retention](architecture/output-retention.md) and remains deferred.
+Kernel-wide cleanup of final outputs with explicit `JusiPark` retention is implemented
+in [ADR 0033](adr/0033-completed-output-retention.md).
 External SQL-family/provider migration is still deferred; their clean 0.x
 repositories remain unchanged.

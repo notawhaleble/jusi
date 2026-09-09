@@ -1,34 +1,26 @@
 # Output Retention On New Execution
 
-- Status: user requirement recorded; implementation deferred
-- Date: 2026-09-07
+Status: implemented
 
-A real new `JusiExecute` should clean completed, unparked cell outputs across
-its kernel, not merely replace the current cell's output. Final outcomes include
-successful and failed execution (user-facing done/error). Input submission and
-plugin followup submission do not trigger this cleanup.
+An authoritative `execution.started` event cleans completed, unparked artifacts
+from other cells on the same kernel. Both `JusiExecute` and Enter's new-execution
+branch take this path. Rejected submissions do not trigger cleanup. Input
+replies and plugin followups do not create an execution and do not trigger it.
 
-Busy work and artifacts awaiting a followup remain by design. A durable plugin
-client must not be classified as final solely because its initiating kernel
-execution completed; its interaction lifetime is distinct.
+Candidates use the current presentation/client execution identity and observed
+controller outcome, not status-mark colors. Successful, failed, interrupted and
+cancelled outcomes are final. Any running work on the cell protects it. Live
+clients declaring followup remain by design, regardless of their initial
+execution outcome. Unknown outcomes and other kernels are preserved.
 
-An explicit cell-oriented command, tentatively `JusiPark` or `JusiPersist`,
-should retain an output across subsequent executions. The command name and
-visual status are not yet selected. Retention is conceptually separate from
-execution outcome: a retained artifact may still have a successful or failed
-execution outcome. It adds no kernel state.
+Cleanup uses full cell-artifact close, fences late output, and closes any final
+non-followup client. It does not delete cell text or change its identity/status.
 
-Before implementation, resolve:
+`JusiPark` toggles retention of the owning cell's current output/client. Parking
+is independent of outcome and has no default binding or extra mark. Unparking
+makes the artifact eligible on the next accepted execution. Explicit close,
+opener retirement and re-executing the parked cell itself clear its retention;
+the one-artifact-per-cell invariant remains unchanged. Runtime replacement
+creates a fresh retention table and does not resurrect retained artifacts.
 
-- the authoritative classification of final, busy, and followup artifacts;
-- whether interrupted/cancelled artifacts are automatically cleaned;
-- cleanup timing if the new execution is rejected or fails to start;
-- re-executing the parked cell itself, including whether multiple retained
-  artifacts per cell are supported (the initial invariant permits only one);
-- unpark behavior and retention scope across restart;
-- presentation of retention alongside execution status.
-
-Opener retirement is already defined by ADR 0025: it fully closes the owning
-cell regardless of parking. Parking does not protect resources from owner deletion.
-
-Current `JusiExecute` behavior remains unchanged until this dedicated slice.
+See [ADR 0033](../adr/0033-completed-output-retention.md).

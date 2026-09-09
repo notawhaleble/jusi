@@ -67,6 +67,11 @@ returns to cell-mode controls.
 `:JusiCellNewAbove` / `:JusiCellNewBelow` create an empty cell and enter Insert.
 `:JusiCellEdit`, `:JusiCellDelete`, `:JusiCellCopy`, `:JusiCellPasteBelow`,
 `:JusiCellModeToggle`, and `:JusiSubmit` expose the same actions explicitly.
+A new accepted execution closes completed outputs on its kernel. Busy cells and
+followup clients remain. Use `:JusiPark` on an output or its source cell to toggle
+retention across later executions; explicit close or re-executing that cell
+still replaces its artifact.
+
 The original `JusiExecute`, `JusiInput`, and `JusiFollowup` commands remain
 available when you want a specific submission variant.
 

@@ -143,7 +143,13 @@ local function bind_cell_lifecycle(session)
   local callbacks = presentation:controller_callbacks()
   for _, name in ipairs({ "on_execution_started", "on_output", "on_input_requested", "on_input_replied" }) do
     controller[name] = function(cell_id, ...)
-      if lifecycle:accepts(cell_id) then callbacks[name](cell_id, ...) end
+      if lifecycle:accepts(cell_id) then
+        if name == "on_execution_started" then
+          lifecycle.parked[cell_id] = nil
+          lifecycle:cleanup_completed(select(1, ...))
+        end
+        callbacks[name](cell_id, ...)
+      end
     end
   end
   controller.on_client_created = function(client)
@@ -472,6 +478,19 @@ function M.submit(buf, row)
   return M.execute(context_buf, row)
 end
 
+function M.park(buf, row)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
+  if not session then return end
+  local cell = cell_from_context(session, context_buf, row)
+  if not cell then notify("cursor is not inside a cell", vim.log.levels.ERROR); return end
+  local has_artifact = session.presentation:buffer_for_cell(cell.id) ~= nil or #clients_for_cell(session, cell.id) > 0
+  if not has_artifact then notify("cell has no execution artifact", vim.log.levels.INFO); return end
+  local parked = session.lifecycle:toggle_park(cell.id)
+  notify(parked and "output parked" or "output unparked")
+  return parked
+end
+
 function M.complete()
   local session = require_session(vim.api.nvim_get_current_buf())
   if not session then return end
@@ -644,6 +663,7 @@ local function create_commands()
     return
   end
   commands_created = true
+  vim.api.nvim_create_user_command("JusiPark", function() M.park() end, {})
   vim.api.nvim_create_user_command("JusiSubmit", function() M.submit() end, {})
   for name, action in pairs({ JusiCellModeToggle = "toggle", JusiCellEdit = "edit", JusiCellDelete = "delete",
       JusiCellCopy = "copy", JusiCellPasteBelow = "paste" }) do

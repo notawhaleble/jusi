@@ -3,12 +3,46 @@ local M = {}
 local Lifecycle = {}
 Lifecycle.__index = Lifecycle
 
+-- Only accepted new executions trigger retention cleanup. Outcomes come from
+-- controller identities, never status marks or a client factory's return value.
+function Lifecycle:cleanup_completed(started)
+  if self.closed then return end
+  local candidates, protected = {}, {}
+  for id, pending in pairs(self.presentation.pending) do
+    candidates[id] = pending.execution_id
+  end
+  for _, client in pairs(self.controller.clients) do
+    if client.notebook_id == self.model.notebook_id and client.kernel_id == started.kernel_id then
+      if vim.tbl_contains(client.capabilities, "followup") then protected[client.cell_id] = true end
+      candidates[client.cell_id] = client.execution_id
+    end
+  end
+  for _, execution in pairs(self.controller.executions) do
+    if execution.outcome == "running" then protected[execution.cell_id] = true end
+  end
+  for id, execution_id in pairs(candidates) do
+    local execution = self.controller.executions[execution_id]
+    if id ~= started.cell_id and not protected[id] and not self.parked[id] and execution
+        and execution.notebook_id == self.model.notebook_id and execution.kernel_id == started.kernel_id
+        and (execution.outcome == "succeeded" or execution.outcome == "failed"
+          or execution.outcome == "interrupted" or execution.outcome == "cancelled") then
+      self:close_cell(id)
+    end
+  end
+end
+
+function Lifecycle:toggle_park(cell_id)
+  self.parked[cell_id] = not self.parked[cell_id] or nil
+  return self.parked[cell_id] == true
+end
+
 function Lifecycle:close_cell(cell_id)
   if self.closed then return end
   if self.inflight[cell_id] then
     if self.retired[cell_id] then self.again[cell_id] = true end
     return
   end
+  self.parked[cell_id] = nil
   local controller = self.controller
   local executions, clients = {}, {}
   for id, execution in pairs(controller.executions) do
@@ -121,7 +155,7 @@ end
 function M.new(options)
   return setmetatable({ model = options.model, controller = options.controller,
     presentation = options.presentation, on_failure = options.on_failure,
-    retired = {}, scheduled = {}, inflight = {}, again = {}, client_inflight = {},
+    parked = {}, retired = {}, scheduled = {}, inflight = {}, again = {}, client_inflight = {},
     interrupted = {}, clients_closed = {}, closed = false }, Lifecycle)
 end
 return M
