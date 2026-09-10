@@ -17,9 +17,11 @@ local config = {
   service_command = { "jusi", "serve" },
   terminal_bridge_command = { "jusi", "terminal-bridge" },
   service_timeout_ms = 8000,
+  targets = { ["local"] = { kind = "local" } },
 }
 local sessions = {}
 local pending_services = {}
+local starts = {}
 local commands_created = false
 
 local function notify(message, level)
@@ -205,6 +207,8 @@ local function bind_cell_lifecycle(session)
 end
 
 local function retire_session(session)
+  if sessions[session.buf] ~= session then return end
+  starts[session.buf] = nil
   if session.lifecycle then session.lifecycle:detach() end
   if session.marks then session.marks:close() end
   if session.editing then session.editing:close() end
@@ -226,7 +230,7 @@ local function replace_frontend_runtime(session, notebook_id)
   local presentation = new_presentation(model)
   local interactive = interactive_terminal.new({
     base_url = session.base_url,
-    command = config.terminal_bridge_command,
+    command = session.target and session.target.terminal_bridge_command or config.terminal_bridge_command,
     height = config.output_height,
     notebook_buf = session.buf,
     notebook_id = notebook_id,
@@ -251,8 +255,9 @@ function M.connect(options)
   end
   local existing = sessions[buf]
   if existing then
-    existing.controller:connect(function(connected)
+    existing.controller:connect(function(connected, failure)
       if connected and existing.lifecycle then existing.lifecycle:reconcile() end
+      if opts.on_connected then opts.on_connected(existing, failure) end
     end)
     return existing
   end
@@ -263,7 +268,7 @@ function M.connect(options)
   local base_url = opts.base_url or config.base_url
   local interactive = interactive_terminal.new({
     base_url = base_url,
-    command = config.terminal_bridge_command,
+    command = opts.terminal_bridge_command or config.terminal_bridge_command,
     height = config.output_height,
     notebook_buf = buf,
     notebook_id = model.notebook_id,
@@ -276,6 +281,7 @@ function M.connect(options)
     notebook = model,
     transport = transport,
     kernel_name = opts.kernel_name or config.kernel_name,
+    require_notebook_ownership = opts.target_alias ~= nil,
     on_failure = function(failure)
       notify(failure_text(failure), vim.log.levels.ERROR)
     end,
@@ -287,6 +293,9 @@ function M.connect(options)
     interactive = interactive,
     controller = controller,
     base_url = base_url,
+    service = opts.service,
+    target_alias = opts.target_alias,
+    target = opts.target,
   }
   sessions[buf] = session
   vim.keymap.set("i", "<Tab>", function()
@@ -311,6 +320,7 @@ function M.connect(options)
     if connected then
       notify("event stream connected")
     end
+    if opts.on_connected then opts.on_connected(session, failure) end
   end)
   return session
 end
@@ -333,17 +343,23 @@ function M.start_service(options)
       notify(failure_text(failure), vim.log.levels.ERROR)
     end,
   }, function(started, failure)
-    pending_services[buf] = nil
+    if pending_services[buf] == service then pending_services[buf] = nil end
+    if started and started.stop_requested then started:stop(); return end
     if failure then
-      notify(failure_text(failure), vim.log.levels.ERROR)
+      if not (service and service.stop_requested and not service.pending_start_reason) then
+        notify(failure_text(failure), vim.log.levels.ERROR)
+      end
+      if opts.on_connected then opts.on_connected(nil, failure) end
       return
     end
     if not vim.api.nvim_buf_is_valid(buf) then
       started:stop()
       return
     end
-    local session = M.connect({ buf = buf, base_url = started.base_url })
-    session.service = started
+    local session = M.connect({ buf = buf, base_url = started.base_url, service = started,
+      kernel_name = opts.kernel_name, terminal_bridge_command = opts.terminal_bridge_command,
+      target_alias = opts.target_alias, target = opts.target, on_connected = opts.on_connected })
+    if not session then started:stop(); return end
     notify("local service ready: " .. started.supervisor_id)
   end)
   if service.state ~= "stopped" then
@@ -353,6 +369,7 @@ function M.start_service(options)
       once = true,
       callback = function()
         local pending = pending_services[buf]
+        starts[buf] = nil
         pending_services[buf] = nil
         if pending then
           pending:stop()
@@ -416,7 +433,7 @@ function M.restart(buf)
   if not session then
     return nil
   end
-  session.controller.kernel_name = config.kernel_name
+  session.controller.kernel_name = session.target and session.target.kernel_name or config.kernel_name
   local next_notebook_id = notebook.new_notebook_id()
   return session.controller:restart_notebook(next_notebook_id, function(response, failure)
     local teardown_completed = response ~= nil
@@ -701,11 +718,168 @@ function M._destroy_session(buf)
   return true
 end
 
+local function resolve_target(alias)
+  local value = config.targets[alias]
+  if not value then return nil, "unknown target alias: " .. tostring(alias) end
+  local target = vim.deepcopy(value)
+  target.kernel_name = target.kernel_name or config.kernel_name
+  target.timeout_ms = target.timeout_ms or config.service_timeout_ms
+  target.terminal_bridge_command = target.terminal_bridge_command or config.terminal_bridge_command
+  if target.kind == "local" then
+    target.command = target.command or config.service_command
+    if not value.terminal_bridge_command and target.command[2] == "serve" then
+      target.terminal_bridge_command = { target.command[1], "terminal-bridge" }
+    end
+  end
+  return target
+end
+
+local function stop_owned_service(session)
+  session.stopping = true
+  session.controller:close()
+  session.service:stop(function(_, failure)
+    session.stopping = false
+    if failure then notify(failure_text(failure), vim.log.levels.ERROR); return end
+    session.service = nil
+    retire_session(session)
+    notify("target stopped")
+  end)
+end
+
+local function stop_connected(session)
+  if sessions[session.buf] ~= session or session.stopping then return end
+  session.stopping = true
+  local function finish(response, failure)
+    session.stopping = false
+    if failure then notify(failure_text(failure), vim.log.levels.ERROR); return end
+    if session.service then stop_owned_service(session)
+    else
+      retire_session(session)
+      notify("kernel stopped; disconnected from target service")
+    end
+  end
+  if session.controller.kernel_state == "on" and session.controller.kernel_id then
+    session.controller:stop_kernel(finish)
+  else
+    finish(true)
+  end
+end
+
+function M.start(alias, options)
+  local opts = options or {}
+  local existing = current_session(opts.buf)
+  local buf = existing and existing.buf or opts.buf or vim.api.nvim_get_current_buf()
+  local target, err = resolve_target(alias)
+  if not target then notify(err, vim.log.levels.ERROR); return nil end
+  if starts[buf] then
+    notify("target start is already in progress")
+    return starts[buf]
+  end
+  if existing and (existing.target_alias ~= alias or not vim.deep_equal(existing.target, target)) then
+    notify("notebook already has a different connection; use :JusiStop first", vim.log.levels.ERROR)
+    return nil
+  end
+  if existing and existing.stopping then notify("target stop is in progress"); return nil end
+  if pending_services[buf] then notify("service start is already in progress"); return nil end
+  if not accepts_native_notebook(buf) then return nil end
+  local ticket = { alias = alias, buf = buf }
+  starts[buf] = ticket
+  local function failed(session, failure)
+    if starts[buf] == ticket then starts[buf] = nil end
+    if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
+    -- A failed composed local start must not leave a hidden service behind.
+    if session and session.service then stop_owned_service(session)
+    elseif session and not ticket.kernel_starting then retire_session(session) end
+  end
+  local function connected(session, failure)
+    if starts[buf] ~= ticket then return end
+    if failure or not session then failed(session, failure); return end
+    if ticket.cancelled then
+      starts[buf] = nil
+      -- No kernel was started by this operation yet.
+      if session.service then stop_connected(session) else retire_session(session) end
+      return
+    end
+    if session.controller.kernel_state == "on" then
+      starts[buf] = nil
+      notify("target already on: " .. alias)
+      return
+    end
+    ticket.kernel_starting = true
+    session.controller:start_kernel(function(response, start_failure)
+      if starts[buf] ~= ticket then return end
+      if start_failure or not response then failed(session, start_failure); return end
+      starts[buf] = nil
+      if ticket.cancelled then stop_connected(session)
+      else notify("target on: " .. alias) end
+    end)
+  end
+  if existing then
+    existing.controller:connect(function(_, failure) connected(existing, failure) end)
+  elseif target.kind == "local" then
+    local service = M.start_service({ buf = buf, command = target.command, timeout_ms = target.timeout_ms,
+      kernel_name = target.kernel_name, terminal_bridge_command = target.terminal_bridge_command,
+      target_alias = alias, target = target, on_connected = connected })
+    ticket.service = service
+    if not service then starts[buf] = nil end
+  else
+    M.connect({ buf = buf, base_url = target.base_url, kernel_name = target.kernel_name,
+      terminal_bridge_command = target.terminal_bridge_command, target_alias = alias,
+      target = target, on_connected = connected })
+  end
+  return ticket
+end
+
+function M.stop(buf)
+  local session = current_session(buf)
+  if session and session.stopping then return session end
+  local buffer = session and session.buf or buf or vim.api.nvim_get_current_buf()
+  local ticket = starts[buffer]
+  if ticket then
+    ticket.cancelled = true
+    if ticket.kernel_starting then
+      notify("stopping after the pending kernel start resolves")
+      return ticket
+    end
+  end
+  local pending = pending_services[buffer]
+  if pending then
+    pending_services[buffer] = nil
+    starts[buffer] = nil
+    pending:stop()
+    return pending
+  end
+  if not session then notify("target already stopped"); return true end
+  if ticket then return ticket end -- connect callback observes cancellation
+  if session.controller.transport_state ~= "connected" then
+    session.stopping = true
+    session.controller:connect(function(_, failure)
+      session.stopping = false
+      if sessions[session.buf] ~= session then return end
+      if failure then
+        if session.service then stop_owned_service(session)
+        else notify(failure_text(failure), vim.log.levels.ERROR) end
+      else stop_connected(session) end
+    end)
+  else
+    stop_connected(session)
+  end
+  return session
+end
+
 local function create_commands()
   if commands_created then
     return
   end
   commands_created = true
+  vim.api.nvim_create_user_command("JusiStart", function(command) M.start(command.args) end, {
+    nargs = 1, complete = function(prefix)
+      local aliases = vim.tbl_keys(config.targets)
+      table.sort(aliases)
+      return vim.tbl_filter(function(alias) return alias:sub(1, #prefix) == prefix end, aliases)
+    end,
+  })
+  vim.api.nvim_create_user_command("JusiStop", function() M.stop() end, {})
   vim.api.nvim_create_user_command("JusiPark", function() M.park() end, {})
   vim.api.nvim_create_user_command("JusiSubmit", function() M.submit() end, {})
   for name, action in pairs({ JusiCellModeToggle = "toggle", JusiCellEdit = "edit", JusiCellDelete = "delete",
@@ -805,6 +979,10 @@ function M.setup(options)
     vim.validate("service_timeout_ms", opts.service_timeout_ms, "number")
     assert(opts.service_timeout_ms >= 1, "service_timeout_ms must be positive")
     config.service_timeout_ms = opts.service_timeout_ms
+  end
+  if opts.targets ~= nil then
+    require("jusi.targets").validate(opts.targets)
+    config.targets = vim.deepcopy(opts.targets)
   end
   create_commands()
 end

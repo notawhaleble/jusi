@@ -1,8 +1,10 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-09
+Updated: 2026-09-10
 
 ## Current Facts
+
+- Target aliases now compose local service/connect/kernel startup through `JusiStart <alias>` and complete owned cleanup through `JusiStop`. Remote aliases connect directly and leave their external service alive after kernel stop. Cancellation, failed startup, target-specific restart and foreign-notebook rejection have real-service coverage. Regular-config manual testing can use the per-launch legacy override in the [target guide](architecture/target-start-stop.md). See [ADR 0038](adr/0038-target-alias-start-stop.md); remote deployment remains deferred.
 
 - Established plugin operations now support concurrent exact `JusiInterrupt`, recoverable worker rejections, deadline-free followups, and full close of busy work. Health publishes active client operation identities; cancellation preserves the client/surface. See [ADR 0034](adr/0034-concurrent-plugin-operation-interruption.md).
 - Backend-driven copy/open now uses a private target-side client channel, captured UTF-8 content over HTTP, exact editor recipients, replay-safe delivery and acknowledgments independent of ordinary plugin work. Python application helpers and `jusivim PATH` support selected text and target-read files; exported buffers survive source close. Public `JusiCopy`/`JusiOpen` remain withdrawn. See [ADR 0036](adr/0036-application-driven-editor-actions.md) and the [fixture guide](architecture/backend-driven-editor-actions.md). Application work leases, writeback and remote deployment verification remain deferred.
@@ -27,7 +29,7 @@ Updated: 2026-09-09
 
 - Cell status now uses opener-anchored extmarks with symbols after the opener and matching opener/closer colors, with purple busy *, green done ✓, red error ✗, orange interrupted !, blue followup >, and yellow never-executed delimiters. RGB and 256-color terminal palettes are provided. No sign or status columns are used. Execution/input, client lifecycle and exact followup operations drive the projection; ordinary typing only moves existing extmarks. See [ADR 0028](adr/0028-cell-status-is-an-inline-extmark-projection.md).
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0037 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0038 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.

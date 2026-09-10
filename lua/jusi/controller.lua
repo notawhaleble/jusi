@@ -163,6 +163,14 @@ function Controller:connect(callback)
       end
       return
     end
+    if self.require_notebook_ownership and response and type(response.kernel) == "table"
+        and response.kernel.state == "on" and response.kernel.notebook_id ~= self.notebook.notebook_id then
+      local ownership_failure = self:_transport_failure("conflict", "target already runs another notebook")
+      self.transport_state = "disconnected"
+      if self.on_failure then self.on_failure(ownership_failure) end
+      if callback then callback(false, ownership_failure); callback = nil end
+      return
+    end
     local accepted, snapshot_failure = self:_accept_health_snapshot(response)
     if not accepted then
       self.transport_state = "disconnected"
@@ -778,6 +786,7 @@ function M.new(options)
     on_surface_created = opts.on_surface_created,
     on_surface_closed = opts.on_surface_closed,
     on_failure = opts.on_failure,
+    require_notebook_ownership = opts.require_notebook_ownership == true,
     on_resynchronized = opts.on_resynchronized,
     last_transport_failure = nil,
     event_connection = nil,

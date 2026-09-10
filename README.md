@@ -181,6 +181,11 @@ automatically; damage to its closer preserves identity. Merging A with B by
 removing their adjoining borders keeps A and closes B. Undo restores the second
 cell's text with a fresh identity and no old output.
 
+For a single-command lifecycle, use `:JusiStart local` with `jusi` on PATH,
+then `:JusiStop`. Named local and remote profiles and a launch command for
+testing alongside legacy jusivim are documented in the
+[target start/stop guide](docs/1.0/architecture/target-start-stop.md).
+
 Alternatively, when `jusi` is on `PATH`, `:JusiServiceStart` explicitly launches
 and connects a notebook-local service; `:JusiServiceStop` stops its kernel and
 owned service. Configure another executable through
