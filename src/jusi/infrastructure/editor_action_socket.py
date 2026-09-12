@@ -7,6 +7,7 @@ import threading
 from typing import Callable
 
 from jusi.application.editor_actions import EditorActionError
+from jusi.application.text_snapshot import TextSnapshot
 from jusi.infrastructure.plugin_worker_channel import read_frame, write_frame
 from jusi.protocol import ProtocolValidationError, validate_application_action
 
@@ -54,12 +55,27 @@ class _Endpoint:
                 connection.settimeout(5)
                 with connection.makefile("rwb") as stream:
                     request = validate_application_action(read_frame(stream))
-                    if request["kind"] != "application.editor_action":
+                    if request["kind"] not in {"application.editor_action", "application.editor_action_begin"}:
                         raise ProtocolValidationError("Expected application action request")
+                    snapshot = None
                     try:
-                        result = self.submit(request["content"])
-                    except (EditorActionError, ProtocolValidationError) as exc:
+                        content = request["content"]
+                        if request["kind"] == "application.editor_action_begin":
+                            snapshot = TextSnapshot(content)
+                            while True:
+                                chunk = validate_application_action(read_frame(stream))
+                                if chunk["kind"] != "application.editor_action_chunk" or chunk["request_id"] != request["request_id"]:
+                                    raise ProtocolValidationError("Invalid application text stream identity")
+                                snapshot.append(chunk["text"])
+                                if chunk["eof"]:
+                                    break
+                            content = snapshot
+                        result = self.submit(content)
+                    except (EditorActionError, ValueError, OSError) as exc:
                         result = {"action_id": "", "outcome": "failed", "reason": getattr(exc, "reason", "invalid_request")}
+                    finally:
+                        if snapshot is not None:
+                            snapshot.close()
                     write_frame(stream, {"protocol_version": 1, "kind": "application.action_result",
                                          "request_id": request["request_id"], **result})
         except (OSError, ValueError, EOFError):

@@ -777,8 +777,8 @@ def validate_editor_action(result: object, action: str) -> dict[str, Any]:
     if set(result) != fields:
         raise ProtocolValidationError("Editor action fields are invalid")
     text = result["text"]
-    if not isinstance(text, str) or "\x00" in text or len(text.encode("utf-8")) > 524288:
-        raise ProtocolValidationError("Editor text must be UTF-8 without NUL, at most 512 KiB")
+    if not isinstance(text, str) or "\x00" in text:
+        raise ProtocolValidationError("Editor text must be UTF-8 without NUL")
     if action == "copy":
         if result["regtype"] not in {"v", "V"}:
             raise ProtocolValidationError("Copy register type must be v or V")
@@ -806,10 +806,17 @@ def validate_application_action(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("protocol_version") != 1 or not _bounded_string(value.get("request_id"), 3, 128):
         raise ProtocolValidationError("Invalid application action envelope")
     base = {"protocol_version", "kind", "request_id"}
-    if value.get("kind") == "application.editor_action":
+    if value.get("kind") in {"application.editor_action", "application.editor_action_begin"}:
         if set(value) != base | {"content"} or not isinstance(value["content"], dict):
             raise ProtocolValidationError("Invalid application action request")
         validate_editor_action(value["content"], value["content"].get("action"))
+        if value["kind"] == "application.editor_action_begin" and value["content"]["text"] != "":
+            raise ProtocolValidationError("Stream header must have empty text")
+    elif value.get("kind") == "application.editor_action_chunk":
+        if (set(value) != base | {"text", "eof"} or not isinstance(value["text"], str)
+                or "\x00" in value["text"] or len(value["text"].encode("utf-8")) > 65536
+                or type(value["eof"]) is not bool or (not value["eof"] and not value["text"])):
+            raise ProtocolValidationError("Invalid application text chunk")
     elif value.get("kind") == "application.action_result":
         if (set(value) != base | {"action_id", "outcome", "reason"}
                 or value["outcome"] not in {"delivered", "failed", "cancelled", "unknown"}
@@ -822,12 +829,19 @@ def validate_application_action(value: object) -> dict[str, Any]:
 
 
 def validate_editor_action_fetch(value: object) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != {"ok", "action", "content", "remaining_ms"} or value["ok"] is not True:
+    if not isinstance(value, dict) or set(value) not in ({"ok", "action", "content", "remaining_ms"}, {"ok", "action", "content", "remaining_ms", "offset", "next_offset", "eof"}) or value["ok"] is not True:
         raise ProtocolValidationError("Invalid editor action fetch response")
     validate_editor_action_metadata(value["action"])
     validate_editor_action(value["content"], value["action"]["action"])
     if type(value["remaining_ms"]) is not int or not 0 <= value["remaining_ms"] <= 30000:
         raise ProtocolValidationError("Invalid delivery lifetime")
+    if "offset" in value:
+        if (type(value["offset"]) is not int or type(value["next_offset"]) is not int
+                or value["offset"] < 0 or type(value["eof"]) is not bool
+                or value["next_offset"] != value["offset"] + len(value["content"]["text"].encode("utf-8"))
+                or len(value["content"]["text"].encode("utf-8")) > 65536
+                or (not value["eof"] and value["next_offset"] == value["offset"])):
+            raise ProtocolValidationError("Invalid editor text chunk")
     return value
 
 

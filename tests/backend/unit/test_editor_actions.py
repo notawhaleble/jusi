@@ -120,3 +120,39 @@ def test_delivery_ack_requires_fetch_and_a_definite_outcome():
         finally:
             manager.close()
         assert future.result(timeout=1)["outcome"] == "cancelled"
+
+
+def test_chunked_delivery_requires_complete_fetch_and_releases_spool_on_close():
+    manager, notices = setup()
+    content = {**CONTENT, "text": "α🙂\n" * 200000}
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(manager.submit, "cli_one", content)
+        action_id = notices.get(timeout=1)["action_id"]
+        snapshot = manager._actions[action_id].content
+        result = manager.fetch(action_id, "editor_one", 0)
+        assert result["next_offset"] == len(result["content"]["text"].encode())
+        assert not result["eof"]
+        with pytest.raises(EditorActionError, match="not fetched"):
+            manager.acknowledge(action_id, "editor_one", "delivered")
+        with pytest.raises(EditorActionError):
+            manager.fetch(action_id, "editor_other", result["next_offset"])
+        manager.close_client("cli_one")
+        assert future.result(timeout=1)["outcome"] == "unknown"
+        assert snapshot.stream.closed
+
+
+def test_progress_renews_inactivity_lease(monkeypatch):
+    from types import SimpleNamespace
+    now = [0.0]
+    monkeypatch.setattr("jusi.application.editor_actions.time", SimpleNamespace(monotonic=lambda: now[0]))
+    manager, notices = setup(timeout=1)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(manager.submit, "cli_one", {**CONTENT, "text": "x" * 200000})
+        action = notices.get(timeout=1)
+        now[0] = .9
+        first = manager.fetch(action["action_id"], "editor_one", 0)
+        now[0] = 1.1
+        assert manager.pending() == [action], "active transfer expired at its original deadline"
+        manager.fetch(action["action_id"], "editor_one", first["next_offset"])
+        manager.close()
+        assert future.result(timeout=1)["outcome"] == "unknown"

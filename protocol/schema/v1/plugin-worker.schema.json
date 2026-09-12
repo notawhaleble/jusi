@@ -2,6 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://jusi.dev/protocol/v1/plugin-worker.schema.json",
   "title": "Jusi Plugin Worker Control v1",
+  "$comment": "Ordinary messages use bounded length-prefixed JSON. Worker editor_action results may use JEA1 data framing: uint32 0xffffffff, ASCII JEA1, bounded uint32-length chunks, zero terminator; the concatenated UTF-8 JSON validates against this schema. See ADR 0039.",
   "oneOf": [
     {"$ref": "#/$defs/ready"},
     {"$ref": "#/$defs/request"},

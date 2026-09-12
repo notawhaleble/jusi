@@ -321,8 +321,9 @@ def test_readiness_failure_captures_process_stderr_and_cleans_partial_start(monk
             assert kernel_name == "missing"
             self.provisioner = SimpleNamespace(pid=7654, process=SimpleNamespace(poll=lambda: 23))
 
-        def start_kernel(self, *, stdout, stderr) -> None:  # type: ignore[no-untyped-def]
+        def start_kernel(self, *, stdout, stderr, env) -> None:  # type: ignore[no-untyped-def]
             del stdout
+            state.artifacts = env["JUSI_KERNEL_ARTIFACT_DIRECTORY"]
             self.has_kernel = True
             state.stderr_path = stderr.name
             stderr.write(b"kernel boot failed\n")
@@ -348,6 +349,7 @@ def test_readiness_failure_captures_process_stderr_and_cleans_partial_start(monk
     assert state.stopped is True
     assert state.shutdown is True
     assert state.stderr_path is not None and not Path(state.stderr_path).exists()
+    assert not Path(state.artifacts).exists()
 
 
 def test_real_kernel_loads_and_attests_catalog_adapter(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

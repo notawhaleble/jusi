@@ -1,0 +1,10 @@
+{
+  "protocol_version": 1,
+  "kind": "application.editor_action_begin",
+  "request_id": "areq_fixture",
+  "content": {
+    "action": "copy",
+    "text": "not empty",
+    "regtype": "v"
+  }
+}

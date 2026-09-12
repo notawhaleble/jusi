@@ -11,7 +11,7 @@ from jusi.application.editor_actions import EditorActionManager
 from jusi.infrastructure.editor_action_socket import LocalEditorActionBroker
 
 
-@pytest.mark.parametrize("text", ["  α\tβ\n\n", "Unicode 0 α\n" * 40000])
+@pytest.mark.parametrize("text", ["  α\tβ\n\n", "Unicode 0 α\n" * 500000], ids=["small", "six-megabytes"])
 def test_file_helper_reads_at_target_and_waits_for_editor_confirmation(tmp_path: Path, text: str):
     notices = Queue()
     manager = EditorActionManager(notices.put, timeout=3)
@@ -28,8 +28,16 @@ def test_file_helper_reads_at_target_and_waits_for_editor_confirmation(tmp_path:
         action = notices.get(timeout=3)
         source.unlink()  # Delivery now depends only on captured content.
         assert process.poll() is None
-        content = manager.fetch(action["action_id"], "editor_file")["content"]
-        assert content == {"action": "open", "text": text, "name": "source.txt", "filetype": "text"}
+        chunks, offset = [], 0
+        while True:
+            fetched = manager.fetch(action["action_id"], "editor_file", offset)
+            assert len(fetched["content"]["text"].encode()) <= 65536
+            chunks.append(fetched["content"]["text"])
+            offset = fetched["next_offset"]
+            if fetched["eof"]:
+                break
+        assert "".join(chunks) == text
+        assert {**fetched["content"], "text": ""} == {"action": "open", "text": "", "name": "source.txt", "filetype": "text"}
         manager.acknowledge(action["action_id"], "editor_file", "delivered")
         _, stderr = process.communicate(timeout=3)
         assert process.returncode == 0, stderr

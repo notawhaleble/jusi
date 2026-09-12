@@ -27,5 +27,4 @@ def test_shared_client_action_contract():
             validate_command(read(f"invalid/{name}.json"), kind)
     for text in ["", "\n", "  α\t\n\n", "x" * 524288]:
         validate_editor_action({"action": "copy", "text": text, "regtype": "v"}, "copy")
-    with pytest.raises(ProtocolValidationError):
-        validate_editor_action({"action": "copy", "text": "α" * 262145, "regtype": "v"}, "copy")
+    validate_editor_action({"action": "copy", "text": "α" * 262145, "regtype": "v"}, "copy")

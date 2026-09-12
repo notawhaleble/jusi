@@ -1,0 +1,7 @@
+{
+  "protocol_version": 1,
+  "kind": "application.editor_action_chunk",
+  "request_id": "areq_fixture",
+  "text": "α\n",
+  "eof": false
+}

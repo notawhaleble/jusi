@@ -34,8 +34,16 @@ function M.run()
     assert(vim.bo[buf].modifiable and vim.bo[buf].modified and not vim.bo[buf].modeline)
     assert(vim.fn.filereadable(vim.api.nvim_buf_get_name(buf)) == 0, "open wrote a file")
     vim.api.nvim_buf_delete(buf, { force = true })
+    local path = vim.fn.tempname()
+    local file = assert(io.open(path, "wb")); file:write(text); file:close()
+    local staged = assert(actions.apply({ action = "open", text = "", name = "staged.txt", filetype = "text" },
+      { show = false, source_path = path }))
+    local staged_text = table.concat(vim.api.nvim_buf_get_lines(staged, 0, -1, false), "\n") .. (vim.bo[staged].endofline and "\n" or "")
+    assert(staged_text == text, "staged open changed newlines")
+    vim.api.nvim_buf_delete(staged, { force = true })
+    os.remove(path)
   end
-  assert(not actions.apply({ action = "copy", text = string.rep("α", 262145), regtype = "v" }))
+  assert(actions.apply({ action = "copy", text = string.rep("α", 262145), regtype = "v" }, { register = "a" }))
   vim.fn.setreg("a", saved)
 end
 return M

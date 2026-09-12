@@ -37,9 +37,10 @@ DataFrame/Series tables. Table columns and index values are retained, including
 duplicate column labels. pandas time values retain precision as text; complete
 pandas dtype/object metadata and live object identity are not reconstructed.
 Custom classes and cyclic values require explicit conversion by the caller.
-The current encoded snapshot ceiling is 768 KiB, with conservative traversal
-bounds; use a smaller selection for larger datasets. Exported copy/open text has
-its separate 512 KiB bound.
+Snapshots and copy/open have no total byte ceiling. Snapshots move through
+private target-side artifacts; copy/open streams content to Neovim in chunks.
+The data still needs memory in VisiData and the destination buffer/register.
+Structural depth validation remains. See [ADR 0039](../adr/0039-user-data-is-not-a-control-frame.md).
 
 User VisiData configuration and plugins load in the target application process.
 The integration installs its copy/open hooks afterward. No VisiData code is

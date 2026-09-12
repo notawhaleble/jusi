@@ -6,10 +6,10 @@ local function read(name)
   local data = vim.json.decode(f:read("*a")); f:close(); return data
 end
 function M.run()
-  for _, name in ipairs({ "application-editor-action", "application-editor-result" }) do
+  for _, name in ipairs({ "application-editor-action", "application-editor-result", "application-editor-begin", "application-editor-chunk" }) do
     assert(protocol.validate_application_action(read("valid/" .. name .. ".json")))
   end
-  for _, name in ipairs({ "application-action-wrong-kind", "application-action-path" }) do
+  for _, name in ipairs({ "application-action-wrong-kind", "application-action-path", "application-empty-chunk", "application-chunk-nul", "application-begin-text" }) do
     assert(not protocol.validate_application_action(read("invalid/" .. name .. ".json")))
   end
   assert(protocol.validate_command(read("valid/ack-editor-action.json"), "ack_editor_action"))
@@ -17,7 +17,7 @@ function M.run()
   assert(not protocol.validate_event(read("invalid/editor-action-wrong-owner.json")))
   for _, spec in ipairs({
     { protocol.validate_editor_action_ack, "editor-action-ack", { "editor-action-ack-outcome" } },
-    { protocol.validate_editor_action_fetch, "editor-action-fetch", { "editor-action-fetch-expiry", "editor-action-fetch-kind" } },
+    { protocol.validate_editor_action_fetch, "editor-action-fetch", { "editor-action-fetch-expiry", "editor-action-fetch-kind", "editor-action-fetch-offset", "editor-action-fetch-partial" } },
     { protocol.validate_terminal_stream_control, "terminal-stream-editor-attach", { "terminal-stream-editor-id" } },
     { protocol.validate_health_response, "health-editor-action", { "health-editor-action-owner" } },
   }) do
@@ -25,6 +25,7 @@ function M.run()
     for _, name in ipairs(spec[3]) do assert(not spec[1](read("invalid/" .. name .. ".json"))) end
   end
   assert(not protocol.validate_command(read("invalid/ack-editor-action-outcome.json"), "ack_editor_action"))
+  assert(protocol.validate_editor_action_fetch(read("valid/editor-action-fetch-chunk.json")))
   local response = read("valid/editor-action-fetch.json")
   local action = response.action
   local requests, acks, applied = {}, {}, 0
@@ -72,6 +73,47 @@ function M.run()
   local before = applied
   delivery:request(unconfirmed.action)
   assert(applied == before and delivery.seen[lost_ack].outcome == "delivered", "unconfirmed delivery was evicted")
+
+  -- UTF-8 chunks stage privately, then apply once; replay never appends twice.
+  local chunked = vim.deepcopy(response)
+  chunked.action.action_id = "act_chunks"
+  chunked.content.text = string.rep("α", 30000)
+  chunked.offset, chunked.next_offset, chunked.eof = 0, #chunked.content.text, false
+  local staged_path
+  local streaming = Delivery.new(c, function(header, _, path)
+    assert(header.text == "" and path)
+    staged_path = path
+    local f = assert(io.open(path, "rb"))
+    local text = f:read("*a"); f:close()
+    assert(text == chunked.content.text .. "tail\n")
+    return true
+  end)
+  streaming:request(chunked.action)
+  requests[#requests].callback(chunked)
+  assert(not staged_path, "partial content was applied")
+  local final = vim.deepcopy(chunked)
+  final.content.text = "tail\n"
+  final.offset, final.next_offset, final.eof = chunked.next_offset, chunked.next_offset + 5, true
+  requests[#requests].callback(final)
+  assert(staged_path and vim.fn.filereadable(staged_path) == 0)
+  assert(acks[#acks].outcome == "delivered")
+
+  local interrupted = vim.deepcopy(chunked)
+  interrupted.action.action_id = "act_partial_close"
+  streaming:request(interrupted.action)
+  requests[#requests].callback(interrupted)
+  local partial = streaming.seen[interrupted.action.action_id].path
+  assert(vim.fn.filereadable(partial) == 1)
+  streaming:disconnect()
+  assert(vim.fn.filereadable(partial) == 0, "disconnect retained partial text")
+  requests[#requests].callback(final)
+  local boundary = read("valid/application-editor-chunk.json")
+  boundary.text = string.rep("α", 32768)
+  assert(protocol.validate_application_action(boundary))
+  boundary.text = boundary.text .. "α"
+  assert(not protocol.validate_application_action(boundary))
+  streaming:close()
+  delivery:close()
 
 end
 return M

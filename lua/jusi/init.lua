@@ -126,7 +126,7 @@ local function bind_cell_lifecycle(session)
   local model, controller = session.model, session.controller
   local presentation, interactive = session.presentation, session.interactive
   interactive.editor_id = controller.editor_id
-  local delivery = require("jusi.editor_delivery").new(controller, function(content, action)
+  local delivery = require("jusi.editor_delivery").new(controller, function(content, action, source_path)
     local wins = vim.fn.win_findbuf(model.buf)
     local win = wins[1]
     if content.action == "open" and not win then
@@ -138,7 +138,7 @@ local function bind_cell_lifecycle(session)
       end
       if not win then return nil end
     end
-    return require("jusi.editor_actions").apply(content, { win = win })
+    return require("jusi.editor_actions").apply(content, { win = win, source_path = source_path })
   end)
   controller.on_editor_action = function(action) delivery:request(action) end
   session.editor_delivery = delivery
@@ -209,6 +209,7 @@ end
 local function retire_session(session)
   if sessions[session.buf] ~= session then return end
   starts[session.buf] = nil
+  if session.editor_delivery then session.editor_delivery:close() end
   if session.lifecycle then session.lifecycle:detach() end
   if session.marks then session.marks:close() end
   if session.editing then session.editing:close() end
@@ -220,6 +221,7 @@ local function retire_session(session)
 end
 
 local function replace_frontend_runtime(session, notebook_id)
+  if session.editor_delivery then session.editor_delivery:close() end
   if session.lifecycle then session.lifecycle:detach() end
   if session.marks then session.marks:close() end
   if session.editing then session.editing:close() end
@@ -698,6 +700,7 @@ function M.disconnect(buf)
   if not session then
     return false
   end
+  if session.editor_delivery then session.editor_delivery:disconnect() end
   session.controller:close()
   return true
 end

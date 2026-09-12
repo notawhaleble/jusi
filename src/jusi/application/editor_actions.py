@@ -8,6 +8,7 @@ import uuid
 from typing import Any, Callable
 
 from jusi.protocol import validate_editor_action
+from .text_snapshot import TextSnapshot
 
 
 class EditorActionError(ValueError):
@@ -19,11 +20,12 @@ class EditorActionError(ValueError):
 @dataclass
 class _Action:
     metadata: dict[str, str]
-    content: dict[str, Any]
+    content: TextSnapshot
     deadline: float
     event: threading.Event = field(default_factory=threading.Event)
     result: dict[str, str] | None = None
     fetched: bool = False
+    complete: bool = False
 
 
 class EditorActionManager:
@@ -71,6 +73,18 @@ class EditorActionManager:
                 self._owners.pop(client_id, None)
 
     def submit(self, client_id: str, content: dict[str, Any]) -> dict[str, str]:
+        if isinstance(content, TextSnapshot):
+            snapshot = content
+        else:
+            validate_editor_action(content, content.get("action"))
+            snapshot = TextSnapshot.capture(content)
+        try:
+            return self._submit(client_id, snapshot)
+        finally:
+            snapshot.close()
+
+    def _submit(self, client_id: str, snapshot: TextSnapshot) -> dict[str, str]:
+        content = snapshot.content
         validate_editor_action(content, content.get("action"))
         with self._lock:
             self._prune()
@@ -81,26 +95,27 @@ class EditorActionManager:
             if not editor_id or not self._connections.get(editor_id):
                 raise EditorActionError("Owning editor is not connected", "unreachable")
             pending = [a for a in self._actions.values() if a.result is None]
-            if len(pending) >= 32 or sum(len(a.content["text"].encode("utf-8")) for a in pending) + len(content["text"].encode("utf-8")) > 4 * 1024 * 1024:
+            if len(pending) >= 32:
                 raise EditorActionError("Editor action capacity reached", "capacity_exceeded")
             metadata = {**client, "action_id": f"act_{uuid.uuid4().hex}", "editor_id": editor_id,
                         "trace_id": f"trace_{uuid.uuid4().hex}", "action": content["action"]}
-            action = _Action(metadata, dict(content), time.monotonic() + self._timeout)
+            action = _Action(metadata, snapshot, time.monotonic() + self._timeout)
             self._actions[metadata["action_id"]] = action
             # Register the waiter before publishing; fast acknowledgments are safe.
             self._publish(dict(metadata))
-        action.event.wait(self._timeout)
-        with self._lock:
-            self._expire(action)
-            assert action.result is not None
-            return dict(action.result)
+        while True:
+            action.event.wait(max(0, action.deadline - time.monotonic()))
+            with self._lock:
+                self._expire(action)
+                if action.result is not None:
+                    return dict(action.result)
 
     def pending(self) -> list[dict[str, str]]:
         with self._lock:
             self._prune()
             return [dict(a.metadata) for a in self._actions.values() if a.result is None]
 
-    def fetch(self, action_id: str, editor_id: str) -> dict[str, Any]:
+    def fetch(self, action_id: str, editor_id: str, offset: int | None = None) -> dict[str, Any]:
         with self._lock:
             action = self._select(action_id, editor_id)
             self._expire(action)
@@ -108,9 +123,19 @@ class EditorActionManager:
                 raise EditorActionError("Action is no longer pending")
             if not self._connections.get(editor_id):
                 raise EditorActionError("Editor is disconnected", "unreachable")
+            try:
+                text, next_offset = action.content.read(offset or 0, chunked=offset is not None)
+            except (ValueError, OSError) as exc:
+                raise EditorActionError(str(exc), "invalid_request") from exc
             action.fetched = True
-            return {"action": dict(action.metadata), "content": dict(action.content),
-                    "remaining_ms": max(0, int((action.deadline - time.monotonic()) * 1000))}
+            action.complete = action.complete or next_offset == action.content.size
+            if offset is not None:
+                action.deadline = time.monotonic() + self._timeout
+            result = {"action": dict(action.metadata), "content": {**action.content.content, "text": text},
+                      "remaining_ms": max(0, int((action.deadline - time.monotonic()) * 1000))}
+            if offset is not None:
+                result.update(offset=offset, next_offset=next_offset, eof=next_offset == action.content.size)
+            return result
 
     def acknowledge(self, action_id: str, editor_id: str, outcome: str) -> dict[str, str]:
         if outcome not in {"delivered", "failed"}:
@@ -118,7 +143,7 @@ class EditorActionManager:
         with self._lock:
             action = self._select(action_id, editor_id)
             self._expire(action)
-            if outcome == "delivered" and not action.fetched:
+            if outcome == "delivered" and not action.complete:
                 raise EditorActionError("Action content was not fetched")
             if action.result is not None:
                 if action.result["outcome"] == outcome:
@@ -151,7 +176,7 @@ class EditorActionManager:
 
     def _finish(self, action: _Action, outcome: str, reason: str) -> None:
         action.result = {"action_id": action.metadata["action_id"], "outcome": outcome, "reason": reason}
-        action.content = {}
+        action.content.close()
         action.event.set()
 
     def _expire(self, action: _Action) -> None:

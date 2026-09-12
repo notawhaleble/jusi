@@ -1,6 +1,7 @@
 """Kernel-only expression evaluation and data handoff."""
 from jusi import __version__
 from .snapshot import capture
+from jusi.kernel_artifacts import publish_json
 
 
 def jusi_kernel_adapter_v1():
@@ -21,7 +22,7 @@ def load_ipython_extension(ipython):
         snapshot = capture(value)
         display({"application/vnd.jusi.handoff.v1+json": {
             "protocol_version": 1, "kind": "plugin.handoff", "plugin_id": "jusi_vd",
-            "plugin_version": __version__, "family_id": "visidata", "magic_name": "vd", "payload": snapshot,
+            "plugin_version": __version__, "family_id": "visidata", "magic_name": "vd", "payload": publish_json(snapshot),
         }}, raw=True)
 
     ipython.register_magic_function(vd_magic, "cell", "vd")

@@ -16,9 +16,9 @@ def test_snapshot_preserves_nested_data_and_non_string_mapping_keys():
     assert restore(capture(float("inf"))) == float("inf")
 
 
-def test_snapshot_rejects_cycles_custom_code_and_oversized_values():
+def test_snapshot_rejects_cycles_and_custom_code():
     cycle = []; cycle.append(cycle)
-    for value in [cycle, object(), "a" * 800000, ["abc" * 1000] * 1000]:
+    for value in [cycle, object()]:
         with pytest.raises(SnapshotError):
             capture(value)
     with pytest.raises(SnapshotError):
@@ -49,3 +49,8 @@ def test_missing_visidata_fails_before_allocating_a_client_directory(monkeypatch
         worker.handle("execute", capture(None))
     assert worker.directory is None
     worker.close()
+
+
+def test_snapshot_accepts_large_values_and_many_nodes():
+    for value in ["α" * 800000, list(range(150000))]:
+        assert restore(capture(value)) == value

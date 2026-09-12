@@ -409,7 +409,11 @@ class EditorActionDeliveryHandler(BaseHandler):
 
     def get(self, action_id: str) -> None:
         try:
-            result = self.supervisor.editor_actions.fetch(action_id, self.get_query_argument("editor_id", ""))
+            offset = self.get_query_argument("offset", None)
+            if offset is not None and (not offset.isdecimal() or len(offset) > 16):
+                raise EditorActionError("Invalid text offset", "invalid_request")
+            result = self.supervisor.editor_actions.fetch(action_id, self.get_query_argument("editor_id", ""),
+                                                          int(offset) if offset is not None else None)
         except EditorActionError as exc:
             self.action_error(action_id, exc)
             return

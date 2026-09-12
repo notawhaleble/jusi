@@ -4,7 +4,7 @@ import locale
 from pathlib import Path
 import sys
 
-from .snapshot import MAX_BYTES, Table, restore
+from .snapshot import Table, restore
 
 
 def install_editor_actions():
@@ -65,10 +65,7 @@ def run_application(path):
 
     try:
         with path.open("rb") as stream:
-            data = stream.read(MAX_BYTES + 1)
-        if len(data) > MAX_BYTES:
-            raise ValueError("VisiData snapshot exceeds limit")
-        value = restore(json.loads(data))
+            value = restore(json.load(stream))
     finally:
         path.unlink(missing_ok=True)
     # Avoid competing first-use StoredList writers racing on mkdir.

@@ -310,3 +310,20 @@ def test_interrupt_is_concurrent_exact_and_preserves_worker(tmp_path: Path) -> N
         assert worker.request("followup", {}, trace_id="trace_next", timeout=2).result["alive"]
     finally:
         worker.stop(trace_id="trace_cleanup", timeout=2)
+
+
+def test_editor_result_stream_exceeds_control_frame_without_killing_worker(tmp_path):
+    entry_point = write_worker(tmp_path, """
+        class Worker:
+            def handle(self, operation, payload):
+                return {"action": "copy", "text": "α" * 700000, "regtype": "v"}
+        def create_worker(context):
+            return Worker()
+    """)
+    worker = factory(tmp_path, frame_limit=1024).start(spec(entry_point, "export"), timeout=2)
+    try:
+        for _ in range(2):
+            result = worker.request("editor_action", {}, trace_id="trace_export", timeout=5)
+            assert result.result["text"] == "α" * 700000
+    finally:
+        worker.stop(trace_id="trace_stop", timeout=2)

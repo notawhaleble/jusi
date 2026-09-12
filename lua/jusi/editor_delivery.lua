@@ -29,7 +29,13 @@ function Delivery:ack(action, record, attempt)
   end)
 end
 
+local function discard(record)
+  if record.file then record.file:close(); record.file = nil end
+  if record.path then os.remove(record.path); record.path = nil end
+end
+
 function Delivery:finish(action, record, outcome)
+  discard(record)
   record.outcome = outcome
   record.expires = vim.uv.hrtime() + 35e9
   self:ack(action, record)
@@ -47,6 +53,7 @@ function Delivery:finish(action, record, outcome)
 end
 
 function Delivery:request(action, attempt)
+  if self.closed then return end
   local c = self.controller
   if not protocol.validate_editor_action_metadata(action) or action.editor_id ~= c.editor_id then return end
   local record = self.seen[action.action_id]
@@ -60,10 +67,12 @@ function Delivery:request(action, attempt)
   end
   record.fetching = true
   local epoch, started = c.supervisor_id, vim.uv.hrtime()
-  c.transport:request("GET", "/v1/editor-actions/" .. action.action_id .. "?editor_id=" .. c.editor_id,
+  c.transport:request("GET", "/v1/editor-actions/" .. action.action_id .. "?editor_id=" .. c.editor_id .. "&offset=" .. (record.offset or 0),
     nil, { operation = "editor_action", trace_id = action.trace_id }, function(response, failure)
       record.fetching = false
+      if self.closed or record.cancelled then discard(record); return end
       if failure then
+        discard(record)
         self.seen[action.action_id] = nil
         if failure.layer == "frontend_transport" and (attempt or 0) < 3 then
           vim.defer_fn(function() self:request(action, (attempt or 0) + 1) end, 250)
@@ -71,6 +80,7 @@ function Delivery:request(action, attempt)
         return
       end
       if c.supervisor_id ~= epoch or c.transport_state ~= "connected" then
+        discard(record)
         self.seen[action.action_id] = nil
         return
       end
@@ -78,15 +88,64 @@ function Delivery:request(action, attempt)
         and response.remaining_ms > (vim.uv.hrtime() - started) / 1e6
       local delivered = false
       if valid and self:owns(action) then
-        local ok, result = pcall(self.apply, response.content, action)
-        delivered = ok and result ~= nil and result ~= false
+        if response.offset ~= nil then
+          valid = response.offset == (record.offset or 0)
+          local header = vim.tbl_extend("force", response.content, { text = "" })
+          valid = valid and (not record.header or vim.deep_equal(record.header, header))
+          if valid then
+            record.header = header
+            if not record.file then
+              record.path = vim.fn.tempname()
+              local fd = vim.uv.fs_open(record.path, "wx", 384)
+              if fd then vim.uv.fs_close(fd); record.file = io.open(record.path, "wb") end
+            end
+            valid = record.file ~= nil and record.file:write(response.content.text) ~= nil
+          end
+          if valid then
+            record.offset = response.next_offset
+            if not response.eof then
+              self:request(action)
+              return
+            end
+            local closed = record.file:close(); record.file = nil
+            local stat = vim.uv.fs_stat(record.path)
+            if closed and stat and stat.size == record.offset then
+              local ok, result = pcall(self.apply, record.header, action, record.path)
+              delivered = ok and result ~= nil and result ~= false
+            end
+          end
+        else
+          local ok, result = pcall(self.apply, response.content, action)
+          delivered = ok and result ~= nil and result ~= false
+        end
       end
       -- Store the outcome before sending the acknowledgment. Replays only ack.
       self:finish(action, record, delivered and "delivered" or "failed")
     end)
 end
 
+function Delivery:disconnect()
+  for id, record in pairs(self.seen) do
+    if not record.outcome then
+      record.cancelled = true
+      discard(record)
+      self.seen[id] = nil
+    end
+  end
+end
+
+function Delivery:close()
+  self.closed = true
+  self:disconnect()
+  if self.exit_autocmd then
+    pcall(vim.api.nvim_del_autocmd, self.exit_autocmd)
+    self.exit_autocmd = nil
+  end
+end
+
 function M.new(controller, apply)
-  return setmetatable({ controller = controller, apply = apply, seen = {}, completed = {} }, Delivery)
+  local self = setmetatable({ controller = controller, apply = apply, seen = {}, completed = {} }, Delivery)
+  self.exit_autocmd = vim.api.nvim_create_autocmd("VimLeavePre", { once = true, callback = function() self:close() end })
+  return self
 end
 return M

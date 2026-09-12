@@ -17,10 +17,11 @@ function M.run()
   jusi.setup({ terminal_bridge_command = { ".venv/bin/python", "-m", "jusi", "terminal-bridge" } })
   local buf, service, exported, session
   local failures = {}
+  local expected = "literal α value" .. string.rep("x", 1200000)
   local ok, failure = xpcall(function()
     buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
-      "╭──", "%%vd", "globals().setdefault('vd_rows', [{'value': 'literal α value'}])", "╰──",
+      "╭──", "%%vd", "globals().setdefault('vd_rows', [{'value': 'literal α value' + 'x' * 1200000}])", "╰──",
     })
     vim.api.nvim_win_set_buf(0, buf)
     service = jusi.start_service({ buf = buf, command = { ".venv/bin/python", "-m", "jusi", "serve" }, timeout_ms = 8000 })
@@ -42,7 +43,7 @@ function M.run()
       return false
     end, "unsupported vd value did not fail visibly")
     assert(session.controller.kernel_state == "on" and next(session.controller.clients) == nil)
-    vim.api.nvim_buf_set_lines(buf, 2, 3, false, { "globals().setdefault('vd_rows', [{'value': 'literal α value'}])" })
+    vim.api.nvim_buf_set_lines(buf, 2, 3, false, { "globals().setdefault('vd_rows', [{'value': 'literal α value' + 'x' * 1200000}])" })
     jusi.execute(buf, 1)
     wait_for(10000, function() return next(session.interactive.surfaces) ~= nil end, "vd surface did not open: " .. vim.inspect(session.controller.failures))
     local _, record = next(session.interactive.surfaces)
@@ -53,18 +54,18 @@ function M.run()
     assert(not vim.tbl_contains(record.client.capabilities, "followup"), "vd must not advertise legacy no-op followup")
     vim.fn.setreg('"', 'before-vd-copy')
     vim.fn.chansend(record.job_id, "zY")
-    wait_for(5000, function() return vim.fn.getreg('"') == "literal α value" end, "vd zY did not deliver to unnamed register: " .. text(record.buf))
+    wait_for(5000, function() return vim.fn.getreg('"') == expected end, "vd zY did not deliver to unnamed register: " .. text(record.buf))
     assert(vim.api.nvim_get_current_buf() == buf, "copy moved editor focus")
     vim.fn.chansend(record.job_id, "\15")
     assert(vim.wait(5000, function() return vim.api.nvim_buf_get_name(0):find("visidata.txt", 1, true) ~= nil end, 10), "vd Ctrl-O did not open a split: " .. text(record.buf) .. vim.inspect(failures))
     exported = vim.api.nvim_get_current_buf()
-    assert(text(exported) == "literal α value")
+    assert(text(exported) == expected)
     assert(not vim.bo[exported].endofline)
     assert(session.controller.clients[source_client] ~= nil)
     vim.api.nvim_set_current_win(record.window)
     jusi.close()
     wait_for(5000, function() return next(session.controller.clients) == nil and next(session.interactive.surfaces) == nil end, "vd close did not retire client")
-    assert(vim.api.nvim_buf_is_valid(exported) and text(exported) == "literal α value")
+    assert(vim.api.nvim_buf_is_valid(exported) and text(exported) == expected)
     assert(session.controller.kernel_state == "on")
     -- Reuse the original kernel namespace after full client cleanup.
     local notebook_win = vim.fn.win_findbuf(buf)[1]

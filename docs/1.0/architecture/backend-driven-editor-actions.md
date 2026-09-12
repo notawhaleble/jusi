@@ -53,7 +53,7 @@ request: legacy blocking edit publishes first, leaving a possible fast-reply rac
 2. The application snapshots text and submits a generic copy/open action.
    Core derives client/runtime ownership from the channel, rather than trusting
    caller-supplied arbitrary client IDs. Each action has its own ID and trace.
-3. The target service retains bounded content and publishes an ordered
+3. The target service retains disk-backed content and publishes an ordered
    availability notification addressed to the owning frontend. Payload content
    stays out of lifecycle events and diagnostics. The frontend fetches it over
    HTTP using the action identity.
@@ -85,7 +85,7 @@ transport later without making open depend on SCP or shared storage.
   must bypass ordinary work, including an application waiting for that result.
 - Missing files, invalid content, disconnected editors and delivery failures
   affect the action, not an otherwise healthy client or kernel. Service shutdown
-  and channel loss must also unblock helpers. Define bounded pending count/bytes,
+  and channel loss must also unblock helpers. Define bounded pending counts,
   retention, and transport waits explicitly; none is a timeout on human editing.
 
 ## Separate future edit operation
@@ -120,3 +120,14 @@ For production application hooks, use `jusi.editor_client.copy(...)` or
 `jusivim PATH`; `python -m jusi.editor_client PATH` is the equivalent module form.
 Restart the service to load the channel implementation and reinstall the package
 when console entry points change. No new Neovim copy/open command is needed.
+
+
+## Large content
+
+There is no total text-size ceiling. The application channel and current
+frontend transfer UTF-8 in chunks, with private temporary staging on each side.
+A 30-second inactivity lease renews on chunk fetch, so continued progress is not
+limited by total transfer duration. Failed or cancelled downloads do not modify
+registers or create partially populated output buffers. See
+[ADR 0039](../adr/0039-user-data-is-not-a-control-frame.md) for framing, cleanup and
+the distinction between transfer buffering and destination memory.

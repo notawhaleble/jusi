@@ -205,4 +205,4 @@ The bundled `%%vd` plugin evaluates a Python expression and opens a snapshot in
 VisiData. Install with `pip install 'jusi[vd]'`, then restart the notebook runtime.
 Inside the terminal, `zY` copies to Neovim and Ctrl-O opens the current value in a
 split. See the [usage guide](docs/1.0/architecture/bundled-vd.md) for examples,
-supported values and current snapshot limits.
+supported values and snapshot behavior.

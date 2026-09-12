@@ -13,13 +13,17 @@ def test_bundled_catalog_and_worker_do_not_import_kernel_or_visidata(tmp_path):
     entry = catalog_entry()
     validate_discovered_entry(entry, entry_point_name="jusi_vd", distribution="jusi", distribution_version=entry["plugin_version"])
     script = '''
-import json, sys
+import json, sys, tempfile, os
+from jusi.kernel_artifacts import publish_json
 from jusi.plugins.vd import catalog_entry
 from jusi.plugins.vd.worker import create_worker
 assert not any(name in sys.modules for name in ('IPython', 'ipykernel', 'visidata', 'pandas'))
 worker = create_worker(None)
+root = tempfile.TemporaryDirectory(prefix="jusi-artifacts-")
+os.environ["JUSI_KERNEL_ARTIFACT_DIRECTORY"] = root.name
+reference = publish_json(json.loads(sys.argv[1]))
 try:
-    result = worker.handle('execute', json.loads(sys.argv[1]))
+    result = worker.handle('execute', reference)
     path = result.core_requests[0].argv[-1]
     from pathlib import Path
     assert Path(path).stat().st_mode & 0o777 == 0o600
@@ -28,6 +32,7 @@ try:
 finally:
     worker.close()
     worker.close()
+    root.cleanup()
 assert not Path(path).exists()
 assert not any(name in sys.modules for name in ('IPython', 'ipykernel', 'visidata', 'pandas'))
 '''

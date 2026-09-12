@@ -742,7 +742,7 @@ function M.validate_editor_action(result, action)
   local fields = action == "copy" and { "action", "text", "regtype" } or { "action", "text", "name", "filetype" }
   local ok, err = exact_fields(result, fields)
   if not ok then return false, err end
-  if type(result.text) ~= "string" or #result.text > 524288 or result.text:find("%z") then return false, "invalid editor text" end
+  if type(result.text) ~= "string" or result.text:find("%z") then return false, "invalid editor text" end
   if action == "copy" then
     if result.regtype ~= "v" and result.regtype ~= "V" then return false, "invalid register type" end
   else
@@ -768,10 +768,15 @@ function M.validate_application_action(value)
   if type(value) ~= "table" or value.protocol_version ~= 1 or not bounded_string(value.request_id, 3, 128) then
     return false, "invalid application action envelope"
   end
-  if value.kind == "application.editor_action" then
+  if value.kind == "application.editor_action" or value.kind == "application.editor_action_begin" then
     local ok = exact_fields(value, { "protocol_version", "kind", "request_id", "content" })
     if not ok or type(value.content) ~= "table" then return false, "invalid application action request" end
+    if value.kind == "application.editor_action_begin" and value.content.text ~= "" then return false, "invalid stream header" end
     return M.validate_editor_action(value.content, value.content.action)
+  elseif value.kind == "application.editor_action_chunk" then
+    return exact_fields(value, { "protocol_version", "kind", "request_id", "text", "eof" })
+      and type(value.text) == "string" and #value.text <= 65536 and not value.text:find("%z")
+      and type(value.eof) == "boolean" and (value.eof or #value.text > 0)
   elseif value.kind == "application.action_result" then
     local ok = exact_fields(value, { "protocol_version", "kind", "request_id", "action_id", "outcome", "reason" })
     if not ok or not bounded_string(value.action_id, 0, 128) or not bounded_string(value.reason, 0, 128)
@@ -783,11 +788,19 @@ end
 
 function M.validate_editor_action_fetch(value)
   if type(value) ~= "table" or value.ok ~= true
-      or not exact_fields(value, { "ok", "action", "content", "remaining_ms" })
+      or not (exact_fields(value, { "ok", "action", "content", "remaining_ms" })
+        or exact_fields(value, { "ok", "action", "content", "remaining_ms", "offset", "next_offset", "eof" }))
       or not M.validate_editor_action_metadata(value.action) then return false, "invalid action fetch response" end
   if type(value.remaining_ms) ~= "number" or value.remaining_ms ~= math.floor(value.remaining_ms)
       or value.remaining_ms < 0 or value.remaining_ms > 30000 then return false, "invalid delivery lifetime" end
-  return M.validate_editor_action(value.content, value.action.action)
+  if not M.validate_editor_action(value.content, value.action.action) then return false, "invalid content" end
+  if value.offset ~= nil then
+    if type(value.offset) ~= "number" or value.offset < 0 or value.offset ~= math.floor(value.offset)
+        or type(value.next_offset) ~= "number" or value.next_offset ~= value.offset + #value.content.text
+        or type(value.eof) ~= "boolean" or #value.content.text > 65536
+        or (not value.eof and value.next_offset == value.offset) then return false, "invalid text chunk" end
+  end
+  return true
 end
 
 function M.validate_editor_action_ack(value)

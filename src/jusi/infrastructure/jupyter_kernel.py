@@ -196,14 +196,16 @@ class ManagedJupyterKernelFactory(KernelFactory):
         stderr_path = stderr_file.name
         manager = KernelManager(kernel_name=kernel_name)
         client = None
+        artifacts = tempfile.TemporaryDirectory(prefix="jusi-artifacts-")
         try:
-            manager.start_kernel(stdout=subprocess.DEVNULL, stderr=stderr_file)
+            manager.start_kernel(stdout=subprocess.DEVNULL, stderr=stderr_file,
+                                 env={**os.environ, "JUSI_KERNEL_ARTIFACT_DIRECTORY": artifacts.name})
             client = manager.client()
             client.start_channels()
             client.wait_for_ready(timeout=timeout)
             if adapters:
                 _load_kernel_adapters(client, adapters, dict(configuration or {}), timeout=timeout)
-            return ManagedJupyterKernel(manager, client, stderr_file, stderr_path)
+            return ManagedJupyterKernel(manager, client, stderr_file, stderr_path, artifacts)
         except Exception as exc:
             kernel_was_started = bool(manager.has_kernel)
             diagnostics = _diagnostics(manager, stderr_path)
@@ -217,6 +219,7 @@ class ManagedJupyterKernelFactory(KernelFactory):
                     manager.shutdown_kernel(now=True)
             except Exception:
                 pass
+            artifacts.cleanup()
             stderr_file.close()
             _remove_file(stderr_path)
             if isinstance(exc, KernelAdapterError):
@@ -240,7 +243,8 @@ class ManagedJupyterKernelFactory(KernelFactory):
 
 
 class ManagedJupyterKernel:
-    def __init__(self, manager: KernelManager, client: Any, stderr_file, stderr_path: str) -> None:
+    def __init__(self, manager: KernelManager, client: Any, stderr_file, stderr_path: str, artifacts=None) -> None:
+        self._artifacts = artifacts
         self._manager = manager
         self._client = client
         self._stderr_file = stderr_file
@@ -611,6 +615,8 @@ class ManagedJupyterKernel:
             self._stderr_file.close()
         finally:
             _remove_file(self._stderr_path)
+            if self._artifacts is not None:
+                self._artifacts.cleanup()
 
 
 def _diagnostics(manager: KernelManager, stderr_path: str) -> ProcessDiagnostics:

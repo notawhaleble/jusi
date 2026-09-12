@@ -80,7 +80,7 @@ class _MessageReader(threading.Thread):
         while True:
             try:
                 try:
-                    message = validate_plugin_worker_message(read_frame(self._stream, limit=self._limit))
+                    message = validate_plugin_worker_message(read_frame(self._stream, limit=self._limit, allow_editor_stream=True))
                 except ProtocolValidationError as exc:
                     raise WorkerFrameError(str(exc)) from exc
                 with self._lock:

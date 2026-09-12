@@ -10,7 +10,7 @@ import queue
 from jusi.infrastructure.plugin_worker_channel import WorkerFrameError
 from typing import Any
 
-from jusi.infrastructure.plugin_worker_channel import read_frame, write_frame
+from jusi.infrastructure.plugin_worker_channel import read_frame, write_frame, write_editor_result
 from jusi.plugin_api import WorkerContext, WorkerResult, OperationRejected
 from jusi.protocol import ProtocolValidationError, validate_plugin_worker_message
 
@@ -94,7 +94,8 @@ def run(args: argparse.Namespace) -> int:
     def send(response: dict[str, Any]) -> None:
         validate_plugin_worker_message(response)
         with write_lock:
-            write_frame(control_output, response, limit=args.frame_limit)
+            writer = write_editor_result if response["kind"] == "worker.result" and response["operation"] == "editor_action" else write_frame
+            writer(control_output, response, limit=args.frame_limit)
 
     def response_for(message: dict[str, Any], result: dict[str, Any], core_requests=None):
         return {
@@ -127,7 +128,7 @@ def run(args: argparse.Namespace) -> int:
                 send(_failure(message, exc))
                 return
             with active_lock:
-                reject(message, OperationRejected("Export exceeds the worker control frame limit", reason="invalid_request"))
+                reject(message, OperationRejected("Export could not be encoded", reason="invalid_request"))
                 active.clear()
         except OperationRejected as exc:
             with active_lock:

@@ -18,7 +18,6 @@
         },
         "text": {
           "type": "string",
-          "maxLength": 524288,
           "pattern": "^[^\\u0000]*$"
         },
         "regtype": {
@@ -44,7 +43,6 @@
         },
         "text": {
           "type": "string",
-          "maxLength": 524288,
           "pattern": "^[^\\u0000]*$"
         },
         "name": {

@@ -1,4 +1,4 @@
-"""Bounded data snapshots: no pickle, imports by payload, or remote evaluation."""
+"""Data-only snapshots: no pickle, imports by payload, or remote evaluation."""
 from __future__ import annotations
 
 import base64
@@ -7,8 +7,6 @@ from decimal import Decimal
 import json
 import math
 
-MAX_BYTES = 768 * 1024
-MAX_NODES = 100000
 MAX_DEPTH = 64
 
 
@@ -18,34 +16,21 @@ class SnapshotError(ValueError):
 
 def dumps(value) -> str:
     encoded = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
-    if len(encoded.encode("utf-8")) > MAX_BYTES:
-        raise SnapshotError("%%vd snapshot exceeds 768 KiB; select a smaller value")
     return encoded
 
 
 def capture(value):
     active = set()
-    remaining = MAX_NODES
-    budget = MAX_BYTES
 
     def visit(obj, depth=0):
-        nonlocal remaining, budget
-        remaining -= 1
-        budget -= 16
-        if isinstance(obj, str):
-            budget -= len(obj.encode("utf-8"))
-        if budget < 0 or remaining < 0 or depth > MAX_DEPTH:
-            raise SnapshotError("%%vd value is too large or deeply nested")
+        if depth > MAX_DEPTH:
+            raise SnapshotError("%%vd value is too deeply nested")
         kind = type(obj)
         if obj is None or kind in (bool, int, str):
-            if kind is str and len(obj.encode("utf-8")) > MAX_BYTES:
-                raise SnapshotError("%%vd text exceeds the snapshot limit")
             return obj
         if kind is float:
             return obj if math.isfinite(obj) else {"type": "float", "value": str(obj)}
         if kind is bytes:
-            if len(obj) > MAX_BYTES:
-                raise SnapshotError("%%vd bytes exceed the snapshot limit")
             return {"type": "bytes", "value": base64.b64encode(obj).decode("ascii")}
         if kind in (date, datetime, time, Decimal):
             return {"type": kind.__name__, "value": str(obj) if kind is Decimal else obj.isoformat()}
@@ -66,8 +51,6 @@ def capture(value):
                     return visit(str(obj), depth + 1)
                 if kind.__name__ in ("DataFrame", "Series"):
                     frame = obj.to_frame() if kind.__name__ == "Series" else obj
-                    if frame.size + len(frame.index) > MAX_NODES:
-                        raise SnapshotError("%%vd table is too large; select fewer rows or columns")
                     return {"type": "table", "columns": [visit(str(col), depth + 1) for col in frame.columns],
                             "index_name": str(frame.index.name or "index"),
                             "rows": [visit([index, *row], depth + 1) for index, row in
@@ -75,8 +58,6 @@ def capture(value):
             if module == "numpy":
                 if getattr(obj, "ndim", 0) == 0:
                     return visit(obj.item(), depth + 1)
-                if obj.size > MAX_NODES:
-                    raise SnapshotError("%%vd array is too large")
                 return visit(obj.tolist(), depth + 1)
             if kind in (list, tuple, set, frozenset):
                 return {"type": kind.__name__, "items": [visit(item, depth + 1) for item in obj]}
@@ -87,7 +68,6 @@ def capture(value):
             active.remove(identity)
 
     result = {"snapshot_version": 1, "value": visit(value)}
-    dumps(result)
     return result
 
 
@@ -95,13 +75,9 @@ def restore(snapshot):
     """Validate and reconstruct only the explicitly supported data types."""
     if not isinstance(snapshot, dict) or set(snapshot) != {"snapshot_version", "value"} or snapshot["snapshot_version"] != 1:
         raise SnapshotError("Invalid %%vd snapshot envelope")
-    dumps(snapshot)
-    remaining = MAX_NODES
 
     def visit(node, depth=0):
-        nonlocal remaining
-        remaining -= 1
-        if remaining < 0 or depth > MAX_DEPTH:
+        if depth > MAX_DEPTH:
             raise SnapshotError("Invalid %%vd snapshot bounds")
         if node is None or type(node) in (bool, int, str):
             return node

@@ -7,6 +7,11 @@ function M.apply(result, opts)
   opts = opts or {}
   local valid, err = protocol.validate_editor_action(result, result and result.action)
   if not valid then return nil, err end
+  if opts.source_path and result.action == "copy" then
+    local file = assert(io.open(opts.source_path, "rb"))
+    result = vim.tbl_extend("force", result, { text = file:read("*a") })
+    file:close()
+  end
   if result.action == "copy" then
     local register = opts.register or '"'
     if #register ~= 1 or not register:match('^[a-z0-9"+*]$') then return nil, "unsupported destination register" end
@@ -20,8 +25,9 @@ function M.apply(result, opts)
     vim.bo[buf].swapfile = false
     vim.bo[buf].bufhidden = "hide"
     vim.api.nvim_buf_set_name(buf, vim.fn.tempname() .. "--" .. result.name)
-    local lines = vim.split(result.text, "\n", { plain = true })
-    local eol = result.text:sub(-1) == "\n"
+    local lines = opts.source_path and vim.fn.readfile(opts.source_path, "b")
+      or vim.split(result.text, "\n", { plain = true })
+    local eol = opts.source_path and #lines > 1 and lines[#lines] == "" or result.text:sub(-1) == "\n"
     if eol then table.remove(lines) end
     if #lines == 0 then lines = { "" } end
     vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)

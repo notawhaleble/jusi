@@ -149,6 +149,17 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 30000
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "next_offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "eof": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -200,8 +211,44 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "required": [
+              "offset"
+            ]
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "text": {
+                    "maxLength": 65536,
+                    "description": "At most 65536 UTF-8 bytes; next_offset equals offset plus UTF-8 byte length."
+                  }
+                }
+              }
+            }
+          }
         }
-      ]
+      ],
+      "dependentRequired": {
+        "offset": [
+          "offset",
+          "next_offset",
+          "eof"
+        ],
+        "next_offset": [
+          "offset",
+          "next_offset",
+          "eof"
+        ],
+        "eof": [
+          "offset",
+          "next_offset",
+          "eof"
+        ]
+      }
     },
     "ack": {
       "type": "object",
@@ -241,6 +288,94 @@
         }
       },
       "additionalProperties": false
+    },
+    "begin": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "kind",
+        "request_id",
+        "content"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "application.editor_action_begin"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "content": {
+          "allOf": [
+            {
+              "$ref": "responses.schema.json#/$defs/editor_action"
+            },
+            {
+              "properties": {
+                "text": {
+                  "const": ""
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "chunk": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "kind",
+        "request_id",
+        "text",
+        "eof"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "application.editor_action_chunk"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536,
+          "pattern": "^[^\\u0000]*$",
+          "description": "At most 65536 UTF-8 bytes per chunk."
+        },
+        "eof": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "eof": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
     }
   },
   "oneOf": [
@@ -249,6 +384,12 @@
     },
     {
       "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/begin"
+    },
+    {
+      "$ref": "#/$defs/chunk"
     }
   ]
 }
