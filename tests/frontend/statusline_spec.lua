@@ -10,6 +10,10 @@ function M.run()
   vim.api.nvim_buf_set_name(buf, '/tmp/100% notebook.vipynb')
   vim.api.nvim_set_current_buf(buf)
   vim.bo[buf].filetype = 'jusi'; status.refresh(win)
+  assert(status.render(win):find('%#JusiStatusUnconnected#', 1, true))
+  vim.b[buf].jusi_cell_mode_active = true
+  assert(status.render(win):find('%#JusiStatusCellMode# mode:cell ', 1, true))
+  vim.b[buf].jusi_cell_mode_active = false
   local ctl = {supervisor_id='sup_test',kernel_state='on',transport_state='connected'}
   jusi._sessions[buf] = {buf=buf,model={notebook_id='nb_status'},controller=ctl,target_alias='local'}
   local function rendered()
@@ -25,9 +29,12 @@ function M.run()
   local id = vim.b[client.buf].jusi_output_number
   vim.g.statusline_winid = cw
   assert(status.render():find('output '..id,1,true), 'inactive window used notebook context')
+  assert(not status.render():find('.vipynb', 1, true))
   vim.g.statusline_winid = nil
   vim.cmd.colorscheme('default')
   assert(rendered():find('kernel: off',1,true))
+  assert(vim.api.nvim_get_hl(0, {name='JusiStatusCellMode'}).bg)
+  assert(vim.api.nvim_get_hl(0, {name='JusiStatusUnconnected'}).bg)
   client:close()
   jusi._sessions[buf] = nil
   vim.api.nvim_set_current_win(win); vim.api.nvim_set_current_buf(original); status.refresh(win)
