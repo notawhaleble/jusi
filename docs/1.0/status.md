@@ -4,7 +4,9 @@ Updated: 2026-09-13
 
 ## Current Facts
 
-- Backend-driven show_diff now displays two read-only snapshots in native Neovim diff windows in a new tab. It reuses chunked editor delivery and acknowledgment, with no accept/reject or writeback behavior. Shared contracts, paired-transfer tests and the terminal end-to-end fixture cover display and source-close independence. See [ADR 0040](adr/0040-show-diff-is-display-only.md) and the [application guide](architecture/show-diff.md). Manual diff review is next.
+- J/J! now complete loaded notebooks, discovered magics and target configuration aliases; magic reuse preserves identity/history and bang uses contextual submission. The buffer-local Ctrl-\ Ctrl-\ focus chord respects user mappings, and palette/output layout stays in the notebook tab. Shared palette contracts and frontend/real-kernel tests cover the flow. See [ADR 0041](adr/0041-palette-and-focus-controls.md).
+
+- Backend-driven show_diff now displays two read-only snapshots in native Neovim diff windows in a new tab. It reuses chunked editor delivery and acknowledgment, with no accept/reject or writeback behavior. Shared contracts, paired-transfer tests and the terminal end-to-end fixture cover display and source-close independence. See [ADR 0040](adr/0040-show-diff-is-display-only.md) and the [application guide](architecture/show-diff.md). Display-only diff is ready for manual use.
 - Manual testing between two Macs confirmed remote plain-cell execution, VisiData interaction, zY copy, Ctrl-O open and JusiStop over an SSH-forwarded service connection. Public authentication/TLS deployment and connection-loss testing remain separate.
 
 - Total copy/open and VisiData snapshot size ceilings are removed. Application exports use disk-backed chunked UTF-8 delivery with renewable inactivity leases; private worker editor results use data framing. VisiData uses kernel-owned target artifacts rather than embedding snapshots in control messages. Tests exercise multi-megabyte file delivery, large real VisiData copy/open, chunk validation and cleanup. Destination memory and structural/type validation still apply. See [ADR 0039](adr/0039-user-data-is-not-a-control-frame.md).
@@ -34,7 +36,7 @@ Updated: 2026-09-13
 
 - Cell status now uses opener-anchored extmarks with symbols after the opener and matching opener/closer colors, with purple busy *, green done ✓, red error ✗, orange interrupted !, blue followup >, and yellow never-executed delimiters. RGB and 256-color terminal palettes are provided. No sign or status columns are used. Execution/input, client lifecycle and exact followup operations drive the projection; ordinary typing only moves existing extmarks. See [ADR 0028](adr/0028-cell-status-is-an-inline-extmark-projection.md).
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0040 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0041 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
@@ -85,7 +87,7 @@ Updated: 2026-09-13
 - The same scenario proves a 40 KiB Unicode/ANSI output is split into byte-bounded SSE records and reconstructs exactly; frontend coverage deliberately splits an ANSI escape sequence across writes and lets Neovim consume it.
 - The SQL/VisiData migration audit preserves family alias routing, provider-owned VisiData/database behavior, durable clients, and generic terminal presentation while retiring 0.x handler/runtime/frontend-config machinery. The clean `jusi-sql` and `jusi-sqlite` repositories remain untouched and still target the incompatible 0.x contract.
 - ADR 0019 is accepted with the shared-host qualification: runtime configuration is target-side and should contain only capabilities/routing relevant to that target; providers should normally resolve credentials from their worker environment or another target-side secret mechanism.
-- `jusi serve` now snapshots bounded data-only TOML from target-side `~/.jusi/jusi.toml` on every kernel start/restart, with `--config PATH` for an explicit target file. Missing defaults are empty; missing explicit files and malformed/oversized/unsupported data fail the runtime operation without stopping the service, discovery, or spawning a kernel. Contents remain absent from public state and diagnostics.
+- `jusi serve` now snapshots bounded data-only TOML from target-side `~/.jusi/jusi.toml` on every kernel start/restart, with `--config PATH` for an explicit target file. Missing defaults are empty; missing explicit files and malformed/oversized/unsupported data fail the runtime operation without stopping the service, discovery, or spawning a kernel. Configuration values remain absent from public state and diagnostics; the palette publishes only discovered alias names.
 - Kernel adapters may receive that private frozen snapshot through `configure_jusi_runtime_v1` before their IPython extension loads and readiness attests. A real-kernel test verifies delivery; restart and redaction tests verify fresh generations without exposing values.
 - A central test-only `sqlite` exact plugin now proves the first real SQL path without modifying or copying the external 0.x packages: target-side `[sql.main]` resolution, exact kernel handoff, isolated worker, private 0600 launch payload, read-only SQLite connection, real VisiData in the generic target PTY, native Neovim terminal projection, explicit client close, and kernel survival.
 - The isolated VisiData fixture disables VisiData user-state loading and persistence. Its end-to-end check rejects the observed state-directory `FileExistsError`; production SQL/VisiData configuration remains plugin-owned.
@@ -116,8 +118,7 @@ Deferred:
 
 ## Next Boundary
 
-Complete user-facing mappings (including focus toggling), J/J! command/palette
-completion and layout when invoked from a tab without a notebook. Package the
+Manually review palette/focus ergonomics. Package the
 plugin/family skills with a documented installer supplying matching reference
 source; the current personal skills still assume a core checkout. Evaluate
 independent plugin creation after that installation flow exists.

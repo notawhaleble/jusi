@@ -56,6 +56,23 @@ function M.run()
       _G.jusi_e2e_complete, _G.jusi_e2e_ready = nil, nil
     end
     assert(starts == 1, "completion created a kernel execution")
+    local palette = require("jusi.palette")
+    assert(session.controller.palette.vd, "startup did not publish bundled magic")
+    local label
+    for _, item in ipairs(palette.notebooks()) do if item.buf == buf then label = item.label end end
+    completed = false
+    palette.command({ fargs = { label }, range = 0, bang = false })
+    vim.cmd.stopinsert()
+    local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+    vim.api.nvim_buf_set_lines(buf, row, row + 1, false, { "21 * 2" })
+    jusi.submit(buf, row)
+    wait_for(function() return completed end, "palette cell did not execute")
+    assert(starts == 2)
+    local keys = vim.api.nvim_replace_termcodes("<C-\\><C-\\>", true, false, true)
+    vim.api.nvim_feedkeys(keys, "xt", false)
+    assert(vim.b.jusi_role == "output", "focus mapping did not reach output")
+    vim.api.nvim_feedkeys(keys, "xt", false)
+    assert(vim.api.nvim_get_current_buf() == buf, "focus mapping did not return to notebook")
     jusi.stop_service(buf)
     wait_for(function() return service.state == "stopped" end, "completion cleanup failed")
   end, debug.traceback)

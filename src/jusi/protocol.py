@@ -438,10 +438,22 @@ def validate_health_response(data: object) -> dict[str, Any]:
     runtime = data["runtime"]
     if runtime is not None:
         fields = {"runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog"}
-        if not isinstance(runtime, dict) or set(runtime) != fields:
+        if not isinstance(runtime, dict) or not fields <= set(runtime) or set(runtime) - fields - {"palette"}:
             raise ProtocolValidationError("runtime has invalid fields")
         _required_strings(runtime, ("runtime_id", "notebook_id", "discovery_id", "kernel_id"), "runtime")
         catalog = validate_plugin_catalog(runtime["plugin_catalog"])
+        palette = runtime.get("palette", {})
+        magics = {family["magic_name"] for plugin in catalog["plugins"] for family in plugin["families"]}
+        if not isinstance(palette, dict) or set(palette) - magics:
+            raise ProtocolValidationError("invalid runtime palette magics")
+        for section in palette.values():
+            if not isinstance(section, dict) or set(section) != {"entries"}:
+                raise ProtocolValidationError("invalid runtime palette section")
+            entries = section["entries"]
+            if not isinstance(entries, list) or any(not isinstance(entry, str) or not entry or any(c.isspace() for c in entry) for entry in entries):
+                raise ProtocolValidationError("invalid runtime palette entries")
+            if len(set(entries)) != len(entries):
+                raise ProtocolValidationError("duplicate runtime palette entries")
         if catalog["discovery_id"] != runtime["discovery_id"]:
             raise ProtocolValidationError("runtime discovery identity mismatch")
         if kernel is None or runtime["kernel_id"] != kernel["kernel_id"] or runtime["notebook_id"] != kernel.get("notebook_id"):

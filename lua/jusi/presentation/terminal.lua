@@ -44,6 +44,7 @@ function M.new(options)
   vim.b[buf].jusi_cell_id = opts.cell_id
   vim.b[buf].jusi_execution_id = opts.execution_id
   vim.b[buf].jusi_client_id = opts.client_id
+  require("jusi.focus").attach(buf)
   return setmetatable({
     buf = buf,
     channel = channel,

@@ -40,3 +40,13 @@ path = "/data/main.sqlite"
 SQL interpretation is not implemented in core. This example documents the
 family boundary that the first SQL fixture and later external providers will
 consume.
+
+## Palette aliases
+
+At kernel start/restart the service publishes discovered magic names and alias
+names from their matching `[magic.alias]` tables for `:J` command completion.
+For example, `[sql.main]` contributes `main` under `sql`. Scalar settings and
+undiscovered configuration sections are omitted; table contents and credentials
+are never included. Alias names must be nonempty single tokens. This convention
+does not resolve the provider or validate its private configuration. Families
+using another configuration layout remain usable through manually written cells.

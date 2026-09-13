@@ -1067,11 +1067,11 @@ def test_full_restart_reloads_private_target_configuration_snapshot() -> None:
     factory = SequenceFactory([FakeKernel(), FakeKernel()])
     configuration = SequenceConfiguration([
         {"sql": {"main": {"provider": "sqlite", "token": "first-secret"}}},
-        {"sql": {"main": {"provider": "sqlite", "token": "second-secret"}}},
+        {"sql": {"other": {"provider": "sqlite", "token": "second-secret"}}},
     ])
     supervisor = Supervisor(
         factory,
-        FakeDiscovery(),
+        FakeDiscovery(plugins=[plugin_entry()]),
         runtime_configuration=configuration,
     )
 
@@ -1087,9 +1087,11 @@ def test_full_restart_reloads_private_target_configuration_snapshot() -> None:
         trace_id="trace_restart",
     )
 
+    assert started["runtime"]["palette"] == {"sql": {"entries": ["main"]}}
+    assert restarted["runtime"]["palette"] == {"sql": {"entries": ["other"]}}
     assert configuration.calls == 2
     assert factory.configurations[0]["sql"]["main"]["token"] == "first-secret"
-    assert factory.configurations[1]["sql"]["main"]["token"] == "second-secret"
+    assert factory.configurations[1]["sql"]["other"]["token"] == "second-secret"
     public_state = json.dumps({
         "started": started,
         "restarted": restarted,

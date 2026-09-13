@@ -50,7 +50,7 @@ validated plugin catalog snapshot, and one kernel generation.
 
 - identity: `runtime_id`
 - owns correlations to: `notebook_id`, `discovery_id`, `kernel_id`
-- catalog: immutable for this generation and discarded on replacement
+- catalog and public palette aliases: immutable for this generation and discarded on replacement
 - lifetime: successful start until replacement; it may remain inspectable with
   an `off` kernel after stop or observed kernel death
 

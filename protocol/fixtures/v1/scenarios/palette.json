@@ -1,0 +1,8 @@
+{
+  "health_fixture": "valid/health-palette.json",
+  "commands": [
+    "J notebook",
+    "J notebook sql main",
+    "J! notebook sql main"
+  ]
+}

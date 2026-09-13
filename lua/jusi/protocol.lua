@@ -463,10 +463,27 @@ function M.validate_health_response(response)
   if runtime ~= vim.NIL then
     local runtime_fields = set({ "runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog" })
     for field, _ in pairs(runtime_fields) do if runtime[field] == nil then return false, "runtime missing field: " .. field end end
-    for field, _ in pairs(runtime) do if not runtime_fields[field] then return false, "unknown runtime field: " .. field end end
+    for field, _ in pairs(runtime) do if not runtime_fields[field] and field ~= "palette" then return false, "unknown runtime field: " .. field end end
     for _, field in ipairs({ "runtime_id", "notebook_id", "discovery_id", "kernel_id" }) do if not nonempty_string(runtime[field]) then return false, "invalid runtime identity" end end
     local catalog_ok, catalog_error = M.validate_plugin_catalog(runtime.plugin_catalog)
     if not catalog_ok then return false, catalog_error end
+    if runtime.palette ~= nil then
+      if type(runtime.palette) ~= "table" then return false, "invalid runtime palette" end
+      local magics = {}
+      for _, plugin in ipairs(runtime.plugin_catalog.plugins) do
+        for _, family in ipairs(plugin.families) do magics[family.magic_name] = true end
+      end
+      for magic, section in pairs(runtime.palette) do
+        if not magics[magic] or type(section) ~= "table" then return false, "invalid palette magic" end
+        for field in pairs(section) do if field ~= "entries" then return false, "invalid palette section" end end
+        if type(section.entries) ~= "table" or not vim.islist(section.entries) then return false, "invalid palette entries" end
+        local seen = {}
+        for _, entry in ipairs(section.entries) do
+          if type(entry) ~= "string" or entry == "" or entry:find("%s") or seen[entry] then return false, "invalid palette entry" end
+          seen[entry] = true
+        end
+      end
+    end
     if runtime.plugin_catalog.discovery_id ~= runtime.discovery_id then return false, "runtime discovery identity mismatch" end
     if kernel == nil or kernel == vim.NIL or runtime.kernel_id ~= kernel.kernel_id or runtime.notebook_id ~= kernel.notebook_id then return false, "runtime kernel ownership mismatch" end
   elseif kernel ~= nil and kernel ~= vim.NIL and kernel.state == "on" then

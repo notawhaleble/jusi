@@ -108,11 +108,13 @@ function Controller:_accept_health_snapshot(response)
       self.runtime_id = runtime.runtime_id
       self.discovery_id = runtime.discovery_id
       self.plugin_catalog = runtime.plugin_catalog
+      self.palette = runtime.palette
       if self.on_catalog then self.on_catalog() end
     else
       self.runtime_id = nil
       self.discovery_id = nil
       self.plugin_catalog = nil
+      self.palette = nil
     end
     if self.on_resynchronized then
       self.on_resynchronized({
@@ -424,6 +426,7 @@ function Controller:start_kernel(callback)
       self.runtime_id = response.runtime.runtime_id
       self.discovery_id = response.runtime.discovery_id
       self.plugin_catalog = response.runtime.plugin_catalog
+      self.palette = response.runtime.palette
       if self.on_catalog then self.on_catalog() end
     end
     if callback then
@@ -461,6 +464,7 @@ function Controller:restart_notebook(next_notebook_id, callback)
       self.runtime_id = response.runtime.runtime_id
       self.discovery_id = response.runtime.discovery_id
       self.plugin_catalog = response.runtime.plugin_catalog
+      self.palette = response.runtime.palette
       if self.on_catalog then self.on_catalog() end
       self.kernel_id = response.kernel.kernel_id
       self.kernel_state = response.kernel.state
@@ -473,6 +477,7 @@ function Controller:restart_notebook(next_notebook_id, callback)
       self.runtime_id = nil
       self.discovery_id = nil
       self.plugin_catalog = nil
+      self.palette = nil
       self.kernel_state = "off"
       self.executions = {}
       self.pending_input = nil

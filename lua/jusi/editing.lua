@@ -196,6 +196,7 @@ function Editing:close()
   if self.closed then return end
   self.closed = true
   self.cellmode:close()
+  if self.detach_focus then self.detach_focus() end
   if self.offline_marks then self.offline_marks:close() end
   self.history:close()
   instances[self.model.buf] = nil
@@ -230,6 +231,7 @@ function M.new(model, controller)
   vim.api.nvim_create_autocmd("BufWipeout", { group = self.group, buffer = model.buf, once = true,
     callback = function() self:close() end })
   self.cellmode = require("jusi.cellmode").new(self)
+  self.detach_focus = require("jusi.focus").attach(model.buf)
   self:catalog()
   self:schedule()
   return self

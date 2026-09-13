@@ -25,6 +25,7 @@ from jusi.application.ports import (
 )
 from jusi.application.plugin_workers import PluginWorkerManager, PluginWorkerSelectionError
 from jusi.application.terminal_surfaces import TerminalSurfaceError, TerminalSurfaceManager
+from jusi.domain.palette import build_palette
 from jusi.domain.models import (
     ClientResource,
     ExecutionResource,
@@ -368,6 +369,7 @@ class Supervisor:
                 discovery_id=discovery_id,
                 kernel_id=kernel_id,
                 plugin_catalog=discovery.catalog,
+                palette=build_palette(discovery.catalog, configuration),
             )
             if self._plugin_workers is not None:
                 self._plugin_workers.activate_runtime(runtime)
@@ -1759,6 +1761,7 @@ class Supervisor:
                 discovery_id=discovery_id,
                 kernel_id=next_kernel_id,
                 plugin_catalog=discovery.catalog,
+                palette=build_palette(discovery.catalog, configuration),
             )
             if self._plugin_workers is not None:
                 self._plugin_workers.activate_runtime(next_runtime)

@@ -875,6 +875,10 @@ local function create_commands()
     return
   end
   commands_created = true
+  vim.api.nvim_create_user_command("J", function(command)
+    local ok, err = pcall(require("jusi.palette").command, command)
+    if not ok then notify(tostring(err), vim.log.levels.ERROR) end
+  end, { bang = true, range = true, nargs = "*", complete = function(...) return require("jusi.palette").complete(...) end })
   vim.api.nvim_create_user_command("JusiStart", function(command) M.start(command.args) end, {
     nargs = 1, complete = function(prefix)
       local aliases = vim.tbl_keys(config.targets)

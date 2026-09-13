@@ -310,7 +310,12 @@
             "notebook_id": {"type": "string", "minLength": 1},
             "discovery_id": {"type": "string", "minLength": 3},
             "kernel_id": {"type": "string", "minLength": 3},
-            "plugin_catalog": {"$ref": "plugin-catalog.schema.json"}
+            "plugin_catalog": {"$ref": "plugin-catalog.schema.json"},
+            "palette": {"type": "object", "additionalProperties": {
+              "type": "object", "required": ["entries"], "additionalProperties": false,
+              "properties": {"entries": {"type": "array", "uniqueItems": true,
+                "items": {"type": "string", "minLength": 1, "pattern": "^\\S+$"}}}
+            }}
           },
           "required": ["runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog"],
           "additionalProperties": false

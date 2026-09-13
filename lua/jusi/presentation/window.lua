@@ -22,24 +22,29 @@ function M.close_for_buffer(buf)
   end
 end
 
-function M.find(buf)
-  return valid_windows(buf)[1]
+function M.find(buf, tab)
+  local windows = valid_windows(buf)
+  for _, window in ipairs(windows) do
+    if vim.api.nvim_win_get_tabpage(window) == (tab or vim.api.nvim_get_current_tabpage()) then return window end
+  end
+  if not tab then return windows[1] end
 end
 
 function M.show(buf, options)
   local opts = options or {}
-  local existing = M.find(buf)
+  local anchor = opts.anchor_buf and M.find(opts.anchor_buf) or nil
+  local tab = opts.tab or (anchor and vim.api.nvim_win_get_tabpage(anchor)) or vim.api.nvim_get_current_tabpage()
+  local existing = M.find(buf, tab)
   if existing then
-    if opts.enter then
-      vim.api.nvim_set_current_win(existing)
-    end
+    if opts.enter then vim.api.nvim_set_current_win(existing) end
     return existing
   end
-
-  local anchor = opts.anchor_buf and M.find(opts.anchor_buf) or nil
+  if not anchor or vim.api.nvim_win_get_tabpage(anchor) ~= tab then
+    anchor = vim.api.nvim_tabpage_get_win(tab)
+  end
   return vim.api.nvim_open_win(buf, opts.enter == true, {
     split = opts.split or "below",
-    win = anchor or 0,
+    win = anchor,
     height = opts.height,
   })
 end

@@ -77,6 +77,35 @@ still replaces its artifact.
 The original `JusiExecute`, `JusiInput`, and `JusiFollowup` commands remain
 available when you want a specific submission variant.
 
+## Palette and Focus
+
+Use `:J <Tab>` from any buffer to select a loaded notebook. Completion then
+offers its discovered magics and configured aliases:
+
+```vim
+:J notebook
+:J notebook vd
+:J notebook sql main
+:J! notebook sql main
+```
+
+Plain `J notebook` creates a new empty cell. A magic request reuses its matching
+cell or creates one; `J!` also submits it using the same contextual behavior as
+Enter in cell mode. A visual selection supplies the body, preserving existing
+cell history. New cells enter Insert mode. Notebook labels use filenames without
+the extension; duplicate names use paths, and completion escapes spaces.
+
+The notebook opens in a right split when it is absent from the current tab.
+Completion reads cached startup metadata: aliases come from target-side
+`[magic.alias]` configuration tables and refresh on restart. Offline notebooks
+support plain cell creation; magic completion becomes available after startup.
+
+Press **Ctrl-\ twice** to toggle between a cell and its output, including from
+Insert mode or a terminal client. Entering an interactive client starts terminal
+input; returning to the notebook uses Normal mode. Existing bindings take
+precedence. To use another key, map it to `:JusiToggleFocus` (or call
+`require('jusi.focus').toggle()` to also enter terminal input automatically).
+
 ## Cell History
 
 Followup-capable plugins keep submitted bodies in the cell's history suffix,
