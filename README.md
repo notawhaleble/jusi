@@ -63,7 +63,8 @@ returns to cell-mode controls.
 | `Y` / `P` | Copy cell / paste below with a fresh identity |
 | S | Toggle output parking (`~` beside the status symbol) |
 | B | Create an empty cell below and enter Insert |
-| `Q` | Close the cell's output/client |
+| `Q` / `{id}Q` | Close current / numbered output and its resources |
+| `{id}G` | Jump to the numbered output's source cell |
 
 `:JusiNextCell` and `:JusiPreviousCell` skip history and work in either mode.
 `:JusiCellNewAbove` / `:JusiCellNewBelow` create an empty cell and enter Insert.
@@ -107,6 +108,36 @@ precedence. From an unrelated buffer, the chord focuses the first visible
 notebook in the current tab, or the first visible notebook across other tabs.
 It also works for offline notebooks. To use another key, map it to `:JusiToggleFocus` (or call
 `require('jusi.focus').toggle()` to also enter terminal input automatically).
+
+## Statuslines and Backslash Keys
+
+Notebook statuslines show kernel `on`/`off`, target alias, modified text and cell
+mode. Before inspection the kernel is unknown; disconnected transport is shown
+separately, with cached kernel state marked **last known**.
+
+Each output/client statusline shows a numeric ID. Use `12G` in cell mode to jump
+to output 12's cell, or `12Q` to close it from any current cell. These keys also
+work in output buffers in Normal mode. Outside cell mode use `12\g` and `12\q`.
+`:JusiGotoClient 12` and `:JusiCloseClient 12` work from any buffer. IDs survive
+hiding a window, are never reused in a Neovim session, and retire with the output.
+Closing an old ID cannot close its replacement.
+
+Notebook Normal-mode shortcuts use a literal backslash, independent of mapleader:
+
+| Key | Action |
+| --- | --- |
+| `\a` / `\b` | New cell above / below |
+| `\c` / `\x` | Edit / delete cell |
+| `\y` / `\p` | Copy cell / paste below |
+| `\j` | Submit by context, including input, followup and history |
+| `\h` | Toggle history |
+| `\s` | Toggle output parking |
+| `\ii` / `\00` | Interrupt / restart |
+| `\q` / `{id}\q` | Close current / numbered output |
+| `{id}\g` | Jump to numbered output's cell |
+
+Existing custom mappings take precedence. Ordinary `G` keeps its native behavior
+outside cell mode; uncounted `G` in cell mode also goes to the last line.
 
 ## Cell History
 

@@ -100,9 +100,11 @@ function Controller:_accept_health_snapshot(response)
     if kernel then
       self.kernel_id = kernel.kernel_id
       self.kernel_state = kernel.state
+      if self.on_state_changed then self.on_state_changed() end
     else
       self.kernel_id = nil
       self.kernel_state = "off"
+      if self.on_state_changed then self.on_state_changed() end
     end
     if runtime then
       self.runtime_id = runtime.runtime_id
@@ -144,6 +146,7 @@ function Controller:connect(callback)
     return self.event_connection
   end
   self.transport_state = "connecting"
+  if self.on_state_changed then self.on_state_changed() end
   self._connect_generation = self._connect_generation + 1
   local generation = self._connect_generation
   self.inspect_request = self.transport:request("GET", "/v1/health", nil, {
@@ -155,6 +158,7 @@ function Controller:connect(callback)
     end
     if failure then
       self.transport_state = "disconnected"
+      if self.on_state_changed then self.on_state_changed() end
       self.last_transport_failure = failure
       if self.on_failure then
         self.on_failure(failure)
@@ -169,6 +173,7 @@ function Controller:connect(callback)
         and response.kernel.state == "on" and response.kernel.notebook_id ~= self.notebook.notebook_id then
       local ownership_failure = self:_transport_failure("conflict", "target already runs another notebook")
       self.transport_state = "disconnected"
+      if self.on_state_changed then self.on_state_changed() end
       if self.on_failure then self.on_failure(ownership_failure) end
       if callback then callback(false, ownership_failure); callback = nil end
       return
@@ -176,6 +181,7 @@ function Controller:connect(callback)
     local accepted, snapshot_failure = self:_accept_health_snapshot(response)
     if not accepted then
       self.transport_state = "disconnected"
+      if self.on_state_changed then self.on_state_changed() end
       self.last_transport_failure = snapshot_failure
       if self.on_failure then
         self.on_failure(snapshot_failure)
@@ -190,6 +196,7 @@ function Controller:connect(callback)
       editor_id = self.editor_id,
       on_open = function()
         self.transport_state = "connected"
+        if self.on_state_changed then self.on_state_changed() end
         if self.on_editor_action then
           for _, action in ipairs(self.pending_editor_actions or {}) do self.on_editor_action(action) end
         end
@@ -209,6 +216,7 @@ function Controller:connect(callback)
       end,
       on_error = function(stream_failure)
         self.transport_state = "disconnected"
+        if self.on_state_changed then self.on_state_changed() end
         self.last_transport_failure = stream_failure
         if self.on_failure then
           self.on_failure(stream_failure)
@@ -221,6 +229,7 @@ function Controller:connect(callback)
       end,
       on_close = function()
         self.transport_state = "disconnected"
+        if self.on_state_changed then self.on_state_changed() end
       end,
     })
   end)
@@ -241,6 +250,7 @@ function Controller:_on_event(event)
       resource = { kind = "transport", id = self.transport.transport_id },
     }
     self.transport_state = "disconnected"
+    if self.on_state_changed then self.on_state_changed() end
     self.last_transport_failure = failure
     if self.event_connection then
       self.event_connection:close()
@@ -258,6 +268,7 @@ function Controller:_on_event(event)
     )
     failure.trace_id = event.trace_id
     self.transport_state = "disconnected"
+    if self.on_state_changed then self.on_state_changed() end
     self.last_transport_failure = failure
     if self.event_connection then
       self.event_connection:close()
@@ -272,6 +283,7 @@ function Controller:_on_event(event)
   end
   if event.sequence ~= self.event_sequence + 1 then
     self.transport_state = "disconnected"
+    if self.on_state_changed then self.on_state_changed() end
     self.last_transport_failure = {
       trace_id = event.trace_id,
       layer = "frontend_transport",
@@ -294,9 +306,11 @@ function Controller:_on_event(event)
   self.supervisor_id = event.supervisor_id
   self.event_sequence = event.sequence
   self.transport_state = "connected"
+  if self.on_state_changed then self.on_state_changed() end
   if event.kind == "kernel.state_changed" then
     self.kernel_id = event.payload.kernel_id
     self.kernel_state = event.payload.state
+    if self.on_state_changed then self.on_state_changed() end
     if self.kernel_state == "off" then self.pending_input = nil end
   elseif event.kind == "execution.started" and event.payload.notebook_id == self.notebook.notebook_id then
     self.executions[event.payload.execution_id] = {
@@ -423,6 +437,7 @@ function Controller:start_kernel(callback)
     if response then
       self.kernel_id = response.kernel.kernel_id
       self.kernel_state = response.kernel.state
+      if self.on_state_changed then self.on_state_changed() end
       self.runtime_id = response.runtime.runtime_id
       self.discovery_id = response.runtime.discovery_id
       self.plugin_catalog = response.runtime.plugin_catalog
@@ -468,6 +483,7 @@ function Controller:restart_notebook(next_notebook_id, callback)
       if self.on_catalog then self.on_catalog() end
       self.kernel_id = response.kernel.kernel_id
       self.kernel_state = response.kernel.state
+      if self.on_state_changed then self.on_state_changed() end
       self.executions = {}
       self.pending_input = nil
       self.input_submissions = {}
@@ -479,6 +495,7 @@ function Controller:restart_notebook(next_notebook_id, callback)
       self.plugin_catalog = nil
       self.palette = nil
       self.kernel_state = "off"
+      if self.on_state_changed then self.on_state_changed() end
       self.executions = {}
       self.pending_input = nil
       self.input_submissions = {}
@@ -715,6 +732,7 @@ function Controller:stop_kernel(callback)
   return self:_request("DELETE", "/v1/kernels/" .. kernel_id, command, function(response, failure)
     if response then
       self.kernel_state = response.kernel.state
+      if self.on_state_changed then self.on_state_changed() end
     end
     if callback then
       callback(response, failure)
@@ -756,6 +774,7 @@ function Controller:close()
     self.event_connection = nil
   end
   self.transport_state = "disconnected"
+  if self.on_state_changed then self.on_state_changed() end
 end
 
 function M.new(options)
@@ -781,6 +800,7 @@ function M.new(options)
     client_operations = {},
     surfaces = {},
     on_event = opts.on_event,
+    on_state_changed = opts.on_state_changed,
     on_execution_started = opts.on_execution_started,
     on_execution_completed = opts.on_execution_completed,
     on_output = opts.on_output,

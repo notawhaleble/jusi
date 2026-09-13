@@ -14,6 +14,7 @@ local function default_launch(options)
   vim.b[buf].jusi_client_id = options.surface.client_id
   vim.b[buf].jusi_surface_id = options.surface.surface_id
   require("jusi.focus").attach(buf)
+  require("jusi.output_ids").attach(buf)
   local window = presentation_window.show(buf, {
     anchor_buf = options.notebook_buf,
     height = options.height,

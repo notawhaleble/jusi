@@ -124,6 +124,7 @@ end
 
 local function bind_cell_lifecycle(session)
   local model, controller = session.model, session.controller
+  controller.on_state_changed = require("jusi.statusline").redraw
   local presentation, interactive = session.presentation, session.interactive
   interactive.editor_id = controller.editor_id
   local delivery = require("jusi.editor_delivery").new(controller, function(content, action, source_path)
@@ -666,6 +667,28 @@ local function focus_notebook_cell(session, cell)
   return session.buf
 end
 
+local function numbered_output(number)
+  local buf = require("jusi.output_ids").buffer(number)
+  local session = buf and current_session(buf)
+  local cell = session and session.model:cell_by_id(vim.b[buf].jusi_cell_id)
+  if cell and (session.presentation:buffer_for_cell(cell.id) == buf or session.interactive:buffer_for_cell(cell.id) == buf) then
+    return session, cell
+  end
+  notify("no output with ID " .. tostring(number), vim.log.levels.WARN)
+end
+
+function M.goto_number(number)
+  if number == nil or number == 0 then vim.cmd('normal! G'); return end
+  local session, cell = numbered_output(number)
+  if session then return focus_notebook_cell(session, cell) end
+end
+
+function M.close_number(number)
+  if number == nil or number == 0 then return M.close() end
+  local session, cell = numbered_output(number)
+  if session then return session.lifecycle:close_cell(cell.id) end
+end
+
 function M.toggle_focus(buf, row)
   local context_buf = buf or vim.api.nvim_get_current_buf()
   local role = vim.b[context_buf].jusi_role
@@ -900,6 +923,13 @@ local function create_commands()
     local ok, err = pcall(require("jusi.palette").command, command)
     if not ok then notify(tostring(err), vim.log.levels.ERROR) end
   end, { bang = true, range = true, nargs = "*", complete = function(...) return require("jusi.palette").complete(...) end })
+  for name, callback in pairs({ JusiGotoClient = M.goto_number, JusiCloseClient = M.close_number }) do
+    vim.api.nvim_create_user_command(name, function(command)
+      local number = command.args == "" and 0 or tonumber(command.args)
+      if not number or number < 0 or number % 1 ~= 0 then notify("client ID must be a nonnegative integer", vim.log.levels.ERROR); return end
+      callback(number)
+    end, { nargs = "?" })
+  end
   vim.api.nvim_create_user_command("JusiStart", function(command) M.start(command.args) end, {
     nargs = 1, complete = function(prefix)
       local aliases = vim.tbl_keys(config.targets)
@@ -1014,6 +1044,7 @@ function M.setup(options)
   end
   create_commands()
   require("jusi.focus").setup()
+  require("jusi.statusline").setup()
 end
 
 M._sessions = sessions

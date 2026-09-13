@@ -197,6 +197,7 @@ function Editing:close()
   self.closed = true
   self.cellmode:close()
   if self.detach_focus then self.detach_focus() end
+  if self.detach_mappings then self.detach_mappings() end
   if self.offline_marks then self.offline_marks:close() end
   self.history:close()
   instances[self.model.buf] = nil
@@ -232,6 +233,9 @@ function M.new(model, controller)
     callback = function() self:close() end })
   self.cellmode = require("jusi.cellmode").new(self)
   self.detach_focus = require("jusi.focus").attach(model.buf)
+  self.detach_mappings = require("jusi.mappings").attach(model.buf)
+  require("jusi.statusline").setup()
+  for _, win in ipairs(vim.fn.win_findbuf(model.buf)) do require("jusi.statusline").refresh(win) end
   self:catalog()
   self:schedule()
   return self

@@ -62,8 +62,11 @@ function M.run()
     assert(text(exported) == expected)
     assert(not vim.bo[exported].endofline)
     assert(session.controller.clients[source_client] ~= nil)
-    vim.api.nvim_set_current_win(record.window)
-    jusi.close()
+    local output_number = vim.b[record.buf].jusi_output_number
+    assert(type(output_number) == "number")
+    assert(require("jusi.statusline").render(record.window):find("client " .. output_number, 1, true))
+    -- Close by displayed ID from the exported data buffer, not its source cell.
+    vim.cmd("JusiCloseClient " .. output_number)
     wait_for(5000, function() return next(session.controller.clients) == nil and next(session.interactive.surfaces) == nil end, "vd close did not retire client")
     assert(vim.api.nvim_buf_is_valid(exported) and text(exported) == expected)
     assert(session.controller.kernel_state == "on")
