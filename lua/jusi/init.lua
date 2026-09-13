@@ -25,6 +25,7 @@ local starts = {}
 local commands_created = false
 
 local function notify(message, level)
+  require("jusi.statusline").redraw()
   vim.notify(message, level or vim.log.levels.INFO, { title = "Jusi" })
 end
 
@@ -209,6 +210,7 @@ end
 
 local function retire_session(session)
   if sessions[session.buf] ~= session then return end
+  require("jusi.statusline").retain(session)
   starts[session.buf] = nil
   if session.editor_delivery then session.editor_delivery:close() end
   if session.lifecycle then session.lifecycle:detach() end
@@ -783,6 +785,7 @@ end
 
 local function stop_owned_service(session)
   session.stopping = true
+  require("jusi.statusline").redraw()
   session.controller:close()
   session.service:stop(function(_, failure)
     session.stopping = false
@@ -796,6 +799,7 @@ end
 local function stop_connected(session)
   if sessions[session.buf] ~= session or session.stopping then return end
   session.stopping = true
+  require("jusi.statusline").redraw()
   local function finish(response, failure)
     session.stopping = false
     if failure then notify(failure_text(failure), vim.log.levels.ERROR); return end
@@ -829,8 +833,10 @@ function M.start(alias, options)
   if existing and existing.stopping then notify("target stop is in progress"); return nil end
   if pending_services[buf] then notify("service start is already in progress"); return nil end
   if not accepts_native_notebook(buf) then return nil end
-  local ticket = { alias = alias, buf = buf }
+  local prior_state = require("jusi.statusline").kernel_view(buf).state
+  local ticket = { alias = alias, buf = buf, status_initial = prior_state == "off" and "off" or "—" }
   starts[buf] = ticket
+  require("jusi.statusline").redraw()
   local function failed(session, failure)
     if starts[buf] == ticket then starts[buf] = nil end
     if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
@@ -900,6 +906,7 @@ function M.stop(buf)
   if ticket then return ticket end -- connect callback observes cancellation
   if session.controller.transport_state ~= "connected" then
     session.stopping = true
+    require("jusi.statusline").redraw()
     session.controller:connect(function(_, failure)
       session.stopping = false
       if sessions[session.buf] ~= session then return end
@@ -1048,5 +1055,6 @@ function M.setup(options)
 end
 
 M._sessions = sessions
+M._starts = starts
 
 return M

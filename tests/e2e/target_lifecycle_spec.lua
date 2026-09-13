@@ -31,11 +31,13 @@ function M.run()
     local buf = new_notebook()
     assert(start("unknown", buf) == nil and jusi._sessions[buf] == nil)
     local cancelled = start("dev", buf)
+    assert(require("jusi.statusline").kernel_view(buf).operation == "starting")
     jusi.stop(buf)
     local ticket = start("dev", buf) -- retry before the cancelled process exit callback
     assert(jusi.start("dev", { buf = buf }) == ticket, "duplicate start created another operation")
     wait_for(function() return cancelled.service.state == "stopped" end, "pending service start was not cancelled")
     wait_for(function() return jusi._sessions[buf] and jusi._sessions[buf].controller.kernel_state == "on" and jusi._sessions[buf].controller.runtime_id ~= nil end, "composed local start failed")
+    assert(require("jusi.statusline").kernel_view(buf).state == "on")
     local session = jusi._sessions[buf]
     assert(session.service == ticket.service and session.target_alias == "dev")
     local kernel_id = session.controller.kernel_id
@@ -53,6 +55,9 @@ function M.run()
     jusi.stop(buf) -- duplicate pending stop shares the cleanup
     wait_for(function() return ticket.service.state == "stopped" and jusi._sessions[buf] == nil end, "stop from output did not clean owned service/kernel")
     assert(vim.api.nvim_buf_is_valid(buf) and not vim.api.nvim_buf_is_valid(output))
+    local stopped_view = require("jusi.statusline").kernel_view(buf)
+    assert(stopped_view.state == "off" and stopped_view.color == "JusiStatusKernelNeutral", "completed stop lost off display")
+    assert(stopped_view.operation == nil and not stopped_view.stale)
     jusi.stop(buf) -- idempotent
 
     local bad = start("bad", buf)

@@ -37,9 +37,20 @@ additional completion-menu bindings are omitted.
 Jusi statuslines are window-local. Leaving a Jusi buffer restores the previous
 local statusline unless the user has replaced it. Rendering uses the requested
 statusline window, including inactive windows, escapes filename percent signs,
-and uses current colorscheme highlight groups for kernel state. Never-connected
-notebooks use a neutral gray background; `mode:cell` has a muted purple badge.
-These RGB/256-color backgrounds refresh on colorscheme and background changes.
+and keeps the colorscheme's StatusLine/StatusLineNC background. Only the kernel
+segment has a muted background: gray for unknown/off, green for confirmed on,
+and amber for stale information. `mode:cell` has a muted purple badge. Explicit
+RGB/256-color palettes refresh on colorscheme and background changes; diagnostic
+highlight backgrounds are not inherited.
+
+Session retirement retains a small buffer-owned snapshot of the observed kernel
+state and target label. Successful stop therefore remains off after transport
+and service cleanup; it does not revert to unknown. A retired on snapshot is
+always last-known, never live. Wiping the notebook removes this display snapshot.
+Composed start/stop operations are separate statusline labels, not kernel states.
+During start the prior off/unknown display remains until on is confirmed or the
+operation ends, avoiding the intermediate service-inspection flash. Connection
+teardown during stop cannot recolor the observed off badge.
 Output labels omit the source notebook's `.vipynb` extension.
 
 ## Verification

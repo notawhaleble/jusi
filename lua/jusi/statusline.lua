@@ -1,12 +1,17 @@
 local M = {}
 local expression = '%!v:lua.require("jusi.statusline").render()'
 local saved, started, queued = {}, false, false
+local retained = {}
 local function highlights()
   local light = vim.o.background == 'light'
-  vim.api.nvim_set_hl(0, 'JusiStatusUnconnected', {
-    fg = light and '#505050' or '#c6c6c6', bg = light and '#d0d0d0' or '#3a3a3a',
-    ctermfg = light and 239 or 251, ctermbg = light and 252 or 237,
-  })
+  local palettes = {
+    JusiStatusKernelNeutral = light and { '#50575e', '#e1e4e8', 240, 254 } or { '#c0c6cd', '#353b43', 250, 237 },
+    JusiStatusKernelOn = light and { '#294b39', '#d9e8de', 22, 194 } or { '#bad7c4', '#30463a', 151, 236 },
+    JusiStatusKernelStale = light and { '#66532d', '#eee4ce', 94, 230 } or { '#d8c397', '#4b4231', 180, 238 },
+  }
+  for name, palette in pairs(palettes) do
+    vim.api.nvim_set_hl(0, name, { fg = palette[1], bg = palette[2], ctermfg = palette[3], ctermbg = palette[4] })
+  end
   vim.api.nvim_set_hl(0, 'JusiStatusCellMode', {
     fg = light and '#302040' or '#f0e6ff', bg = light and '#cbb9e8' or '#5b457a',
     ctermfg = light and 236 or 255, ctermbg = light and 182 or 60, bold = true,
@@ -38,6 +43,31 @@ function M.refresh(win)
     saved[win] = nil
   end
 end
+-- Preserve only an observed display snapshot, never a live controller/resource.
+function M.retain(session)
+  local ctl = session.controller
+  if ctl.supervisor_id then retained[session.buf] = { state = ctl.kernel_state, target = session.target_alias } end
+  M.redraw()
+end
+function M.kernel_view(buf)
+  local jusi = require('jusi')
+  local session, previous = jusi._sessions[buf], retained[buf]
+  local ctl = session and session.controller
+  local ticket = jusi._starts[buf]
+  local state = ctl and ctl.supervisor_id and ctl.kernel_state or (previous and previous.state or '—')
+  local operation = ticket and (ticket.cancelled and 'stopping' or 'starting') or (session and session.stopping and 'stopping' or nil)
+  -- Do not expose the service's pre-start inspection as a completed start.
+  -- Keep the pre-operation display until the kernel publishes on or start ends.
+  local confirmed_on = ctl and ctl.supervisor_id and ctl.kernel_state == 'on' and ctl.transport_state == 'connected'
+  if ticket and not confirmed_on then state = ticket.status_initial or '—' end
+  local transport = ctl and ctl.transport_state or nil
+  local stale = state ~= '—' and ((ctl and transport ~= 'connected') or (not ctl and state == 'on'))
+  local color = stale and 'JusiStatusKernelStale' or (state == 'on' and 'JusiStatusKernelOn' or 'JusiStatusKernelNeutral')
+  -- An observed off stays neutral during the final transport teardown.
+  if operation and state ~= 'on' then color = 'JusiStatusKernelNeutral'; stale = false end
+  return { state = state, color = color, stale = stale, operation = operation,
+    transport = transport, target = (session and session.target_alias) or (ticket and ticket.alias) or (previous and previous.target) }
+end
 function M.render(win)
   win = win or tonumber(vim.g.statusline_winid) or vim.api.nvim_get_current_win()
   if not vim.api.nvim_win_is_valid(win) then return '' end
@@ -45,8 +75,7 @@ function M.render(win)
   local sessions = require('jusi')._sessions
   local session = sessions[buf]
   local role = vim.b[buf].jusi_role
-  local unknown = not session or not session.controller.supervisor_id
-  local base = (role ~= 'output' and role ~= 'interactive_terminal' and unknown) and 'JusiStatusUnconnected' or 'StatusLine'
+  local base = win == vim.api.nvim_get_current_win() and 'StatusLine' or 'StatusLineNC'
   local reset = '%#' .. base .. '#'
   local parts = { reset .. ' ' }
   if role == 'output' or role == 'interactive_terminal' then
@@ -62,16 +91,13 @@ function M.render(win)
   else
     local name = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ':t')
     parts[#parts + 1] = escape(name ~= '' and name or '[No Name]') .. (vim.bo[buf].modified and ' [+]' or '')
-    local ctl = session and session.controller
-    local transport = ctl and ctl.transport_state or 'disconnected'
-    local state = ctl and ctl.supervisor_id and ctl.kernel_state or '—'
-    local color = unknown and 'JusiStatusUnconnected' or (transport ~= 'connected' and 'DiagnosticWarn' or (state == 'on' and 'DiagnosticOk' or 'DiagnosticError'))
-    parts[#parts + 1] = ' | %#' .. color .. '#kernel: ' .. state .. reset
-    if transport ~= 'connected' then
-      if state ~= '—' then parts[#parts + 1] = ' (last known)' end
-      parts[#parts + 1] = ' | transport: ' .. escape(transport)
-    end
-    if session and session.target_alias then parts[#parts + 1] = ' | ' .. escape(session.target_alias) end
+    local view = M.kernel_view(buf)
+    parts[#parts + 1] = ' | %#' .. view.color .. '# kernel: ' .. view.state .. ' ' .. reset
+    if view.stale then parts[#parts + 1] = '(last known)' end
+    if view.operation then parts[#parts + 1] = ' | ' .. view.operation .. '…'
+    elseif view.transport and view.transport ~= 'connected' then parts[#parts + 1] = ' | transport: ' .. escape(view.transport)
+    elseif view.stale then parts[#parts + 1] = ' | transport: disconnected' end
+    if view.target then parts[#parts + 1] = ' | ' .. escape(view.target) end
     if vim.b[buf].jusi_cell_mode_active then parts[#parts + 1] = ' | %#JusiStatusCellMode# mode:cell ' .. reset end
   end
   parts[#parts + 1] = '%=%l:%c '
@@ -83,6 +109,7 @@ function M.setup()
   highlights()
   local group = vim.api.nvim_create_augroup('jusi_statusline', { clear = true })
   vim.api.nvim_create_autocmd({ 'BufWinEnter', 'WinEnter', 'FileType' }, { group = group, callback = function() M.refresh() end })
+  vim.api.nvim_create_autocmd('BufWipeout', { group = group, callback = function(args) retained[args.buf] = nil end })
   vim.api.nvim_create_autocmd('WinClosed', { group = group, callback = function(args) saved[tonumber(args.match)] = nil end })
   vim.api.nvim_create_autocmd('ModeChanged', { group = group, callback = M.redraw })
   vim.api.nvim_create_autocmd('ColorScheme', { group = group, callback = function() highlights(); M.redraw() end })
