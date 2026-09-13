@@ -44,8 +44,9 @@ RGB/256-color palettes refresh on colorscheme and background changes; diagnostic
 highlight backgrounds are not inherited.
 
 Session retirement retains a small buffer-owned snapshot of the observed kernel
-state and target label. Successful stop therefore remains off after transport
-and service cleanup; it does not revert to unknown. A retired on snapshot is
+state and target label. The target alias is hidden whenever the displayed kernel
+state is off. Successful stop therefore remains off after transport and service
+cleanup; it does not revert to unknown. A retired on snapshot is
 always last-known, never live. Wiping the notebook removes this display snapshot.
 Composed start/stop operations are separate statusline labels, not kernel states.
 During start the prior off/unknown display remains until on is confirmed or the

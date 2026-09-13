@@ -97,7 +97,7 @@ function M.render(win)
     if view.operation then parts[#parts + 1] = ' | ' .. view.operation .. '…'
     elseif view.transport and view.transport ~= 'connected' then parts[#parts + 1] = ' | transport: ' .. escape(view.transport)
     elseif view.stale then parts[#parts + 1] = ' | transport: disconnected' end
-    if view.target then parts[#parts + 1] = ' | ' .. escape(view.target) end
+    if view.target and view.state ~= 'off' then parts[#parts + 1] = ' | ' .. escape(view.target) end
     if vim.b[buf].jusi_cell_mode_active then parts[#parts + 1] = ' | %#JusiStatusCellMode# mode:cell ' .. reset end
   end
   parts[#parts + 1] = '%=%l:%c '

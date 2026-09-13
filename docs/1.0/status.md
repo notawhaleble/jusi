@@ -1,10 +1,10 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-13
+Updated: 2026-09-14
 
 ## Current Facts
 
-- Notebook statuslines show kernel truth separately from transport and label disconnected cached state as last-known. Only kernel badges have state backgrounds (gray unknown/off, green on, amber stale); the main statusline retains theme defaults. Successful stop retains off after session cleanup; start/stop operations are separate labels. mode:cell has a purple badge, and output labels omit .vipynb. Output statuslines expose monotonic editor-local IDs for counted G/Q and backslash g/q targeting; stale IDs cannot close replacements. Notebook-local backslash actions cover editing, submission, history, parking and lifecycle. See [ADR 0042](adr/0042-statuslines-and-output-addressing.md) and [Incident 0016](incidents/0016-statusline-lifecycle-color-flicker.md).
+- Notebook statuslines show kernel truth separately from transport and label disconnected cached state as last-known. Only kernel badges have state backgrounds (gray unknown/off, green on, amber stale); the main statusline retains theme defaults. Off kernels hide their target alias. Successful stop retains off after session cleanup; start/stop operations are separate labels. mode:cell has a purple badge, and output labels omit .vipynb. Output statuslines expose monotonic editor-local IDs for counted G/Q and backslash g/q targeting; stale IDs cannot close replacements. Notebook-local backslash actions cover editing, submission, history, parking and lifecycle. See [ADR 0042](adr/0042-statuslines-and-output-addressing.md) and [Incident 0016](incidents/0016-statusline-lifecycle-color-flicker.md).
 
 - Terminal projection windows clear inherited number/sign/fold/status gutters before PTY startup, so their first geometry uses the full split width. Real-terminal coverage enables notebook gutters to reproduce and prevent the mismatch. See [Incident 0015](incidents/0015-inherited-gutters-reduced-initial-terminal-width.md).
 
