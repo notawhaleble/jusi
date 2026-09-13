@@ -11,6 +11,10 @@ local function terminal_text(buf)
 end
 
 function M.run()
+  local source_window = vim.api.nvim_get_current_win()
+  local gutter_options = { number = true, relativenumber = true, signcolumn = "yes", foldcolumn = "1" }
+  local saved_gutters = {}
+  for name in pairs(gutter_options) do saved_gutters[name] = vim.api.nvim_get_option_value(name, { win = source_window }) end
   local original_notify = vim.notify
   local original_pythonpath = vim.env.PYTHONPATH
   local notifications = {}
@@ -30,6 +34,7 @@ function M.run()
       "╭──", "%%terminal_fixture", "manual fixture", "╰──",
     })
     vim.api.nvim_win_set_buf(0, buf)
+    for name, value in pairs(gutter_options) do vim.api.nvim_set_option_value(name, value, { win = source_window }) end
     service = jusi.start_service({
       buf = buf,
       command = { ".venv/bin/python", "-m", "jusi", "serve" },
@@ -60,6 +65,9 @@ function M.run()
     )
     assert(terminal_text(record.buf):find(expected_geometry, 1, true), terminal_text(record.buf))
     assert(vim.api.nvim_get_current_buf() == buf, "execution artifact stole notebook focus")
+    for name, value in pairs(gutter_options) do
+      assert(vim.api.nvim_get_option_value(name, { win = source_window }) == value, "terminal changed notebook gutters")
+    end
 
     wait_for(3000, function()
       local mark = session.marks.records[record.client.cell_id]
@@ -307,6 +315,9 @@ function M.run()
     service:stop()
   end
   vim.env.PYTHONPATH = original_pythonpath
+  if vim.api.nvim_win_is_valid(source_window) then
+    for name, value in pairs(saved_gutters) do vim.api.nvim_set_option_value(name, value, { win = source_window }) end
+  end
   vim.notify = original_notify
   if not ok then
     error(failure .. "\nservice stderr:\n" .. (service and service.stderr or ""))

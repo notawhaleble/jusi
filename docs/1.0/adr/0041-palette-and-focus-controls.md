@@ -16,7 +16,7 @@ Completion lists loaded notebook buffers, then discovered magics, then configure
 aliases. Offline notebooks remain available for plain cell creation. Duplicate
 basenames use path labels; backslash escaping supports spaces in notebook names.
 A notebook visible in the current tab is reused. Otherwise the palette opens it
-in a right split in that tab, preserving the source window. Output and focus
+in a left split in that tab, preserving the source window. Output and focus
 windows are selected in the anchor notebook's tab, even if the same buffer has
 another view elsewhere.
 
@@ -31,11 +31,13 @@ Start and restart rebuild metadata; completion reads the frontend cache without
 backend calls. Older runtime snapshots fall back to catalog magic names.
 
 `Ctrl-\ Ctrl-\` toggles cell/output focus in Normal, Insert and terminal input
-modes. It is buffer-local to notebooks and Jusi output surfaces and is installed
-only if that mode has no existing binding. Entering an interactive terminal
+modes. A global default is installed only if that mode has no existing global
+binding; user buffer-local mappings take precedence. From unrelated buffers it
+focuses the first visible notebook in the current tab, then searches other tabs
+in tab order. Hidden notebook buffers are not opened by this fallback. Entering an interactive terminal
 starts terminal input; returning to a notebook lands in Normal mode. The native
 terminal escape and completion-menu keys remain unchanged. Detach removes only
-bindings still owned by Jusi.
+buffer-local bindings still owned by Jusi.
 
 ## Verification
 

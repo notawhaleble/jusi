@@ -4,7 +4,9 @@ Updated: 2026-09-13
 
 ## Current Facts
 
-- J/J! now complete loaded notebooks, discovered magics and target configuration aliases; magic reuse preserves identity/history and bang uses contextual submission. The buffer-local Ctrl-\ Ctrl-\ focus chord respects user mappings, and palette/output layout stays in the notebook tab. Shared palette contracts and frontend/real-kernel tests cover the flow. See [ADR 0041](adr/0041-palette-and-focus-controls.md).
+- Terminal projection windows clear inherited number/sign/fold/status gutters before PTY startup, so their first geometry uses the full split width. Real-terminal coverage enables notebook gutters to reproduce and prevent the mismatch. See [Incident 0015](incidents/0015-inherited-gutters-reduced-initial-terminal-width.md).
+
+- J/J! now complete loaded notebooks, discovered magics and target configuration aliases; magic reuse preserves identity/history and bang uses contextual submission. The Ctrl-\ Ctrl-\ focus chord respects user mappings and finds visible notebooks from unrelated buffers, preferring the current tab. Palette notebooks open on the left; output layout stays in the notebook tab. Shared palette contracts and frontend/real-kernel tests cover the flow. See [ADR 0041](adr/0041-palette-and-focus-controls.md).
 
 - Backend-driven show_diff now displays two read-only snapshots in native Neovim diff windows in a new tab. It reuses chunked editor delivery and acknowledgment, with no accept/reject or writeback behavior. Shared contracts, paired-transfer tests and the terminal end-to-end fixture cover display and source-close independence. See [ADR 0040](adr/0040-show-diff-is-display-only.md) and the [application guide](architecture/show-diff.md). Display-only diff is ready for manual use.
 - Manual testing between two Macs confirmed remote plain-cell execution, VisiData interaction, zY copy, Ctrl-O open and JusiStop over an SSH-forwarded service connection. Public authentication/TLS deployment and connection-loss testing remain separate.

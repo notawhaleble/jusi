@@ -95,7 +95,7 @@ Enter in cell mode. A visual selection supplies the body, preserving existing
 cell history. New cells enter Insert mode. Notebook labels use filenames without
 the extension; duplicate names use paths, and completion escapes spaces.
 
-The notebook opens in a right split when it is absent from the current tab.
+The notebook opens in a left split when it is absent from the current tab.
 Completion reads cached startup metadata: aliases come from target-side
 `[magic.alias]` configuration tables and refresh on restart. Offline notebooks
 support plain cell creation; magic completion becomes available after startup.
@@ -103,7 +103,9 @@ support plain cell creation; magic completion becomes available after startup.
 Press **Ctrl-\ twice** to toggle between a cell and its output, including from
 Insert mode or a terminal client. Entering an interactive client starts terminal
 input; returning to the notebook uses Normal mode. Existing bindings take
-precedence. To use another key, map it to `:JusiToggleFocus` (or call
+precedence. From an unrelated buffer, the chord focuses the first visible
+notebook in the current tab, or the first visible notebook across other tabs.
+It also works for offline notebooks. To use another key, map it to `:JusiToggleFocus` (or call
 `require('jusi.focus').toggle()` to also enter terminal input automatically).
 
 ## Cell History

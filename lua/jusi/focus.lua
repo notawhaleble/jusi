@@ -7,6 +7,21 @@ function M.toggle()
   if buf and vim.b[buf].jusi_role == 'interactive_terminal' then vim.cmd.startinsert() end
 end
 
+function M.setup()
+  local encoded = vim.api.nvim_replace_termcodes(key, true, true, true)
+  for _, mode in ipairs({ 'n', 'i', 't' }) do
+    local occupied = false
+    for _, mapping in ipairs(vim.api.nvim_get_keymap(mode)) do
+      if vim.api.nvim_replace_termcodes(mapping.lhs, true, true, true) == encoded then occupied = true; break end
+    end
+    if not occupied then
+      local rhs = mode == 't' and '<C-\\><C-n><Cmd>lua require("jusi.focus").toggle()<CR>'
+        or '<Cmd>lua require("jusi.focus").toggle()<CR>'
+      vim.keymap.set(mode, key, rhs, { silent = true, desc = 'Jusi: toggle notebook/output focus' })
+    end
+  end
+end
+
 function M.attach(buf)
   local owned = {}
   for _, mode in ipairs({ 'n', 'i', 't' }) do

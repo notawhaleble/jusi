@@ -668,6 +668,27 @@ end
 
 function M.toggle_focus(buf, row)
   local context_buf = buf or vim.api.nvim_get_current_buf()
+  local role = vim.b[context_buf].jusi_role
+  if not sessions[context_buf] and vim.bo[context_buf].filetype ~= "jusi"
+      and not require("jusi.cellmode").get(context_buf)
+      and role ~= "output" and role ~= "interactive_terminal" then
+    local current_tab = vim.api.nvim_get_current_tabpage()
+    local tabs = { current_tab }
+    for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+      if tab ~= current_tab then table.insert(tabs, tab) end
+    end
+    for _, tab in ipairs(tabs) do
+      for _, win in ipairs(vim.api.nvim_tabpage_list_wins(tab)) do
+        local target = vim.api.nvim_win_get_buf(win)
+        if sessions[target] or vim.bo[target].filetype == "jusi" or require("jusi.cellmode").get(target) then
+          vim.api.nvim_set_current_win(win)
+          return target
+        end
+      end
+    end
+    notify("no notebook is visible", vim.log.levels.WARN)
+    return nil
+  end
   local session = require_session(context_buf)
   if not session then
     return nil
@@ -992,6 +1013,7 @@ function M.setup(options)
     config.targets = vim.deepcopy(opts.targets)
   end
   create_commands()
+  require("jusi.focus").setup()
 end
 
 M._sessions = sessions

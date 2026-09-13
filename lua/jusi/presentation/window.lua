@@ -30,23 +30,36 @@ function M.find(buf, tab)
   if not tab then return windows[1] end
 end
 
+local function prepare_terminal_window(win, buf)
+  local role = vim.b[buf].jusi_role
+  if role ~= "output" and role ~= "interactive_terminal" then return end
+  -- A newly split window inherits notebook gutters. Clear them before a PTY
+  -- is created, so the application's first draw uses its full text width.
+  for name, value in pairs({ number = false, relativenumber = false, signcolumn = "no", foldcolumn = "0", statuscolumn = "" }) do
+    vim.api.nvim_set_option_value(name, value, { win = win })
+  end
+end
+
 function M.show(buf, options)
   local opts = options or {}
   local anchor = opts.anchor_buf and M.find(opts.anchor_buf) or nil
   local tab = opts.tab or (anchor and vim.api.nvim_win_get_tabpage(anchor)) or vim.api.nvim_get_current_tabpage()
   local existing = M.find(buf, tab)
   if existing then
+    prepare_terminal_window(existing, buf)
     if opts.enter then vim.api.nvim_set_current_win(existing) end
     return existing
   end
   if not anchor or vim.api.nvim_win_get_tabpage(anchor) ~= tab then
     anchor = vim.api.nvim_tabpage_get_win(tab)
   end
-  return vim.api.nvim_open_win(buf, opts.enter == true, {
+  local win = vim.api.nvim_open_win(buf, opts.enter == true, {
     split = opts.split or "below",
     win = anchor,
     height = opts.height,
   })
+  prepare_terminal_window(win, buf)
+  return win
 end
 
 return M

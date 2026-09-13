@@ -139,7 +139,7 @@ function M.command(command)
     row = start + 1
   end
   model:flush()
-  local win = windows.show(item.buf, { tab = vim.api.nvim_get_current_tabpage(), split = 'right', enter = true })
+  local win = windows.show(item.buf, { tab = vim.api.nvim_get_current_tabpage(), split = 'left', enter = true })
   -- Keep the magic header visible but put typing on its body, creating a body
   -- row when a reused cell has only a header before its history/closer.
   if header then row = row + 1 end
