@@ -170,11 +170,14 @@ def run_application() -> int:
                 return 7
             for char in decoder.decode(value):
                 if char in "\r\n":
-                    if typed in {"action:copy", "action:open", "action:file"}:
+                    if typed in {"action:copy", "action:open", "action:file", "action:diff"}:
                         from jusi import editor_client
                         try:
                             if typed == "action:copy":
                                 editor_client.copy(selection)
+                            elif typed == "action:diff":
+                                editor_client.show_diff(selection, selection + "\nchanged α",
+                                                        before_name="before.txt", after_name="after.txt", filetype="text")
                             elif typed == "action:open":
                                 editor_client.open_text(selection, name="application.txt", filetype="text")
                             else:

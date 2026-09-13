@@ -97,6 +97,15 @@ def open_text(text: str, *, name: str = "export.txt", filetype: str = "") -> Wor
     return _editor_result({"action": "open", "text": text, "name": name, "filetype": filetype}, "open")
 
 
+
+def show_diff(before: str, after: str, *, before_name: str = "before.txt",
+              after_name: str = "after.txt", filetype: str = "") -> WorkerResult:
+    if not isinstance(before, str) or not isinstance(after, str):
+        raise OperationRejected("Diff snapshots must be text", reason="invalid_request")
+    return _editor_result({"action": "show_diff", "text": before + after,
+                          "before_bytes": len(before.encode("utf-8")), "before_name": before_name,
+                          "after_name": after_name, "filetype": filetype}, "show_diff")
+
 def _editor_result(result: dict[str, Any], action: str) -> WorkerResult:
     from jusi.protocol import validate_editor_action
     try:

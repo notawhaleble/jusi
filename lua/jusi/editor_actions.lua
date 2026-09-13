@@ -1,12 +1,72 @@
 local protocol = require("jusi.protocol")
 local M = {}
 
+local function show_diff(result, opts)
+  local before, after
+  if opts.source_path then
+    local file, err = io.open(opts.source_path, "rb")
+    if not file then return nil, err end
+    local size = file:seek("end")
+    if not size or result.before_bytes > size then file:close(); return nil, "diff boundary exceeds content" end
+    file:seek("set", result.before_bytes)
+    local next_char = file:read(1)
+    if next_char and next_char:byte() >= 128 and next_char:byte() < 192 then
+      file:close(); return nil, "diff boundary splits UTF-8"
+    end
+    file:seek("set", 0)
+    before = result.before_bytes == 0 and "" or file:read(result.before_bytes)
+    after = file:read("*a")
+    file:close()
+    if not before or not after then return nil, "could not read diff snapshots" end
+  else
+    if result.before_bytes > #result.text then return nil, "diff boundary exceeds content" end
+    local byte = result.text:byte(result.before_bytes + 1)
+    if byte and byte >= 128 and byte < 192 then return nil, "diff boundary splits UTF-8" end
+    before, after = result.text:sub(1, result.before_bytes), result.text:sub(result.before_bytes + 1)
+  end
+  local original_tab, original_win = vim.api.nvim_get_current_tabpage(), vim.api.nvim_get_current_win()
+  local buffers, tab = {}, nil
+  local ok, failure = pcall(function()
+    for index, text in ipairs({ before, after }) do
+      local buf, err = M.apply({ action = "open", text = text, filetype = result.filetype,
+        name = index == 1 and result.before_name or result.after_name }, { show = false })
+      if not buf then error(err) end
+      buffers[index] = buf
+      vim.bo[buf].modified = false
+      vim.bo[buf].readonly = true
+      vim.bo[buf].modifiable = false
+      vim.b[buf].jusi_diff_side = index == 1 and "before" or "after"
+    end
+    vim.cmd("tab split")
+    tab = vim.api.nvim_get_current_tabpage()
+    local left = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_buf(left, buffers[1])
+    local right = vim.api.nvim_open_win(buffers[2], true, { split = "right", win = left })
+    for _, win in ipairs({ left, right }) do
+      vim.api.nvim_win_call(win, function() vim.cmd("diffthis") end)
+    end
+  end)
+  if not ok then
+    if tab and tab ~= original_tab and vim.api.nvim_tabpage_is_valid(tab) then
+      vim.api.nvim_set_current_tabpage(tab)
+      vim.cmd("tabclose!")
+    end
+    for _, buf in ipairs(buffers) do
+      if vim.api.nvim_buf_is_valid(buf) then vim.api.nvim_buf_delete(buf, { force = true }) end
+    end
+    if vim.api.nvim_win_is_valid(original_win) then vim.api.nvim_set_current_win(original_win) end
+    return nil, tostring(failure)
+  end
+  return { before_buf = buffers[1], after_buf = buffers[2], tab = tab }
+end
+
 -- All content has arrived and passed protocol validation before destination
 -- mutation. No remote path, Ex command, or source-client lifetime is inherited.
 function M.apply(result, opts)
   opts = opts or {}
   local valid, err = protocol.validate_editor_action(result, result and result.action)
   if not valid then return nil, err end
+  if result.action == "show_diff" then return show_diff(result, opts) end
   if opts.source_path and result.action == "copy" then
     local file = assert(io.open(opts.source_path, "rb"))
     result = vim.tbl_extend("force", result, { text = file:read("*a") })

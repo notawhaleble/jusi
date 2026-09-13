@@ -54,7 +54,8 @@
         "action": {
           "enum": [
             "copy",
-            "open"
+            "open",
+            "show_diff"
           ]
         }
       },
@@ -225,6 +226,30 @@
                   "text": {
                     "maxLength": 65536,
                     "description": "At most 65536 UTF-8 bytes; next_offset equals offset plus UTF-8 byte length."
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "show_diff"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "show_diff"
                   }
                 }
               }

@@ -1,8 +1,11 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-12
+Updated: 2026-09-13
 
 ## Current Facts
+
+- Backend-driven show_diff now displays two read-only snapshots in native Neovim diff windows in a new tab. It reuses chunked editor delivery and acknowledgment, with no accept/reject or writeback behavior. Shared contracts, paired-transfer tests and the terminal end-to-end fixture cover display and source-close independence. See [ADR 0040](adr/0040-show-diff-is-display-only.md) and the [application guide](architecture/show-diff.md). Manual diff review is next.
+- Manual testing between two Macs confirmed remote plain-cell execution, VisiData interaction, zY copy, Ctrl-O open and JusiStop over an SSH-forwarded service connection. Public authentication/TLS deployment and connection-loss testing remain separate.
 
 - Total copy/open and VisiData snapshot size ceilings are removed. Application exports use disk-backed chunked UTF-8 delivery with renewable inactivity leases; private worker editor results use data framing. VisiData uses kernel-owned target artifacts rather than embedding snapshots in control messages. Tests exercise multi-megabyte file delivery, large real VisiData copy/open, chunk validation and cleanup. Destination memory and structural/type validation still apply. See [ADR 0039](adr/0039-user-data-is-not-a-control-frame.md).
 
@@ -31,7 +34,7 @@ Updated: 2026-09-12
 
 - Cell status now uses opener-anchored extmarks with symbols after the opener and matching opener/closer colors, with purple busy *, green done ✓, red error ✗, orange interrupted !, blue followup >, and yellow never-executed delimiters. RGB and 256-color terminal palettes are provided. No sign or status columns are used. Execution/input, client lifecycle and exact followup operations drive the projection; ordinary typing only moves existing extmarks. See [ADR 0028](adr/0028-cell-status-is-an-inline-extmark-projection.md).
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0039 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0040 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
@@ -113,33 +116,13 @@ Deferred:
 
 ## Next Boundary
 
-The original service/kernel walking skeleton is complete; current work is core
-operational completion. Kernel-execution interrupt has passed manual testing;
-session-local failure inspection is implemented for the startup diagnostics gap.
-Kernel input is implemented as an execution-owned reply with exact request
-identity and explicit `JusiInput` cell submission
-([ADR 0023](adr/0023-kernel-input-is-an-execution-reply.md)), independently of
-plugin followups. Real-kernel coverage includes literal replies, consecutive
-prompts, reconnect, stale rejection, interruption, and teardown. Accepted input
-now echoes literally on its prompt line, and `JusiClose` interrupts pending
-input and fences late presentation (see [Incident 0006](incidents/0006-input-confirmation-and-artifact-close.md)). Durable-client followups now route literal cell bodies through `JusiFollowup`
-to the same capability-checked worker, preserving client and surface identity
-([ADR 0026](adr/0026-followups-target-durable-clients.md)). Shared contract,
-frontend, supervisor, real-worker and terminal end-to-end tests cover delivery,
-empty bodies, stale rejection, and isolated failure. Concurrent established-client interruption is implemented (ADR 0034). `JusiComplete` and `<Plug>(JusiComplete)` now implement
-kernel-scope completion and active-client plugin completion, with explicit Unicode
-ranges, empty-prefix menus, cancellation, and untouched suffixes. Tab invokes
-Vim's native popup; navigation, acceptance, cancellation, and `completeopt` remain
-Vim-owned. Edits reaching earlier lines are finalized on acceptance ([ADR 0027](adr/0027-completions-use-explicit-source-ranges.md)). Manual
-completion testing has exercised native menus and kernel suggestions. The test runtime now excludes installed user
-plugins after the legacy command collision in
-[Incident 0008](incidents/0008-completion-test-loaded-legacy-command.md). The current structural-edit slice preserves cell identity and runtime
-controls through closer/history damage and undo. Opener retirement now invokes
-full cell close outside the typing callback: exact execution interrupt, client
-cleanup, and late-output fencing. Merge keeps A; B fully closes; undo creates
-fresh C. See [ADR 0025](adr/0025-opener-retirement-closes-cell-resources.md) and
-[structural edit policy](architecture/cell-structural-edits.md).
-Kernel-wide cleanup of final outputs with explicit `JusiPark` retention is implemented
-in [ADR 0033](adr/0033-completed-output-retention.md).
-External SQL-family/provider migration is still deferred; their clean 0.x
-repositories remain unchanged.
+Complete user-facing mappings (including focus toggling), J/J! command/palette
+completion and layout when invoked from a tab without a notebook. Package the
+plugin/family skills with a documented installer supplying matching reference
+source; the current personal skills still assume a core checkout. Evaluate
+independent plugin creation after that installation flow exists.
+
+Add .ipynb import into native Jusi notebooks. Legacy Jusi notebook migration is
+explicitly out of scope. Finish connection-loss/failure-path review, installation
+and user/plugin documentation, repository cleanup and demos before release.
+External plugin and SQL-family migrations remain separate work.

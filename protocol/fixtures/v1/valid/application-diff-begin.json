@@ -1,0 +1,13 @@
+{
+  "protocol_version": 1,
+  "kind": "application.editor_action_begin",
+  "request_id": "areq_fixture",
+  "content": {
+    "action": "show_diff",
+    "text": "",
+    "before_bytes": 3,
+    "before_name": "before.py",
+    "after_name": "after.py",
+    "filetype": "python"
+  }
+}

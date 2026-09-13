@@ -1,0 +1,8 @@
+{
+  "action": "show_diff",
+  "text": "α\nβ\n",
+  "before_bytes": 3,
+  "before_name": "before.py",
+  "after_name": "after.py",
+  "filetype": "python"
+}

@@ -76,3 +76,41 @@ def test_channel_reports_unavailable_editor_and_unblocks_on_client_close():
         manager.close()
         broker.close()
     assert not Path(path).exists()
+
+
+@pytest.mark.parametrize("before,after", [("", ""), ("α\n" * 400000, "changed🙂" * 150000)], ids=["empty", "large"])
+def test_application_diff_streams_both_snapshots_and_acknowledges_display(monkeypatch, before, after):
+    from concurrent.futures import ThreadPoolExecutor
+    from jusi.editor_client import show_diff
+    notices = Queue()
+    manager = EditorActionManager(notices.put, timeout=3)
+    manager.register(SimpleNamespace(client_id="cli_diff", runtime_id="run_diff", notebook_id="nb_diff", cell_id="cell_diff"))
+    manager.connect("editor_diff", "connection_diff")
+    manager.bind("cli_diff", "editor_diff")
+    broker = LocalEditorActionBroker()
+    env = broker.open("cli_diff", lambda content: manager.submit("cli_diff", content))
+    monkeypatch.setenv("JUSI_EDITOR_ACTION_SOCKET", env["JUSI_EDITOR_ACTION_SOCKET"])
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(show_diff, before, after, before_name="old.txt", after_name="new.txt", filetype="text")
+            action = notices.get(timeout=3)
+            assert action["action"] == "show_diff"
+            offset, chunks = 0, []
+            while True:
+                fetched = manager.fetch(action["action_id"], "editor_diff", offset)
+                content = fetched["content"]
+                assert content["before_bytes"] == len(before.encode())
+                assert content["before_name"] == "old.txt" and content["after_name"] == "new.txt"
+                chunks.append(content["text"])
+                offset = fetched["next_offset"]
+                if fetched["eof"]:
+                    break
+            data = "".join(chunks).encode()
+            assert data[:content["before_bytes"]].decode() == before
+            assert data[content["before_bytes"]:].decode() == after
+            assert not future.done(), "snapshot transfer was mistaken for display"
+            manager.acknowledge(action["action_id"], "editor_diff", "delivered")
+            assert future.result(timeout=3)["outcome"] == "delivered"
+    finally:
+        manager.close()
+        broker.close()

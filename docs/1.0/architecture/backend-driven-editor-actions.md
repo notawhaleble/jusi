@@ -131,3 +131,8 @@ limited by total transfer duration. Failed or cancelled downloads do not modify
 registers or create partially populated output buffers. See
 [ADR 0039](../adr/0039-user-data-is-not-a-control-frame.md) for framing, cleanup and
 the distinction between transfer buffering and destination memory.
+
+
+Applications can also display two snapshots with show_diff; see the
+[show-diff guide](show-diff.md). It is display-only and shares the same recipient,
+transfer and acknowledgment lifecycle.

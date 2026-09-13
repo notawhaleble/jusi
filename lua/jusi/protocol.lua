@@ -327,7 +327,7 @@ function M.validate_command(command, expected_kind)
   end
   if expected_kind == "editor_action" then
     allowed.selection = true
-    if not set({ "copy", "open" })[command.action] or type(command.selection) ~= "table"
+    if not set({ "copy", "open", "show_diff" })[command.action] or type(command.selection) ~= "table"
         or (#command.selection > 0) then return false, "invalid editor action selection" end
   end
   if expected_kind == "ack_editor_action" and command.outcome ~= "delivered" and command.outcome ~= "failed" then
@@ -736,18 +736,26 @@ function M.validate_completion(result, cursor_pos)
 end
 
 function M.validate_editor_action(result, action)
-  if type(result) ~= "table" or result.action ~= action or not set({ "copy", "open" })[action] then
+  if type(result) ~= "table" or result.action ~= action or not set({ "copy", "open", "show_diff" })[action] then
     return false, "editor action does not match request"
   end
   local fields = action == "copy" and { "action", "text", "regtype" } or { "action", "text", "name", "filetype" }
+  if action == "show_diff" then fields = { "action", "text", "before_bytes", "before_name", "after_name", "filetype" } end
   local ok, err = exact_fields(result, fields)
   if not ok then return false, err end
   if type(result.text) ~= "string" or result.text:find("%z") then return false, "invalid editor text" end
   if action == "copy" then
     if result.regtype ~= "v" and result.regtype ~= "V" then return false, "invalid register type" end
   else
-    if type(result.name) ~= "string" or vim.fn.strchars(result.name) < 1 or vim.fn.strchars(result.name) > 128
-        or result.name:find("[%c/\\]") or result.name == "." or result.name == ".." then return false, "invalid filename hint" end
+    if action == "show_diff" and (type(result.before_bytes) ~= "number" or result.before_bytes < 0
+        or result.before_bytes > 9007199254740991 or result.before_bytes ~= math.floor(result.before_bytes)) then
+      return false, "invalid diff boundary"
+    end
+    for _, key in ipairs(action == "show_diff" and { "before_name", "after_name" } or { "name" }) do
+      local name = result[key]
+      if type(name) ~= "string" or vim.fn.strchars(name) < 1 or vim.fn.strchars(name) > 128
+          or name:find("[%c/\\]") or name == "." or name == ".." then return false, "invalid filename hint" end
+    end
     if type(result.filetype) ~= "string" or #result.filetype > 64
         or (result.filetype ~= "" and not result.filetype:match("^[a-z][a-z0-9_]*$")) then return false, "invalid filetype" end
   end
@@ -760,7 +768,7 @@ function M.validate_editor_action_metadata(value)
   local ok, err = exact_fields(value, fields)
   if not ok then return false, err end
   for _, key in ipairs(fields) do if not bounded_string(value[key], 1, 128) then return false, "invalid editor action identity" end end
-  if value.action ~= "copy" and value.action ~= "open" then return false, "invalid editor action type" end
+  if value.action ~= "copy" and value.action ~= "open" and value.action ~= "show_diff" then return false, "invalid editor action type" end
   return true
 end
 

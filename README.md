@@ -206,3 +206,11 @@ VisiData. Install with `pip install 'jusi[vd]'`, then restart the notebook runti
 Inside the terminal, `zY` copies to Neovim and Ctrl-O opens the current value in a
 split. See the [usage guide](docs/1.0/architecture/bundled-vd.md) for examples,
 supported values and snapshot behavior.
+
+
+## Plugin-driven diff display
+
+Applications can call `jusi.editor_client.show_diff(before, after, ...)` to
+display read-only snapshots in a new native Neovim diff tab. This uses the same
+remote-capable transfer channel as copy/open and acknowledges display only.
+See the [show-diff guide](docs/1.0/architecture/show-diff.md).

@@ -63,6 +63,18 @@ def open_text(text: str, *, name: str = "selection.txt", filetype: str = "") -> 
     return deliver({"action": "open", "text": text, "name": name, "filetype": filetype})
 
 
+
+def show_diff(before: str, after: str, *, before_name: str = "before.txt",
+              after_name: str = "after.txt", filetype: str = "") -> dict[str, str]:
+    """Display two snapshots; acknowledgment means shown, never accepted."""
+    if not isinstance(before, str) or not isinstance(after, str) or "\x00" in before or "\x00" in after:
+        raise ValueError("Diff text must be UTF-8 without NUL")
+    before_bytes = sum(len(before[i:i + CHUNK_CHARS].encode("utf-8")) for i in range(0, len(before), CHUNK_CHARS))
+    content = {"action": "show_diff", "text": "", "before_bytes": before_bytes,
+               "before_name": before_name, "after_name": after_name, "filetype": filetype}
+    chunks = (text[i:i + CHUNK_CHARS] for text in (before, after) for i in range(0, len(text), CHUNK_CHARS))
+    return _deliver_chunks(content, chunks)
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jusivim", description="Open a target-side file in the owning Jusi editor")
     parser.add_argument("path")

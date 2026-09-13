@@ -257,7 +257,8 @@
         "action": {
           "enum": [
             "copy",
-            "open"
+            "open",
+            "show_diff"
           ]
         },
         "selection": {

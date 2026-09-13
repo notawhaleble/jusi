@@ -377,8 +377,8 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
             _required_strings(data, ("client_id",), "complete")
     if expected_kind == "editor_action":
         allowed.add("selection")
-        if data["action"] not in {"copy", "open"} or not isinstance(data.get("selection"), dict):
-            raise ProtocolValidationError("editor_action requires copy/open and an object selection")
+        if data["action"] not in {"copy", "open", "show_diff"} or not isinstance(data.get("selection"), dict):
+            raise ProtocolValidationError("editor_action requires copy/open/show_diff and an object selection")
     if expected_kind == "ack_editor_action" and data["outcome"] not in {"delivered", "failed"}:
         raise ProtocolValidationError("Editor acknowledgment outcome is invalid")
     unknown = sorted(set(data) - allowed)
@@ -771,9 +771,11 @@ def validate_completion(result: object, cursor_pos: int) -> dict[str, Any]:
 
 def validate_editor_action(result: object, action: str) -> dict[str, Any]:
     """Content is transferred, never a target-side filesystem path or command."""
-    if not isinstance(result, dict) or result.get("action") != action or action not in {"copy", "open"}:
+    if not isinstance(result, dict) or result.get("action") != action or action not in {"copy", "open", "show_diff"}:
         raise ProtocolValidationError("Editor action does not match the requested action")
     fields = {"action", "text", "regtype"} if action == "copy" else {"action", "text", "name", "filetype"}
+    if action == "show_diff":
+        fields = {"action", "text", "before_bytes", "before_name", "after_name", "filetype"}
     if set(result) != fields:
         raise ProtocolValidationError("Editor action fields are invalid")
     text = result["text"]
@@ -783,10 +785,14 @@ def validate_editor_action(result: object, action: str) -> dict[str, Any]:
         if result["regtype"] not in {"v", "V"}:
             raise ProtocolValidationError("Copy register type must be v or V")
     else:
-        if (not isinstance(result["name"], str) or not 1 <= len(result["name"]) <= 128
-                or any(ord(char) < 32 or ord(char) == 127 or char in "/\\" for char in result["name"])
-                or result["name"] in {".", ".."}):
-            raise ProtocolValidationError("Open name must be a filename hint, not a path")
+        if action == "show_diff" and (type(result["before_bytes"]) is not int or not 0 <= result["before_bytes"] <= 9007199254740991):
+            raise ProtocolValidationError("Invalid diff boundary")
+        for key in (("before_name", "after_name") if action == "show_diff" else ("name",)):
+            name = result[key]
+            if (not isinstance(name, str) or not 1 <= len(name) <= 128
+                    or any(ord(char) < 32 or ord(char) == 127 or char in "/\\" for char in name)
+                    or name in {".", ".."}):
+                raise ProtocolValidationError("Open name must be a filename hint, not a path")
         if not isinstance(result["filetype"], str) or re.fullmatch(r"(?:[a-z][a-z0-9_]{0,63}|)", result["filetype"]) is None:
             raise ProtocolValidationError("Open filetype is invalid")
     return result
@@ -794,7 +800,7 @@ def validate_editor_action(result: object, action: str) -> dict[str, Any]:
 
 def validate_editor_action_metadata(value: object) -> dict[str, str]:
     fields = {"action_id", "client_id", "runtime_id", "notebook_id", "cell_id", "editor_id", "trace_id", "action"}
-    if not isinstance(value, dict) or set(value) != fields or value["action"] not in {"copy", "open"}:
+    if not isinstance(value, dict) or set(value) != fields or value["action"] not in {"copy", "open", "show_diff"}:
         raise ProtocolValidationError("Invalid editor action metadata")
     for key in fields:
         if not _bounded_string(value[key], 1, 128):

@@ -190,6 +190,34 @@ function M.run()
       vim.api.nvim_win_close(0, true)
       vim.api.nvim_set_current_buf(buf)
     end
+    local source_tab = vim.api.nvim_get_current_tabpage()
+    local diff_action
+    local on_action = session.controller.on_editor_action
+    session.controller.on_editor_action = function(action)
+      if action.action == "show_diff" then diff_action = vim.deepcopy(action) end
+      on_action(action)
+    end
+    vim.api.nvim_chan_send(record.job_id, "action:diff\r")
+    wait_for(4000, function() return vim.b.jusi_diff_side == "after" end, "application diff did not arrive")
+    local diff_tab = vim.api.nvim_get_current_tabpage()
+    assert(diff_tab ~= source_tab)
+    local diff_wins = vim.api.nvim_tabpage_list_wins(diff_tab)
+    assert(#diff_wins == 2)
+    for _, win in ipairs(diff_wins) do
+      local exported = vim.api.nvim_win_get_buf(win)
+      table.insert(application_exports, exported)
+      assert(vim.wo[win].diff and not vim.bo[exported].modifiable)
+      local expected = vim.b[exported].jusi_diff_side == "before" and export_text or export_text .. "\nchanged α"
+      assert(table.concat(vim.api.nvim_buf_get_lines(exported, 0, -1, false), "\n") == expected)
+    end
+    wait_for(3000, function() return terminal_text(record.buf):find("action:diff delivered", 1, true) end,
+      "diff display was not acknowledged")
+    assert(diff_action)
+    local tab_count = #vim.api.nvim_list_tabpages()
+    on_action(diff_action)
+    assert(#vim.api.nvim_list_tabpages() == tab_count, "replayed diff opened another tab")
+    session.controller.on_editor_action = on_action
+    vim.api.nvim_set_current_tabpage(source_tab)
     local first_client_id = record.client.client_id
     local first_surface_id = record.surface.surface_id
     vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "fixture:wait" })
@@ -214,6 +242,9 @@ function M.run()
     wait_for(3000, function() return close_response or close_failure end, "close left followup hanging")
     assert(close_response and close_response.operation.outcome == "cancelled", vim.inspect(close_failure))
     assert(not vim.api.nvim_buf_is_valid(record.buf))
+    assert(vim.api.nvim_tabpage_is_valid(diff_tab), "source close destroyed the diff tab")
+    vim.api.nvim_set_current_tabpage(diff_tab)
+    vim.cmd("tabclose")
     for _, exported in ipairs(application_exports) do
       assert(vim.api.nvim_buf_is_valid(exported), "client close destroyed application export")
       vim.api.nvim_buf_delete(exported, { force = true })
