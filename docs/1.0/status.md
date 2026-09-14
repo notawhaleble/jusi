@@ -4,11 +4,11 @@ Updated: 2026-09-15
 
 ## Current Facts
 
-- Candidate source `a7c6594` passed 253 Python tests (one opt-in packaging test skipped), both Neovim suites, the separate isolated distribution gate, wheel conversion and metadata validation. Verified artifacts and checksums are in `dist/1.0.0rc1-verified/`. No tag or publication exists.
+- Candidate source `a7c6594` passed 253 Python tests (one opt-in packaging test skipped), both Neovim suites, the separate isolated distribution gate, wheel conversion and metadata validation. Verified artifacts and checksums are in `dist/1.0.0rc1-verified/`. Both artifacts are uploaded to [TestPyPI](https://test.pypi.org/project/jusi/1.0.0rc1/) with verified hashes. No Git tag or production PyPI publication exists.
 
 - Candidate verification exposed a hardcoded bundled-provider version that blocked kernel startup after a version bump. Runtime version now comes from installed metadata; see [Incident 0018](incidents/0018-release-version-provider-mismatch.md).
 
-- Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. Version `1.0.0rc1` is selected as an unpublished candidate. A sample notebook and demo walkthrough are in `examples/`; a recorded demo draft is available locally in `dist/demo/`; publication remains pending.
+- Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. Version `1.0.0rc1` is available on TestPyPI for review. A sample notebook and demo walkthrough are in `examples/`; a recorded demo draft is available locally in `dist/demo/`; publication remains pending.
 
 - Offline `jusi import-ipynb` / `jusi export-ipynb` convert cell source only (import includes Markdown/raw as ordinary executable cells; export creates code cells), with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
 
