@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0 — 2026-09-15
+
+First stable release of the Neovim-native Jusi rewrite. Includes the features and
+compatibility changes listed under rc1 and the corrected PyPI description from
+rc2. Runtime behavior is unchanged from the verified candidates.
+
 ## 1.0.0rc2 — Release candidate
 
 Prepared 2026-09-15 for TestPyPI review.

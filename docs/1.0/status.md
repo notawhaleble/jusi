@@ -4,6 +4,8 @@ Updated: 2026-09-15
 
 ## Current Facts
 
+- Final `1.0.0` is prepared following rc2 review. Runtime files are unchanged from the verified candidates; final publication checks are in progress.
+
 - `1.0.0rc2` is on [TestPyPI](https://test.pypi.org/project/jusi/1.0.0rc2/) with the dedicated package-index description and absolute GitHub link. Uploaded hashes and description match the verified artifacts. All 39 targeted tests and the isolated base/VisiData distribution gate passed; packaged runtime files are identical to verified rc1.
 
 - Candidate source `a7c6594` passed 253 Python tests (one opt-in packaging test skipped), both Neovim suites, the separate isolated distribution gate, wheel conversion and metadata validation. Verified artifacts and checksums are in `dist/1.0.0rc1-verified/`. Both artifacts are uploaded to [TestPyPI](https://test.pypi.org/project/jusi/1.0.0rc1/) with verified hashes. No Git tag or production PyPI publication exists.
