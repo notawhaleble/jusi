@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.0 — Unreleased
+## 1.0.0rc1 — Release candidate, unpublished
+
+Prepared 2026-09-15.
 
 Jusi 1.0 introduces a Neovim-native frontend and a target-side Python service.
 

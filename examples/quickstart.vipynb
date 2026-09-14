@@ -1,0 +1,22 @@
+╭──
+40 + 2
+╰──
+
+╭──
+rows = [
+    {"name": "Ada", "team": "North", "score": 12},
+    {"name": "Lin", "team": "South", "score": 18},
+    {"name": "Sam", "team": "North", "score": 15},
+]
+sum(row["score"] for row in rows)
+╰──
+
+╭──
+%%vd
+rows
+╰──
+
+╭──
+name = input("Name: ")
+print(f"Hello, {name}!")
+╰──

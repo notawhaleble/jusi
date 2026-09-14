@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jusi"
-version = "1.0.0.dev0"
+version = "1.0.0rc1"
 description = "Jupyter-backed plain-text notebooks and interactive tools for Neovim"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
@@ -17,7 +17,7 @@ maintainers = [
 ]
 keywords = ["jupyter", "neovim", "notebook", "vim"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
@@ -66,7 +66,7 @@ packages = ["src/jusi"]
 include = [
   "/src", "/lua", "/plugin", "/ftdetect", "/ftplugin", "/protocol",
   "/tests", "/scripts", "/docs/1.0", "/README.md", "/LICENSE",
-  "/pyproject.toml", "/AGENTS.md", "/skills", "/CONTRIBUTING.md", "/CHANGELOG.md",
+  "/pyproject.toml", "/AGENTS.md", "/skills", "/CONTRIBUTING.md", "/CHANGELOG.md", "/examples",
 ]
 
 [tool.pytest.ini_options]

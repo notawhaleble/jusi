@@ -6,7 +6,7 @@ is documented separately in the [installation guide](../installation.md).
 ```sh
 python -m pip install build
 python -m build
-python scripts/check-distribution.py dist/jusi-1.0.0.dev0-py3-none-any.whl
+python scripts/check-distribution.py dist/jusi-1.0.0rc1-py3-none-any.whl
 ```
 
 The build creates a source archive and builds the backend wheel from it. The
@@ -29,7 +29,7 @@ Dependency installation needs a package index or populated pip cache.
 The same opt-in gate is discovered by pytest:
 
 ```sh
-JUSI_DISTRIBUTION_WHEEL=dist/jusi-1.0.0.dev0-py3-none-any.whl python -m pytest -q tests/packaging
+JUSI_DISTRIBUTION_WHEEL=dist/jusi-1.0.0rc1-py3-none-any.whl python -m pytest -q tests/packaging
 ```
 
 Publishing the backend and tagging the matching frontend are separate release

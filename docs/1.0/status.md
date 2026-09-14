@@ -1,10 +1,10 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-14
+Updated: 2026-09-15
 
 ## Current Facts
 
-- Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. The changelog remains unreleased; version selection, publication and a recorded demo are still pending.
+- Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. Version `1.0.0rc1` is selected as an unpublished candidate. A sample notebook and demo walkthrough are in `examples/`; publication and a recorded demo remain pending.
 
 - Offline `jusi import-ipynb` / `jusi export-ipynb` convert cell source only (import includes Markdown/raw as ordinary executable cells; export creates code cells), with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
 
