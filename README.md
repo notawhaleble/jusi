@@ -22,6 +22,9 @@ See the [installation guide](docs/1.0/installation.md) for requirements, Git
 installation commands, configuration and a first notebook. Start a local target
 with `:JusiStart local`, execute with `:JusiExecute`, and stop with `:JusiStop`.
 
+Plugin authors can install the development skills and matching reference source
+with `jusi install-skills`. See the [skills guide](docs/1.0/skills.md).
+
 ## Start Here
 
 - [1.0 intent](docs/1.0/intent.md)

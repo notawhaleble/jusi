@@ -65,3 +65,8 @@ line and `[{'value': 'hello'}]` below it. Its terminal supports `zY` copy and
 Ctrl-O open. See [VisiData usage](architecture/bundled-vd.md).
 
 Use `:JusiTrace` to inspect service, kernel and transport failures.
+
+## Plugin authors
+
+Run `jusi install-skills` to install the plugin and family development skills
+with matching reference source. See the [skills guide](skills.md).

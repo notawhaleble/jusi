@@ -1,0 +1,4 @@
+interface:
+  display_name: "Jusi Plugin Family Development"
+  short_description: "Design shared families and exact provider routing"
+  default_prompt: "Use $jusi-plugin-family-development to develop a Jusi 1.0 family and verify provider coexistence."

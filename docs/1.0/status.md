@@ -4,7 +4,9 @@ Updated: 2026-09-14
 
 ## Current Facts
 
-- Distribution uses pip for the Python backend and a separate Git/plugin-manager installation for Neovim. The backend wheel excludes frontend assets; `jusi --version` identifies the installed Python distribution. An isolated gate verifies the wheel alongside a separately cloned native Neovim package, including base execution and optional VisiData copy/open. See [installation](installation.md) and [distribution verification](architecture/distribution-verification.md). Publication and skill/reference-source installation remain separate.
+- Plugin and family skills now ship in the Python distribution. `jusi install-skills` installs both with an exact-version Git reference, offline cache reuse, edit protection and rollback. External plugin work stays outside the managed core reference. Real-Git integration and isolated wheel installation cover the installer; independent `%%todo` skill evaluation remains next. See [skills](skills.md) and [ADR 0045](adr/0045-versioned-authoring-skills.md).
+
+- Distribution uses pip for the Python backend and a separate Git/plugin-manager installation for Neovim. The backend wheel excludes frontend assets; `jusi --version` identifies the installed Python distribution. An isolated gate verifies the wheel alongside a separately cloned native Neovim package, including base execution and optional VisiData copy/open. See [installation](installation.md) and [distribution verification](architecture/distribution-verification.md). Publication remains separate.
 
 - Release lifecycle probes cover editor/service/kernel death across idle, execution, input, terminal client, followup and interrupt-ignoring work. Owned service and HTTP processes follow owner-pipe lifetime; explicit teardown can terminate an interrupt-ignoring kernel. Kernel death is observed during idle and plugin work. External runtime survival and loopback dropped/silent transport loss have dedicated coverage. Real remote-machine loss review remains deferred. See [ADR 0043](adr/0043-owned-process-death-and-transport-loss.md), [Incident 0017](incidents/0017-process-death-cleanup.md), and the [test matrix](architecture/lifecycle-reliability.md).
 
@@ -24,7 +26,7 @@ Updated: 2026-09-14
 - Established plugin operations now support concurrent exact `JusiInterrupt`, recoverable worker rejections, deadline-free followups, and full close of busy work. Health publishes active client operation identities; cancellation preserves the client/surface. See [ADR 0034](adr/0034-concurrent-plugin-operation-interruption.md).
 - Backend-driven copy/open now uses a private target-side client channel, captured UTF-8 content over HTTP, exact editor recipients, replay-safe delivery and acknowledgments independent of ordinary plugin work. Python application helpers and `jusivim PATH` support selected text and target-read files; exported buffers survive source close. Public `JusiCopy`/`JusiOpen` remain withdrawn. See [ADR 0036](adr/0036-application-driven-editor-actions.md) and the [fixture guide](architecture/backend-driven-editor-actions.md). Application work leases, writeback and remote deployment verification remain deferred.
 - Bundled `%%vd` now uses ordinary plugin discovery, kernel-expression snapshots, an isolated worker and VisiData terminal, with application-driven `zY` copy and Ctrl-O open. Python containers and pandas tables are supported through data-only snapshots; no-op legacy followups are not advertised. VisiData is available through the optional `vd` extra. See [ADR 0037](adr/0037-bundled-visidata-provider.md), the [usage guide](architecture/bundled-vd.md), and [Incident 0014](incidents/0014-embedded-visidata-startup-and-editor-actions.md). Manual review is next.
-- The plugin and family development skills are fully written and structurally validated. Independent practical evaluation of the plugin skill is reserved for the planned new `%%todo` plugin, not inferred from bundled `%%vd`. External provider migration remains deferred.
+- The plugin and family development skills are packaged and structurally validated. Independent practical evaluation of the plugin skill is reserved for the planned new `%%todo` plugin, not inferred from bundled `%%vd`. External provider migration remains deferred.
 
 - Accepted new executions now close final unparked outputs on the same kernel through full artifact cleanup, including Enter's execution branch. Busy work and followup clients survive; `JusiPark` or cell-mode `S` toggles explicit retention, shown by `~` beside the status symbol (ADR 0033). Folded history inherits Normal through a window-local mapping, preventing stale/destructive backgrounds after theme changes (Incident 0013).
 
@@ -126,9 +128,8 @@ Deferred:
 
 ## Next Boundary
 
-Package the plugin/family skills with a documented installer supplying matching reference
-source; the current personal skills still assume a core checkout. Evaluate
-independent plugin creation after that installation flow exists.
+Evaluate independent plugin creation with the installed skills and matching
+reference source, using the planned external `%%todo` project.
 
 Add .ipynb import into native Jusi notebooks. Legacy Jusi notebook migration is
 explicitly out of scope. Finish real remote connection-loss review,

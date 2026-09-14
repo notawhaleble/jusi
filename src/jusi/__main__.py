@@ -8,6 +8,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jusi")
     parser.add_argument("--version", action="version", version=f"Jusi {version('jusi')}")
     subparsers = parser.add_subparsers(dest="command")
+    skills_parser = subparsers.add_parser("install-skills", help="install plugin-authoring skills and matching reference source")
+    skills_parser.add_argument("--directory", help="destination skills directory (default: CODEX_HOME/skills or ~/.codex/skills)")
+    skills_parser.add_argument("--source", help="local Git checkout for development/offline installation")
     serve_parser = subparsers.add_parser("serve", help="start the Jusi HTTP/SSE service")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8765)
@@ -25,6 +28,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "install-skills":
+        from jusi.skill_installation import install_skills, SkillInstallationError
+        try:
+            result = install_skills(directory=args.directory, source=args.source)
+        except (SkillInstallationError, OSError) as exc:
+            parser.exit(1, f"jusi: {exc}\n")
+        print(f"Installed skills in {result['directory']}\nReference: {result['reference']}\nJusi {result['version']} ({result['commit']})")
+        return 0
     if args.command == "terminal-bridge":
         from jusi.infrastructure.terminal_bridge import terminal_bridge_main
         return terminal_bridge_main(args.base_url, args.surface_id, args.editor_id)

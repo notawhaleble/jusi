@@ -1,0 +1,4 @@
+interface:
+  display_name: "Jusi Plugin Development"
+  short_description: "Build exact notebook plugins for Jusi 1.0"
+  default_prompt: "Use $jusi-plugin-development to implement a Jusi 1.0 plugin against the current runtime contract."

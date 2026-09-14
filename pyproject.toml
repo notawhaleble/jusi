@@ -59,11 +59,14 @@ jusivim = "jusi.editor_client:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jusi"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "jusi/_skills"
+
 [tool.hatch.build.targets.sdist]
 include = [
   "/src", "/lua", "/plugin", "/ftdetect", "/ftplugin", "/protocol",
   "/tests", "/scripts", "/docs/1.0", "/README.md", "/LICENSE",
-  "/pyproject.toml", "/AGENTS.md",
+  "/pyproject.toml", "/AGENTS.md", "/skills",
 ]
 
 [tool.pytest.ini_options]
