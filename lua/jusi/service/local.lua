@@ -118,7 +118,7 @@ function M.start(options, callback)
   local command = vim.deepcopy(opts.command or { "jusi", "serve" })
   vim.validate("command", command, "table")
   assert(#command > 0, "local service command must not be empty")
-  vim.list_extend(command, { "--host", opts.host or "127.0.0.1", "--port", tostring(opts.port or 0) })
+  vim.list_extend(command, { "--host", opts.host or "127.0.0.1", "--port", tostring(opts.port or 0), "--owner-stdin" })
   local service_process_id = new_id()
   local service = setmetatable({
     service_process_id = service_process_id,
@@ -136,6 +136,7 @@ function M.start(options, callback)
 
   local spawned, process = pcall(vim.system, command, {
     text = true,
+    stdin = true,
     stdout = function(error, data)
       if error and error ~= "" then
         local value, truncated = append_bounded(service.stderr, error)

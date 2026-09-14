@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import replace
 from typing import Any
 
@@ -1416,10 +1417,30 @@ class Supervisor:
             if client.client_id in busy:
                 self.close_client(client_id=client.client_id, trace_id=trace_id)
 
+    @contextmanager
+    def _teardown_lane(self, kernel_id: str | None, trace_id: str, timeout: float):
+        acquired = self._operation_lock.acquire(timeout=max(.1, timeout))
+        if not acquired:
+            with self._state_lock:
+                current = self._current_kernel
+                handle = self._kernel_handle if current and current.kernel_id == kernel_id else None
+            if handle is not None:
+                handle.terminate()
+            acquired = self._operation_lock.acquire(timeout=max(.1, timeout))
+        if not acquired:
+            raise self._request_failure(status_code=503, trace_id=trace_id, layer="supervisor",
+                operation="cleanup", reason="cleanup_incomplete", message="Active work did not release the teardown lane",
+                retryable=True, scope="kernel" if kernel_id else "supervisor",
+                resource=ResourceRef("kernel", kernel_id) if kernel_id else ResourceRef("supervisor", self.supervisor_id))
+        try:
+            yield
+        finally:
+            self._operation_lock.release()
+
     def stop_kernel(self, *, kernel_id: str, trace_id: str, timeout: float = 5.0) -> dict[str, Any]:
         self._cancel_execution_for_teardown(kernel_id, trace_id)
         self._stop_client_work_for_teardown(kernel_id, trace_id)
-        with self._operation_lock:
+        with self._teardown_lane(kernel_id, trace_id, timeout):
             operation = self._begin_operation("stop_kernel", trace_id, resource=ResourceRef("kernel", kernel_id))
             if self._current_kernel is None or self._current_kernel.kernel_id != kernel_id or self._current_kernel.state == "off":
                 if kernel_id not in self._known_kernel_ids:
@@ -1535,7 +1556,7 @@ class Supervisor:
     ) -> dict[str, Any]:
         self._cancel_execution_for_teardown(kernel_id, trace_id, runtime_id=runtime_id, notebook_id=notebook_id)
         self._stop_client_work_for_teardown(kernel_id, trace_id, runtime_id=runtime_id, notebook_id=notebook_id)
-        with self._operation_lock:
+        with self._teardown_lane(kernel_id, trace_id, timeout):
             runtime = self._current_runtime
             kernel = self._current_kernel
             if (
@@ -1791,7 +1812,83 @@ class Supervisor:
                 "cleanup": cleanup,
             }
 
+    def poll_kernel(self) -> None:
+        """Observe idle process death without queuing behind ongoing work.
+
+        An active adapter operation detects its own loss and owns failure order.
+        """
+        if not self._operation_lock.acquire(blocking=False):
+            # A durable plugin followup holds the lane but does not talk to the
+            # kernel. Observe death here too and release that work before the
+            # next poll performs authoritative kernel retirement.
+            with self._state_lock:
+                kernel, handle = self._current_kernel, self._kernel_handle
+                busy = bool(self._client_operations)
+            if busy and kernel is not None and kernel.state == "on" and handle is not None:
+                try:
+                    handle.check_alive()
+                except KernelAdapterError:
+                    self._stop_client_work_for_teardown(kernel.kernel_id, new_id("trace"))
+            return
+        try:
+            with self._state_lock:
+                kernel, handle, runtime = self._current_kernel, self._kernel_handle, self._current_runtime
+            if kernel is None or kernel.state != "on" or handle is None:
+                return
+            try:
+                handle.check_alive()
+            except KernelAdapterError as exc:
+                trace_id = new_id("trace")
+                failure = self._failure(trace_id=trace_id, layer=exc.layer, operation="inspect",
+                    reason=exc.reason, message=str(exc), retryable=exc.retryable, scope="kernel",
+                    resource=ResourceRef("kernel", kernel.kernel_id), process=exc.diagnostics)
+                self._emit_failure(failure)
+                with self._state_lock:
+                    kernel.state = "off"
+                    self._kernel_handle = None
+                self.events.append(trace_id=trace_id, layer="kernel", operation="inspect",
+                    kind="kernel.state_changed", resource=ResourceRef("kernel", kernel.kernel_id),
+                    payload={"kernel_id": kernel.kernel_id, "previous_state": "on", "state": "off"})
+                try:
+                    handle.stop(timeout=1.0)
+                except KernelAdapterError as cleanup_error:
+                    self._emit_failure(self._failure(trace_id=trace_id, layer=cleanup_error.layer,
+                        operation="cleanup", reason=cleanup_error.reason, message=str(cleanup_error),
+                        retryable=True, scope="kernel", resource=ResourceRef("kernel", kernel.kernel_id),
+                        process=cleanup_error.diagnostics, caused_by_failure_id=failure.failure_id))
+                if runtime is not None:
+                    surfaces = self._close_runtime_terminal_surfaces(runtime.runtime_id, timeout=1.0)
+                    cleanup = []
+                    if self._plugin_workers is not None:
+                        cleanup = self._plugin_workers.teardown_runtime(runtime.runtime_id, trace_id=trace_id, timeout=1.0)
+                        self._retire_cleaned_clients(cleanup, trace_id=trace_id, operation="cleanup")
+                    if any(item["result"] == "failed" for item in surfaces + cleanup):
+                        self._emit_failure(self._failure(trace_id=trace_id, layer="supervisor",
+                            operation="cleanup", reason="cleanup_incomplete",
+                            message="Kernel died and dependent resource cleanup was incomplete",
+                            retryable=True, scope="kernel", resource=ResourceRef("kernel", kernel.kernel_id),
+                            details={"terminal_surfaces": surfaces, "plugin_workers": cleanup},
+                            caused_by_failure_id=failure.failure_id))
+        finally:
+            self._operation_lock.release()
+
     def close(self) -> None:
+        with self._state_lock:
+            kernel = self._current_kernel
+        trace_id = new_id("trace")
+        if kernel is not None and kernel.state == "on":
+            try:
+                self._cancel_execution_for_teardown(kernel.kernel_id, trace_id)
+                self._stop_client_work_for_teardown(kernel.kernel_id, trace_id)
+            except SupervisorError:
+                pass  # Concurrent observed death is finalized by the adapter.
+        # Discovery and startup have their own bounds. Wait for their publication
+        # before taking the final resource snapshot, avoiding a late orphan.
+        with self._teardown_lane(kernel.kernel_id if kernel else None, trace_id,
+                                 5.0 if kernel and kernel.state == "on" else 25.0):
+            self._close_runtime()
+
+    def _close_runtime(self) -> None:
         self.editor_actions.close()
         if self._editor_action_broker is not None:
             self._editor_action_broker.close()

@@ -4,6 +4,8 @@ Updated: 2026-09-14
 
 ## Current Facts
 
+- Release lifecycle probes cover editor/service/kernel death across idle, execution, input, terminal client, followup and interrupt-ignoring work. Owned service and HTTP processes follow owner-pipe lifetime; explicit teardown can terminate an interrupt-ignoring kernel. Kernel death is observed during idle and plugin work. External runtime survival and loopback dropped/silent transport loss have dedicated coverage. Real remote-machine loss review remains deferred. See [ADR 0043](adr/0043-owned-process-death-and-transport-loss.md), [Incident 0017](incidents/0017-process-death-cleanup.md), and the [test matrix](architecture/lifecycle-reliability.md).
+
 - Notebook statuslines show kernel truth separately from transport and label disconnected cached state as last-known. Only kernel badges have state backgrounds (gray unknown/off, green on, amber stale); the main statusline retains theme defaults. Off kernels hide their target alias. Successful stop retains off after session cleanup; start/stop operations are separate labels. mode:cell has a purple badge, and output labels omit .vipynb. Output statuslines expose monotonic editor-local IDs for counted G/Q and backslash g/q targeting; stale IDs cannot close replacements. Notebook-local backslash actions cover editing, submission, history, parking and lifecycle. See [ADR 0042](adr/0042-statuslines-and-output-addressing.md) and [Incident 0016](incidents/0016-statusline-lifecycle-color-flicker.md).
 
 - Terminal projection windows clear inherited number/sign/fold/status gutters before PTY startup, so their first geometry uses the full split width. Real-terminal coverage enables notebook gutters to reproduce and prevent the mismatch. See [Incident 0015](incidents/0015-inherited-gutters-reduced-initial-terminal-width.md).
@@ -122,12 +124,12 @@ Deferred:
 
 ## Next Boundary
 
-Manually review palette, focus, statuslines and counted output controls. Package the
+Package the
 plugin/family skills with a documented installer supplying matching reference
 source; the current personal skills still assume a core checkout. Evaluate
 independent plugin creation after that installation flow exists.
 
 Add .ipynb import into native Jusi notebooks. Legacy Jusi notebook migration is
-explicitly out of scope. Finish connection-loss/failure-path review, installation
+explicitly out of scope. Finish real remote connection-loss review, installation
 and user/plugin documentation, repository cleanup and demos before release.
 External plugin and SQL-family migrations remain separate work.

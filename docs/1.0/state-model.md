@@ -7,7 +7,8 @@
 An optional frontend-owned Python service process for one local notebook target.
 
 - identity: `service_process_id`, distinct from the service's `supervisor_id`
-- lifetime: explicit service start/stop or owning notebook-buffer destruction
+- lifetime: explicit service start/stop, owning notebook-buffer destruction, or
+  owning editor exit (including SIGKILL, observed through owner-pipe EOF)
 - diagnostics: PID, bounded stderr, exit code/signal, and readiness failure
 - transport disconnect and kernel stop do not by themselves destroy this process
 

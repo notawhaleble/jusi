@@ -7,6 +7,8 @@ import sys
 import traceback
 import threading
 import queue
+import signal
+import time
 from jusi.infrastructure.plugin_worker_channel import WorkerFrameError
 from typing import Any
 
@@ -147,8 +149,20 @@ def run(args: argparse.Namespace) -> int:
             try:
                 message = validate_plugin_worker_message(read_frame(control_input, limit=args.frame_limit))
             except (EOFError, ValueError, ProtocolValidationError):
-                traceback.print_exc()
+                # The private owner channel cannot reconnect. Give thread-affine
+                # cleanup a chance, then terminate this owned worker group even
+                # if a handler or non-daemon plugin thread never returns.
+                def owner_lost():
+                    time.sleep(1.0)
+                    if os.name == "posix" and os.getpgrp() == os.getpid():
+                        os.killpg(os.getpgrp(), signal.SIGKILL)
+                    os._exit(21)
+                threading.Thread(target=owner_lost, daemon=True).start()
                 requests.put(21)
+                try:
+                    traceback.print_exc()
+                except OSError:
+                    pass
                 return
             if message["plugin_worker_id"] != context.plugin_worker_id:
                 requests.put(21)
@@ -193,6 +207,12 @@ def run(args: argparse.Namespace) -> int:
     while True:
         message = requests.get()
         if isinstance(message, int):
+            close = getattr(worker, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except BaseException:
+                    traceback.print_exc()
             return message
         if message["kind"] == "worker.shutdown":
             try:

@@ -42,6 +42,7 @@ jusi_vd = "jusi.plugins.vd:catalog_entry"
 vd = ["visidata>=3,<4"]
 test = [
   "pytest>=8,<9",
+  "psutil>=5.9,<8",
   "pandas>=1.5,<3",
   "visidata>=3,<4",
 ]

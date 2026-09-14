@@ -1,4 +1,5 @@
 local sse = require("jusi.transport.sse")
+local process = require("jusi.transport.process")
 
 local M = {}
 local Transport = {}
@@ -67,8 +68,10 @@ function Transport:request(method, path, payload, options, callback)
   end
   table.insert(command, self.base_url .. path)
 
-  local handle = vim.system(command, { stdin = body, text = true }, function(result)
+  local handle
+  handle = process.start(command, { stdin = body }, function(result)
     vim.schedule(function()
+      self.requests[handle] = nil
       local stdout = result.stdout or ""
       local marker_start = nil
       local search_from = 1
@@ -119,7 +122,14 @@ function Transport:request(method, path, payload, options, callback)
       callback(decoded, nil)
     end)
   end)
+  self.requests[handle] = true
   return handle
+end
+
+function Transport:cancel_requests()
+  for handle in pairs(self.requests) do
+    handle:kill()
+  end
 end
 
 function Transport:connect_events(after, callbacks)
@@ -169,12 +179,14 @@ function Transport:connect_events(after, callbacks)
     "--silent",
     "--show-error",
     "--no-buffer",
+    "--connect-timeout", tostring(self.request_timeout_ms / 1000),
+    "--speed-limit", "1",
+    "--speed-time", "10",
     "--header",
     "Accept: text/event-stream",
     self.base_url .. "/v1/events?after=" .. tostring(after) .. (handlers.editor_id and ("&editor_id=" .. handlers.editor_id) or ""),
   }
-  connection.process = vim.system(command, {
-    text = true,
+  connection.process = process.start(command, {
     stdout = function(error, data)
       if error and error ~= "" and handlers.on_error then
         vim.schedule(function()
@@ -190,6 +202,7 @@ function Transport:connect_events(after, callbacks)
         return
       end
       connection.closed = true
+      self:cancel_requests()
       if handlers.on_close then
         handlers.on_close(result.code, result.stderr or "")
       end
@@ -200,11 +213,13 @@ function Transport:connect_events(after, callbacks)
       end
     end)
   end)
+  local transport = self
   function connection:close()
     if self.closed then
       return
     end
     self.closed = true
+    transport:cancel_requests()
     if self.process then
       pcall(self.process.kill, self.process, 15)
     end
@@ -220,6 +235,7 @@ function M.new(options)
     curl = opts.curl or "curl",
     request_timeout_ms = opts.request_timeout_ms or 15000,
     transport_id = opts.transport_id or new_transport_id(),
+    requests = {},
   }, Transport)
 end
 

@@ -41,6 +41,12 @@ A stop issued during startup cancels the launch or cleans up once the pending
 kernel-start operation resolves. Failed cleanup is reported; retry stop after
 resolving the failure. `:JusiTrace` retains received diagnostics.
 
+Exiting Neovim, including a forced process kill, also shuts down services it
+started and their owned work. Independently hosted services and their active
+work survive editor exit. Losing a network connection leaves kernel truth
+last-known; it does not stop the target. See the
+[lifecycle checks](lifecycle-reliability.md) for tested cases and recovery.
+
 The resolved profile stays fixed until stop; `:JusiRestart` uses that profile's
 kernel name and reloads target-side runtime configuration. `targets` replaces
 the alias table when supplied to `setup`. Optional `timeout_ms` controls local

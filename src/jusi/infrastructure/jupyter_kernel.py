@@ -588,6 +588,23 @@ class ManagedJupyterKernel:
             self._input_value = None
             return requested
 
+    def terminate(self) -> None:
+        # Only the exact locally owned process; no channel/execute lock. This
+        # escape path is reserved for explicit teardown after interrupt failed.
+        process = getattr(getattr(self._manager, "provisioner", None), "process", None)
+        if process is None:
+            raise KernelAdapterError("Owned kernel process is unavailable for forced teardown",
+                layer="kernel", reason="cleanup_incomplete", retryable=True)
+        if process.poll() is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+
+    def check_alive(self) -> None:
+        if self._closed or not self._is_alive():
+            raise self._kernel_died("Managed kernel process exited")
+
     def _is_alive(self) -> bool:
         try:
             return bool(self._manager.is_alive())

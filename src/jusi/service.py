@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 import signal
 from typing import Any
 
@@ -20,7 +22,7 @@ from jusi.interfaces.http import make_application
 from jusi.infrastructure.editor_action_socket import LocalEditorActionBroker
 
 
-async def serve(host: str, port: int, *, config_path: str | None = None) -> None:
+async def serve(host: str, port: int, *, config_path: str | None = None, owner_stdin: bool = False) -> None:
     supervisor = Supervisor(
         ManagedJupyterKernelFactory(),
         FreshProcessPluginCatalogDiscovery(),
@@ -55,9 +57,40 @@ async def serve(host: str, port: int, *, config_path: str | None = None) -> None
         except NotImplementedError:
             signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop_event.set))
 
+    owner_fd = sys.stdin.fileno() if owner_stdin else None
+    if owner_fd is not None:
+        def owner_readable():
+            try:
+                ended = not os.read(owner_fd, 4096)
+            except OSError:
+                ended = True
+            if ended:
+                loop.remove_reader(owner_fd)
+                stop_event.set()
+        loop.add_reader(owner_fd, owner_readable)
+
+    async def monitor_kernel():
+        while not stop_event.is_set():
+            await asyncio.to_thread(supervisor.poll_kernel)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=.25)
+            except asyncio.TimeoutError:
+                pass
+
+    monitor = asyncio.create_task(monitor_kernel())
+    stopped = asyncio.create_task(stop_event.wait())
     try:
-        await stop_event.wait()
+        await asyncio.wait({monitor, stopped}, return_when=asyncio.FIRST_COMPLETED)
     finally:
+        stop_event.set()
+        if owner_fd is not None:
+            loop.remove_reader(owner_fd)
         server.stop()
-        await asyncio.to_thread(supervisor.close)
-        await server.close_all_connections()
+        try:
+            await monitor
+        finally:
+            await stopped
+            try:
+                await asyncio.to_thread(supervisor.close)
+            finally:
+                await server.close_all_connections()
