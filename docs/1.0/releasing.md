@@ -56,7 +56,8 @@ Use a regular Neovim configuration for a short user-flow review:
 For a demo, record those steps in a small notebook with invented sample data.
 Show the initial installation/setup separately from the everyday start/edit/stop
 flow. Save the recording only after reviewing its legibility and visible paths.
-A recording has not yet been produced. A sample notebook and walkthrough are
+A local demo draft has been recorded in `dist/demo/` (MP4, GIF and asciicast);
+review it before publication. A sample notebook and walkthrough are
 available in [examples](../../examples/README.md).
 
 ## Publish the verified pair

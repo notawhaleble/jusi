@@ -8,7 +8,7 @@ Updated: 2026-09-15
 
 - Candidate verification exposed a hardcoded bundled-provider version that blocked kernel startup after a version bump. Runtime version now comes from installed metadata; see [Incident 0018](incidents/0018-release-version-provider-mismatch.md).
 
-- Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. Version `1.0.0rc1` is selected as an unpublished candidate. A sample notebook and demo walkthrough are in `examples/`; publication and a recorded demo remain pending.
+- Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. Version `1.0.0rc1` is selected as an unpublished candidate. A sample notebook and demo walkthrough are in `examples/`; a recorded demo draft is available locally in `dist/demo/`; publication remains pending.
 
 - Offline `jusi import-ipynb` / `jusi export-ipynb` convert cell source only (import includes Markdown/raw as ordinary executable cells; export creates code cells), with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
 
@@ -136,7 +136,7 @@ Deferred:
 
 ## Next Boundary
 
-Review the verified `1.0.0rc1` candidate and record a demo before publication.
+Review the verified `1.0.0rc1` candidate and the local demo draft before publication.
 Real remote connection-loss review remains deferred until a remote target is
 available. Independent `%%todo` skill evaluation is deferred at the user's
 request. Legacy Jusi notebook migration is out of scope; external plugin and
