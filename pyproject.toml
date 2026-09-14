@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "jusi"
 version = "1.0.0rc1"
 description = "Jupyter-backed plain-text notebooks and interactive tools for Neovim"
-readme = { file = "README.md", content-type = "text/markdown" }
+readme = { file = "README.pypi.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
 authors = [
@@ -65,7 +65,7 @@ packages = ["src/jusi"]
 [tool.hatch.build.targets.sdist]
 include = [
   "/src", "/lua", "/plugin", "/ftdetect", "/ftplugin", "/protocol",
-  "/tests", "/scripts", "/docs/1.0", "/README.md", "/LICENSE",
+  "/tests", "/scripts", "/docs/1.0", "/README.md", "/README.pypi.md", "/LICENSE",
   "/pyproject.toml", "/AGENTS.md", "/skills", "/CONTRIBUTING.md", "/CHANGELOG.md", "/examples",
 ]
 
