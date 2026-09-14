@@ -4,6 +4,8 @@ Updated: 2026-09-15
 
 ## Current Facts
 
+- `1.0.0rc2` is prepared for TestPyPI review with the dedicated package-index description and absolute GitHub link. Runtime code is unchanged from verified rc1.
+
 - Candidate source `a7c6594` passed 253 Python tests (one opt-in packaging test skipped), both Neovim suites, the separate isolated distribution gate, wheel conversion and metadata validation. Verified artifacts and checksums are in `dist/1.0.0rc1-verified/`. Both artifacts are uploaded to [TestPyPI](https://test.pypi.org/project/jusi/1.0.0rc1/) with verified hashes. No Git tag or production PyPI publication exists.
 
 - Candidate verification exposed a hardcoded bundled-provider version that blocked kernel startup after a version bump. Runtime version now comes from installed metadata; see [Incident 0018](incidents/0018-release-version-provider-mismatch.md).
@@ -136,7 +138,7 @@ Deferred:
 
 ## Next Boundary
 
-Review the verified `1.0.0rc1` candidate and the local demo draft before publication.
+Verify and review the `1.0.0rc2` candidate and the local demo draft before publication.
 Real remote connection-loss review remains deferred until a remote target is
 available. Independent `%%todo` skill evaluation is deferred at the user's
 request. Legacy Jusi notebook migration is out of scope; external plugin and

@@ -1,6 +1,15 @@
 # Changelog
 
-## 1.0.0rc1 — Release candidate, unpublished
+## 1.0.0rc2 — Release candidate
+
+Prepared 2026-09-15 for TestPyPI review.
+
+- Use a dedicated PyPI description with an absolute GitHub project link, avoiding
+  relative documentation links that do not resolve on package-index pages.
+- Include the PyPI description in the source archive. Runtime behavior is unchanged
+  from the verified rc1 candidate.
+
+## 1.0.0rc1 — Release candidate (TestPyPI)
 
 Prepared 2026-09-15.
 
