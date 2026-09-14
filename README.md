@@ -14,14 +14,13 @@ The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-co
 
 ## Installation
 
-The 1.0 wheel bundles the Python service and matching Neovim frontend. Install
-the preview wheel in a Python environment, then add the directory printed by
-`jusi frontend-path` to Neovim's runtimepath. No source checkout is needed.
-Use `:JusiStart local`, `:JusiExecute`, and `:JusiStop` for the normal lifecycle.
+Install the Python backend with `pip install jusi` (or `pip install 'jusi[vd]'`
+for VisiData), and install `notawhaleble/jusi` through your Neovim plugin manager
+or a native Neovim package directory. Use matching release versions.
 
-See the [installation guide](docs/1.0/installation.md) for requirements, exact
-commands, a first notebook, upgrades, and isolated distribution verification.
-1.0 is not published yet; an unqualified index installation may select 0.x.
+See the [installation guide](docs/1.0/installation.md) for requirements, Git
+installation commands, configuration and a first notebook. Start a local target
+with `:JusiStart local`, execute with `:JusiExecute`, and stop with `:JusiStop`.
 
 ## Start Here
 

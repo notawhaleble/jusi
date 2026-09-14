@@ -8,7 +8,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jusi")
     parser.add_argument("--version", action="version", version=f"Jusi {version('jusi')}")
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("frontend-path", help="print the installed Neovim runtime directory")
     serve_parser = subparsers.add_parser("serve", help="start the Jusi HTTP/SSE service")
     serve_parser.add_argument("--host", default="127.0.0.1")
     serve_parser.add_argument("--port", type=int, default=8765)
@@ -26,13 +25,6 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.command == "frontend-path":
-        from jusi.frontend import frontend_path
-        try:
-            print(frontend_path())
-        except RuntimeError as exc:
-            parser.exit(1, f"jusi: {exc}\n")
-        return 0
     if args.command == "terminal-bridge":
         from jusi.infrastructure.terminal_bridge import terminal_bridge_main
         return terminal_bridge_main(args.base_url, args.surface_id, args.editor_id)

@@ -4,7 +4,7 @@ Updated: 2026-09-14
 
 ## Current Facts
 
-- Wheels now bundle the matching Neovim runtime, located through `jusi frontend-path`; `jusi --version` identifies the installed distribution. The source archive supports rebuilding the complete wheel. An opt-in isolated installation gate verifies base execution/start/stop and optional VisiData terminal/copy/open without checkout imports or user configuration. See [installation](installation.md) and [ADR 0044](adr/0044-bundled-neovim-distribution.md). Publication and skill/reference-source installation remain separate.
+- Distribution uses pip for the Python backend and a separate Git/plugin-manager installation for Neovim. The backend wheel excludes frontend assets; `jusi --version` identifies the installed Python distribution. An isolated gate verifies the wheel alongside a separately cloned native Neovim package, including base execution and optional VisiData copy/open. See [installation](installation.md) and [distribution verification](architecture/distribution-verification.md). Publication and skill/reference-source installation remain separate.
 
 - Release lifecycle probes cover editor/service/kernel death across idle, execution, input, terminal client, followup and interrupt-ignoring work. Owned service and HTTP processes follow owner-pipe lifetime; explicit teardown can terminate an interrupt-ignoring kernel. Kernel death is observed during idle and plugin work. External runtime survival and loopback dropped/silent transport loss have dedicated coverage. Real remote-machine loss review remains deferred. See [ADR 0043](adr/0043-owned-process-death-and-transport-loss.md), [Incident 0017](incidents/0017-process-death-cleanup.md), and the [test matrix](architecture/lifecycle-reliability.md).
 

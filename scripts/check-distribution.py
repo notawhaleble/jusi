@@ -1,7 +1,7 @@
-"""Install a built wheel in isolation and exercise the shipped Neovim runtime.
+"""Install a built wheel in isolation and exercise a separately Git-installed Neovim runtime.
 
 Run with a Python that has venv support. Dependency installation needs an index
-or pip cache. No editable package, checkout runtimepath, or user config is used.
+or pip cache. No editable Python package, development runtimepath, or user config is used.
 """
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ def run(args, *, cwd, env, timeout=180):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path)
+    parser.add_argument("--frontend-repo", default=str(Path(__file__).resolve().parents[1]))
+    parser.add_argument("--frontend-ref", default="HEAD")
     args = parser.parse_args()
     wheel = args.wheel.resolve(strict=True)
     nvim = shutil.which("nvim")
@@ -33,9 +35,7 @@ def main():
         parser.error("Neovim 0.11+ must be on PATH")
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
-        for path in ("lua/jusi/init.lua", "plugin/jusi.lua", "ftdetect/jusi.lua", "ftplugin/jusi.lua"):
-            assert "jusi/_frontend/" + path in names, f"Wheel is missing {path}"
-        assert not any(name.startswith(("tests/", "docs/", "lua/")) for name in names)
+        assert not any(name.startswith(("jusi/_frontend/", "tests/", "docs/", "lua/")) for name in names)
     fixture = Path(__file__).resolve().parents[1] / "tests/packaging/smoke.lua"
     with tempfile.TemporaryDirectory(prefix="jusi installed-") as temporary:
         root = Path(temporary).resolve()
@@ -54,16 +54,15 @@ def main():
         jusi = str(environment / "bin/jusi")
         run([python, "-m", "pip", "install", str(wheel)], cwd=root, env=env, timeout=300)
         print(run([jusi, "--version"], cwd=root, env=env), flush=True)
-        frontend = Path(run([jusi, "frontend-path"], cwd=root, env=env))
-        assert frontend.is_relative_to(environment), f"Frontend escaped installed environment: {frontend}"
+        frontend = home / "data/nvim/site/pack/jusi/start/jusi"
+        frontend.parent.mkdir(parents=True)
+        run(["git", "clone", "--quiet", "--no-local", "--", args.frontend_repo, str(frontend)], cwd=root, env=env)
+        run(["git", "checkout", "--detach", args.frontend_ref], cwd=frontend, env=env)
         run([python, "-c", "import importlib.util; assert importlib.util.find_spec('visidata') is None"], cwd=root, env=env)
         shutil.copyfile(fixture, root / "smoke.lua")
         (root / "init.lua").write_text('''
-vim.opt.packpath = { vim.env.VIMRUNTIME }
+vim.opt.packpath = { vim.fn.stdpath("data") .. "/site", vim.env.VIMRUNTIME }
 vim.opt.runtimepath = { vim.env.VIMRUNTIME }
-local runtime = vim.fn.system({ "jusi", "frontend-path" })
-assert(vim.v.shell_error == 0, runtime)
-vim.opt.runtimepath:prepend(vim.trim(runtime))
 ''', encoding="utf-8")
         for with_vd in (False, True):
             if with_vd:
