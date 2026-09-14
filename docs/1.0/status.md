@@ -4,6 +4,8 @@ Updated: 2026-09-14
 
 ## Current Facts
 
+- Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. The changelog remains unreleased; version selection, publication and a recorded demo are still pending.
+
 - Offline `jusi import-ipynb` / `jusi export-ipynb` convert cell source only (import includes Markdown/raw as ordinary executable cells; export creates code cells), with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
 
 - Plugin and family skills now ship in the Python distribution. `jusi install-skills` installs both with an exact-version Git reference, offline cache reuse, edit protection and rollback. External plugin work stays outside the managed core reference. Real-Git integration and isolated wheel installation cover the installer; independent `%%todo` skill evaluation is deferred. See [skills](skills.md) and [ADR 0045](adr/0045-versioned-authoring-skills.md).
@@ -23,18 +25,18 @@ Updated: 2026-09-14
 
 - Total copy/open and VisiData snapshot size ceilings are removed. Application exports use disk-backed chunked UTF-8 delivery with renewable inactivity leases; private worker editor results use data framing. VisiData uses kernel-owned target artifacts rather than embedding snapshots in control messages. Tests exercise multi-megabyte file delivery, large real VisiData copy/open, chunk validation and cleanup. Destination memory and structural/type validation still apply. See [ADR 0039](adr/0039-user-data-is-not-a-control-frame.md).
 
-- Target aliases now compose local service/connect/kernel startup through `JusiStart <alias>` and complete owned cleanup through `JusiStop`. Remote aliases connect directly and leave their external service alive after kernel stop. Cancellation, failed startup, target-specific restart and foreign-notebook rejection have real-service coverage. Regular-config manual testing can use the per-launch legacy override in the [target guide](architecture/target-start-stop.md). See [ADR 0038](adr/0038-target-alias-start-stop.md); remote deployment remains deferred.
+- Target aliases now compose local service/connect/kernel startup through `JusiStart <alias>` and complete owned cleanup through `JusiStop`. Remote aliases connect directly and leave their external service alive after kernel stop. Cancellation, failed startup, target-specific restart and foreign-notebook rejection have real-service coverage. Regular-config manual testing can use the per-launch legacy override in the [contributor guide](../../CONTRIBUTING.md). See [ADR 0038](adr/0038-target-alias-start-stop.md). Remote plain cells, VisiData copy/open and stop have passed manual review between two Macs.
 
 - Established plugin operations now support concurrent exact `JusiInterrupt`, recoverable worker rejections, deadline-free followups, and full close of busy work. Health publishes active client operation identities; cancellation preserves the client/surface. See [ADR 0034](adr/0034-concurrent-plugin-operation-interruption.md).
-- Backend-driven copy/open now uses a private target-side client channel, captured UTF-8 content over HTTP, exact editor recipients, replay-safe delivery and acknowledgments independent of ordinary plugin work. Python application helpers and `jusivim PATH` support selected text and target-read files; exported buffers survive source close. Public `JusiCopy`/`JusiOpen` remain withdrawn. See [ADR 0036](adr/0036-application-driven-editor-actions.md) and the [fixture guide](architecture/backend-driven-editor-actions.md). Application work leases, writeback and remote deployment verification remain deferred.
-- Bundled `%%vd` now uses ordinary plugin discovery, kernel-expression snapshots, an isolated worker and VisiData terminal, with application-driven `zY` copy and Ctrl-O open. Python containers and pandas tables are supported through data-only snapshots; no-op legacy followups are not advertised. VisiData is available through the optional `vd` extra. See [ADR 0037](adr/0037-bundled-visidata-provider.md), the [usage guide](architecture/bundled-vd.md), and [Incident 0014](incidents/0014-embedded-visidata-startup-and-editor-actions.md). Manual review is next.
+- Backend-driven copy/open now uses a private target-side client channel, captured UTF-8 content over HTTP, exact editor recipients, replay-safe delivery and acknowledgments independent of ordinary plugin work. Python application helpers and `jusivim PATH` support selected text and target-read files; exported buffers survive source close. Public `JusiCopy`/`JusiOpen` remain withdrawn. See [ADR 0036](adr/0036-application-driven-editor-actions.md) and the [fixture guide](architecture/backend-driven-editor-actions.md). Application work leases and writeback remain deferred.
+- Bundled `%%vd` now uses ordinary plugin discovery, kernel-expression snapshots, an isolated worker and VisiData terminal, with application-driven `zY` copy and Ctrl-O open. Python containers and pandas tables are supported through data-only snapshots; no-op legacy followups are not advertised. VisiData is available through the optional `vd` extra. See [ADR 0037](adr/0037-bundled-visidata-provider.md), the [usage guide](architecture/bundled-vd.md), and [Incident 0014](incidents/0014-embedded-visidata-startup-and-editor-actions.md). Local and remote VisiData use has passed manual review.
 - The plugin and family development skills are packaged and structurally validated. Independent practical evaluation of the plugin skill is reserved for the planned new `%%todo` plugin, not inferred from bundled `%%vd`. External provider migration remains deferred.
 
 - Accepted new executions now close final unparked outputs on the same kernel through full artifact cleanup, including Enter's execution branch. Busy work and followup clients survive; `JusiPark` or cell-mode `S` toggles explicit retention, shown by `~` beside the status symbol (ADR 0033). Folded history inherits Normal through a window-local mapping, preventing stale/destructive backgrounds after theme changes (Incident 0013).
 
 - Folded history now displays plain `history: N entries` with a muted foreground and blank fill; expanded history retains its delimiter. The terminal development fixture visibly displays initial/followup bodies and supports readable line input. Followup success notifications are removed; failures remain visible.
 
-- Offline navigation and buffer-local cell mode now provide legacy-style Normal-mode keys, double-line border overlays in the existing status colors, native Insert behavior, cell text operations and contextual `JusiSubmit` dispatch. Navigation follows linked cells and expanded history; input/followup identities and full cell retirement remain unchanged. See [ADR 0032](adr/0032-cell-mode-and-contextual-submission.md). Manual interaction review is the current frontend boundary.
+- Offline navigation and buffer-local cell mode now provide legacy-style Normal-mode keys, double-line border overlays in the existing status colors, native Insert behavior, cell text operations and contextual `JusiSubmit` dispatch. Navigation follows linked cells and expanded history; input/followup identities and full cell retirement remain unchanged. See [ADR 0032](adr/0032-cell-mode-and-contextual-submission.md). Manual interaction review passed.
 
 - Followup-capable plugins now capture durable cell history on initial handoff and followup delivery. Native per-window history folds, offline toggle/apply commands, undoable restoration and isolated entry syntax/indentation are implemented. Pending accepted text waits through structural damage and retires with its opener. See [ADR 0031](adr/0031-foldable-followup-history.md).
 
@@ -130,7 +132,8 @@ Deferred:
 
 ## Next Boundary
 
-Finish user/plugin documentation, repository cleanup and demos before release.
+Review the release documentation, select a release candidate, run its distribution
+gate and record a demo before publication.
 Real remote connection-loss review remains deferred until a remote target is
 available. Independent `%%todo` skill evaluation is deferred at the user's
 request. Legacy Jusi notebook migration is out of scope; external plugin and

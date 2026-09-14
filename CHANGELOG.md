@@ -1,0 +1,32 @@
+# Changelog
+
+## 1.0 — Unreleased
+
+Jusi 1.0 introduces a Neovim-native frontend and a target-side Python service.
+
+- Plain-text cells with stable identities, cell-local syntax and indentation,
+  kernel/plugin completion, status marks and keyboard cell mode.
+- Contextual execution, kernel input and plugin followups; foldable followup
+  history and explicit output parking.
+- Local and remote target aliases through `JusiStart` / `JusiStop`, with resource
+  cleanup and diagnostics for process and transport failures.
+- Terminal clients and bundled `%%vd`, including copy to a register and open in
+  a buffer. Plugins can also request display-only diffs.
+- Source-only Jupyter notebook import/export. Markdown and raw sources import
+  as ordinary cells; outputs and original cell types are not retained.
+- Separately installed Python and Neovim components, plus packaged plugin and
+  plugin-family authoring skills with matching reference source.
+
+### Compatibility
+
+Requires Python 3.9+ and Neovim 0.11+. Vim is no longer supported. The `.vipynb`
+extension remains, but 1.0 uses new delimiters and does not load legacy `##`
+notebooks. Legacy notebook migration is not provided. Runtime plugins must use
+the 1.0 contracts; legacy providers are not automatically compatible.
+
+### Scope
+
+Rich/web output presentation is deferred. Diff display has no accept/reject or
+writeback workflow. Independent authoring-skill evaluation and real remote
+transport-loss review remain deferred; local simulated transport-loss tests
+are covered by the release checks.

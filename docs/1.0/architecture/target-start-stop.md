@@ -52,16 +52,5 @@ kernel name and reloads target-side runtime configuration. `targets` replaces
 the alias table when supplied to `setup`. Optional `timeout_ms` controls local
 service readiness, not execution or input waiting.
 
-## Test with regular Neovim and legacy jusivim installed
-
-From this checkout, use its absolute path:
-
-```sh
-nvim --cmd "lua dofile('/Users/niku/Documents/dev/jusi/scripts/nvim-dev.lua')" /path/to/notebook.vipynb
-```
-
-This keeps your ordinary configuration and other plugins, disables the legacy
-jusivim plugin for this invocation, and loads the current checkout with its
-`.venv` service and bridge. No permanent configuration is changed. It defines
-the `jusi` local alias, so run `:JusiStart jusi`, then `:JusiStop` when done.
-Use a native 1.0 notebook; legacy notebook conversion is still separate.
+For development alongside a legacy installation, see the
+[contributor guide](../../../CONTRIBUTING.md).
