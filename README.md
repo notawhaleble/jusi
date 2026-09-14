@@ -12,6 +12,17 @@ The foundation, walking skeleton, isolated plugin-catalog discovery, and full no
 
 The sibling [`jusivim`](../jusivim) repository remains the working Vim/Neovim-compatible 0.x frontend. Its Vimscript is not being moved into this repository.
 
+## Installation
+
+The 1.0 wheel bundles the Python service and matching Neovim frontend. Install
+the preview wheel in a Python environment, then add the directory printed by
+`jusi frontend-path` to Neovim's runtimepath. No source checkout is needed.
+Use `:JusiStart local`, `:JusiExecute`, and `:JusiStop` for the normal lifecycle.
+
+See the [installation guide](docs/1.0/installation.md) for requirements, exact
+commands, a first notebook, upgrades, and isolated distribution verification.
+1.0 is not published yet; an unqualified index installation may select 0.x.
+
 ## Start Here
 
 - [1.0 intent](docs/1.0/intent.md)
@@ -157,7 +168,7 @@ active body without executing. The current magic header/alias and stored history
 remain; one undo restores the previous body. Both commands work offline and have
 no default mappings.
 
-## Current Manual Workflow
+## Explicit Lifecycle Controls
 
 Start the service in a regular terminal:
 

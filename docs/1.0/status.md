@@ -4,6 +4,8 @@ Updated: 2026-09-14
 
 ## Current Facts
 
+- Wheels now bundle the matching Neovim runtime, located through `jusi frontend-path`; `jusi --version` identifies the installed distribution. The source archive supports rebuilding the complete wheel. An opt-in isolated installation gate verifies base execution/start/stop and optional VisiData terminal/copy/open without checkout imports or user configuration. See [installation](installation.md) and [ADR 0044](adr/0044-bundled-neovim-distribution.md). Publication and skill/reference-source installation remain separate.
+
 - Release lifecycle probes cover editor/service/kernel death across idle, execution, input, terminal client, followup and interrupt-ignoring work. Owned service and HTTP processes follow owner-pipe lifetime; explicit teardown can terminate an interrupt-ignoring kernel. Kernel death is observed during idle and plugin work. External runtime survival and loopback dropped/silent transport loss have dedicated coverage. Real remote-machine loss review remains deferred. See [ADR 0043](adr/0043-owned-process-death-and-transport-loss.md), [Incident 0017](incidents/0017-process-death-cleanup.md), and the [test matrix](architecture/lifecycle-reliability.md).
 
 - Notebook statuslines show kernel truth separately from transport and label disconnected cached state as last-known. Only kernel badges have state backgrounds (gray unknown/off, green on, amber stale); the main statusline retains theme defaults. Off kernels hide their target alias. Successful stop retains off after session cleanup; start/stop operations are separate labels. mode:cell has a purple badge, and output labels omit .vipynb. Output statuslines expose monotonic editor-local IDs for counted G/Q and backslash g/q targeting; stale IDs cannot close replacements. Notebook-local backslash actions cover editing, submission, history, parking and lifecycle. See [ADR 0042](adr/0042-statuslines-and-output-addressing.md) and [Incident 0016](incidents/0016-statusline-lifecycle-color-flicker.md).
@@ -124,12 +126,11 @@ Deferred:
 
 ## Next Boundary
 
-Package the
-plugin/family skills with a documented installer supplying matching reference
+Package the plugin/family skills with a documented installer supplying matching reference
 source; the current personal skills still assume a core checkout. Evaluate
 independent plugin creation after that installation flow exists.
 
 Add .ipynb import into native Jusi notebooks. Legacy Jusi notebook migration is
-explicitly out of scope. Finish real remote connection-loss review, installation
-and user/plugin documentation, repository cleanup and demos before release.
+explicitly out of scope. Finish real remote connection-loss review,
+user/plugin documentation, repository cleanup and demos before release.
 External plugin and SQL-family migrations remain separate work.

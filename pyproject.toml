@@ -59,6 +59,19 @@ jusivim = "jusi.editor_client:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jusi"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"lua" = "jusi/_frontend/lua"
+"plugin" = "jusi/_frontend/plugin"
+"ftdetect" = "jusi/_frontend/ftdetect"
+"ftplugin" = "jusi/_frontend/ftplugin"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src", "/lua", "/plugin", "/ftdetect", "/ftplugin", "/protocol",
+  "/tests", "/scripts", "/docs/1.0", "/README.md", "/LICENSE",
+  "/pyproject.toml", "/AGENTS.md",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
