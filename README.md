@@ -46,7 +46,8 @@ The implemented slice includes service readiness, fresh plugin-catalog discovery
 
 Use `jusi import-ipynb notebook.ipynb` to create `notebook.vipynb`, or
 `jusi export-ipynb notebook.vipynb -o exported.ipynb` for the reverse direction.
-Only code-cell sources are converted; outputs and followup history are excluded.
+Import includes code, Markdown and raw sources as ordinary native cells. Export
+creates code cells; outputs and followup history are excluded.
 See [conversion details](docs/1.0/notebook-conversion.md).
 
 ## Cell Editing

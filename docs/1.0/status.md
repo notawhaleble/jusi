@@ -4,7 +4,7 @@ Updated: 2026-09-14
 
 ## Current Facts
 
-- Offline `jusi import-ipynb` / `jusi export-ipynb` convert code-cell source only, with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
+- Offline `jusi import-ipynb` / `jusi export-ipynb` convert cell source only (import includes Markdown/raw as ordinary executable cells; export creates code cells), with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
 
 - Plugin and family skills now ship in the Python distribution. `jusi install-skills` installs both with an exact-version Git reference, offline cache reuse, edit protection and rollback. External plugin work stays outside the managed core reference. Real-Git integration and isolated wheel installation cover the installer; independent `%%todo` skill evaluation is deferred. See [skills](skills.md) and [ADR 0045](adr/0045-versioned-authoring-skills.md).
 

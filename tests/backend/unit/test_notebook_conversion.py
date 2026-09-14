@@ -22,13 +22,14 @@ def test_source_roundtrip_and_no_outputs():
     assert result["metadata"] == {}
 
 
-def test_source_fragments_filtering_and_newlines():
+def test_all_cell_types_preserve_order_and_newlines():
     data = notebook(["im", "port os\r\n", "print(os)"])
-    data["cells"].insert(0, {"cell_type": "markdown", "source": "ignored"})
-    data["cells"].append({"cell_type": "raw", "source": "ignored"})
+    data["cells"].insert(0, {"cell_type": "markdown", "source": "# Heading"})
+    data["cells"].append({"cell_type": "raw", "source": ["raw", " text"]})
     text, count, skipped = import_ipynb(data)
-    assert (count, skipped) == (1, 2)
-    assert export_ipynb(text)["cells"][0]["source"] == "import os\nprint(os)"
+    assert (count, skipped) == (3, 0)
+    assert [cell["source"] for cell in export_ipynb(text)["cells"]] == [
+        "# Heading", "import os\nprint(os)", "raw text"]
 
 
 def test_export_active_bodies_only():
@@ -47,7 +48,7 @@ def test_malformed_native_rejected(text):
 
 @pytest.mark.parametrize("line", ["╭──", "╰──", "╞══", "├┄┄"])
 def test_unrepresentable_source_rejected(line):
-    with pytest.raises(ConversionError, match="Code cell 1, source line 2"):
+    with pytest.raises(ConversionError, match="Cell 1, source line 2"):
         import_ipynb(notebook("before\n" + line + "\nafter"))
 
 
@@ -63,7 +64,7 @@ def test_cli_defaults_override_and_force(tmp_path, capsys):
     source.write_text(json.dumps(notebook("x\n")), encoding="utf-8")
     assert main(["import-ipynb", str(source)]) == 0
     native = source.with_suffix(".vipynb")
-    assert "1 code cells" in capsys.readouterr().out
+    assert "1 cells" in capsys.readouterr().out
     original = source.read_bytes()
     with pytest.raises(SystemExit) as exc:
         main(["export-ipynb", str(native)])
@@ -89,3 +90,13 @@ def test_failed_conversion_preserves_files(tmp_path):
         convert_file(source, source, direction="import", force=True)
     assert source.read_text() == "invalid json"
     assert not list(tmp_path.glob(".jusi-convert-*"))
+
+
+@pytest.mark.parametrize("kind", ["markdown", "raw"])
+def test_non_code_only_notebook_imports_as_ordinary_cells(kind):
+    data = {"nbformat": 4, "cells": [{"cell_type": kind, "source": "α\n\n"},
+                                    {"cell_type": kind, "source": ""}]}
+    text, count, skipped = import_ipynb(data)
+    assert (count, skipped) == (2, 0)
+    assert text == "╭──\nα\n\n\n╰──\n\n╭──\n\n╰──\n"
+    assert [cell["source"] for cell in export_ipynb(text)["cells"]] == ["α\n\n", ""]

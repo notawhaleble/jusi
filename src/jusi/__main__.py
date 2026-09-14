@@ -8,7 +8,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jusi")
     parser.add_argument("--version", action="version", version=f"Jusi {version('jusi')}")
     subparsers = parser.add_subparsers(dest="command")
-    for command, help_text in (("import-ipynb", "convert Jupyter code-cell sources to a native notebook"),
+    for command, help_text in (("import-ipynb", "convert Jupyter cell sources to a native notebook"),
                                ("export-ipynb", "export native active cell bodies to Jupyter")):
         conversion = subparsers.add_parser(command, help=help_text)
         conversion.add_argument("input")
@@ -37,11 +37,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in {"import-ipynb", "export-ipynb"}:
         from jusi.notebook_conversion import convert_file, ConversionError
         try:
-            target, count, skipped = convert_file(args.input, args.output,
+            target, count, _ = convert_file(args.input, args.output,
                 direction="import" if args.command == "import-ipynb" else "export", force=args.force)
         except (ConversionError, OSError, UnicodeError) as exc:
             parser.exit(1, f"jusi: {exc}\n")
-        print(f"Wrote {target}: {count} code cells" + (f"; skipped {skipped} non-code cells" if skipped else ""))
+        print(f"Wrote {target}: {count} cells")
         return 0
     if args.command == "install-skills":
         from jusi.skill_installation import install_skills, SkillInstallationError

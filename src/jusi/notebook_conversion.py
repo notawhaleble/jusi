@@ -20,26 +20,25 @@ def import_ipynb(notebook):
     cells = notebook.get("cells")
     if not isinstance(cells, list):
         raise ConversionError("Notebook cells must be an array")
-    blocks, skipped = [], 0
+    blocks = []
     for index, cell in enumerate(cells, 1):
         if not isinstance(cell, dict) or not isinstance(cell.get("cell_type"), str):
             raise ConversionError(f"Cell {index} has no valid cell_type")
-        if cell["cell_type"] != "code":
-            skipped += 1
-            continue
+        if cell["cell_type"] not in {"code", "markdown", "raw"}:
+            raise ConversionError(f"Cell {index} has unsupported cell_type: {cell['cell_type']}")
         source = cell.get("source")
         if isinstance(source, list) and all(isinstance(part, str) for part in source):
             source = "".join(source)
         if not isinstance(source, str):
-            raise ConversionError(f"Code cell {index} source must be a string or array of strings")
+            raise ConversionError(f"Cell {index} source must be a string or array of strings")
         source = source.replace("\r\n", "\n")
         for row, line in enumerate(source.split("\n"), 1):
             if line in RESERVED:
-                raise ConversionError(f"Code cell {index}, source line {row}: literal {line} conflicts with a native delimiter")
+                raise ConversionError(f"Cell {index}, source line {row}: literal {line} conflicts with a native delimiter")
         # An extra separator newline before CLOSE keeps trailing source newlines
         # as body rows rather than accidentally removing one during conversion.
         blocks.append(OPEN + "\n" + source + "\n" + CLOSE)
-    return "\n\n".join(blocks) + ("\n" if blocks else ""), len(blocks), skipped
+    return "\n\n".join(blocks) + ("\n" if blocks else ""), len(blocks), 0
 
 
 def export_ipynb(text):
