@@ -4,6 +4,8 @@ Updated: 2026-09-15
 
 ## Current Facts
 
+- Candidate source `a7c6594` passed 253 Python tests (one opt-in packaging test skipped), both Neovim suites, the separate isolated distribution gate, wheel conversion and metadata validation. Verified artifacts and checksums are in `dist/1.0.0rc1-verified/`. No tag or publication exists.
+
 - Candidate verification exposed a hardcoded bundled-provider version that blocked kernel startup after a version bump. Runtime version now comes from installed metadata; see [Incident 0018](incidents/0018-release-version-provider-mismatch.md).
 
 - Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. Version `1.0.0rc1` is selected as an unpublished candidate. A sample notebook and demo walkthrough are in `examples/`; publication and a recorded demo remain pending.
@@ -134,8 +136,7 @@ Deferred:
 
 ## Next Boundary
 
-Finish verification of `1.0.0rc1`, review the release documentation and record
-a demo before publication.
+Review the verified `1.0.0rc1` candidate and record a demo before publication.
 Real remote connection-loss review remains deferred until a remote target is
 available. Independent `%%todo` skill evaluation is deferred at the user's
 request. Legacy Jusi notebook migration is out of scope; external plugin and
