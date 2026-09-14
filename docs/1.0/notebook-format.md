@@ -113,3 +113,5 @@ Text is the durable, reconstructable authority for structure. The in-memory note
 - representation of a literal body line exactly equal to one of the reserved structural lines
 - whether blank text outside cells is allowed or diagnosed
 - explicit conversion behavior from legacy `##` notebooks
+
+Source-only Jupyter import/export is described in [notebook conversion](notebook-conversion.md).

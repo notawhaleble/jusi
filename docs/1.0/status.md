@@ -4,7 +4,9 @@ Updated: 2026-09-14
 
 ## Current Facts
 
-- Plugin and family skills now ship in the Python distribution. `jusi install-skills` installs both with an exact-version Git reference, offline cache reuse, edit protection and rollback. External plugin work stays outside the managed core reference. Real-Git integration and isolated wheel installation cover the installer; independent `%%todo` skill evaluation remains next. See [skills](skills.md) and [ADR 0045](adr/0045-versioned-authoring-skills.md).
+- Offline `jusi import-ipynb` / `jusi export-ipynb` convert code-cell source only, with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
+
+- Plugin and family skills now ship in the Python distribution. `jusi install-skills` installs both with an exact-version Git reference, offline cache reuse, edit protection and rollback. External plugin work stays outside the managed core reference. Real-Git integration and isolated wheel installation cover the installer; independent `%%todo` skill evaluation is deferred. See [skills](skills.md) and [ADR 0045](adr/0045-versioned-authoring-skills.md).
 
 - Distribution uses pip for the Python backend and a separate Git/plugin-manager installation for Neovim. The backend wheel excludes frontend assets; `jusi --version` identifies the installed Python distribution. An isolated gate verifies the wheel alongside a separately cloned native Neovim package, including base execution and optional VisiData copy/open. See [installation](installation.md) and [distribution verification](architecture/distribution-verification.md). Publication remains separate.
 
@@ -128,10 +130,8 @@ Deferred:
 
 ## Next Boundary
 
-Evaluate independent plugin creation with the installed skills and matching
-reference source, using the planned external `%%todo` project.
-
-Add .ipynb import into native Jusi notebooks. Legacy Jusi notebook migration is
-explicitly out of scope. Finish real remote connection-loss review,
-user/plugin documentation, repository cleanup and demos before release.
-External plugin and SQL-family migrations remain separate work.
+Finish user/plugin documentation, repository cleanup and demos before release.
+Real remote connection-loss review remains deferred until a remote target is
+available. Independent `%%todo` skill evaluation is deferred at the user's
+request. Legacy Jusi notebook migration is out of scope; external plugin and
+SQL-family migrations remain separate work.

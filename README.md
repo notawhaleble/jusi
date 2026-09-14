@@ -42,6 +42,13 @@ with `jusi install-skills`. See the [skills guide](docs/1.0/skills.md).
 
 The implemented slice includes service readiness, fresh plugin-catalog discovery, isolated exact-plugin workers, attested kernel adapters, target-side runtime-configuration snapshots, incremental ordered text output, generic interactive terminal surfaces, idempotent kernel stop, full notebook-runtime restart, the backend-independent notebook model, and a replaceable headless-Neovim transport/controller binding. Web/rich presentation is deferred. Existing 0.x reconnect, healthcheck, prepared-client, stdio, and process-oriented terminal-attachment behavior is not part of 1.0.
 
+## Jupyter Conversion
+
+Use `jusi import-ipynb notebook.ipynb` to create `notebook.vipynb`, or
+`jusi export-ipynb notebook.vipynb -o exported.ipynb` for the reverse direction.
+Only code-cell sources are converted; outputs and followup history are excluded.
+See [conversion details](docs/1.0/notebook-conversion.md).
+
 ## Cell Editing
 
 Opening a `.vipynb` notebook enables Python syntax and four-space indentation

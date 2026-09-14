@@ -8,6 +8,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jusi")
     parser.add_argument("--version", action="version", version=f"Jusi {version('jusi')}")
     subparsers = parser.add_subparsers(dest="command")
+    for command, help_text in (("import-ipynb", "convert Jupyter code-cell sources to a native notebook"),
+                               ("export-ipynb", "export native active cell bodies to Jupyter")):
+        conversion = subparsers.add_parser(command, help=help_text)
+        conversion.add_argument("input")
+        conversion.add_argument("-o", "--output")
+        conversion.add_argument("--force", action="store_true", help="replace an existing output file")
     skills_parser = subparsers.add_parser("install-skills", help="install plugin-authoring skills and matching reference source")
     skills_parser.add_argument("--directory", help="destination skills directory (default: CODEX_HOME/skills or ~/.codex/skills)")
     skills_parser.add_argument("--source", help="local Git checkout for development/offline installation")
@@ -28,6 +34,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command in {"import-ipynb", "export-ipynb"}:
+        from jusi.notebook_conversion import convert_file, ConversionError
+        try:
+            target, count, skipped = convert_file(args.input, args.output,
+                direction="import" if args.command == "import-ipynb" else "export", force=args.force)
+        except (ConversionError, OSError, UnicodeError) as exc:
+            parser.exit(1, f"jusi: {exc}\n")
+        print(f"Wrote {target}: {count} code cells" + (f"; skipped {skipped} non-code cells" if skipped else ""))
+        return 0
     if args.command == "install-skills":
         from jusi.skill_installation import install_skills, SkillInstallationError
         try:
