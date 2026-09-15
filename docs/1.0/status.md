@@ -4,21 +4,19 @@ Updated: 2026-09-15
 
 ## Current Facts
 
-- Final `1.0.0` is prepared following rc2 review. Runtime files are unchanged from the verified candidates; final publication checks are in progress.
+- **Jusi 1.0.0 is released.** [PyPI](https://pypi.org/project/jusi/1.0.0/) and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.0) are public. Tag `v1.0.0` identifies `e99463a`; `main` was fast-forwarded to that commit. GitHub assets include the wheel, sdist, checksums and recorded demo.
 
-- `1.0.0rc2` is on [TestPyPI](https://test.pypi.org/project/jusi/1.0.0rc2/) with the dedicated package-index description and absolute GitHub link. Uploaded hashes and description match the verified artifacts. All 39 targeted tests and the isolated base/VisiData distribution gate passed; packaged runtime files are identical to verified rc1.
+- Final artifacts passed metadata checks, 39 targeted tests and isolated installation with base execution and VisiData copy/open. Packaged runtime files are identical to reviewed rc2. A separate fresh installation from production PyPI verified the public frontend tag, default `install-skills` release-tag fetch, execution and VisiData copy/open. Public PyPI and GitHub hashes match the local artifacts in `dist/1.0.0/`.
 
-- Candidate source `a7c6594` passed 253 Python tests (one opt-in packaging test skipped), both Neovim suites, the separate isolated distribution gate, wheel conversion and metadata validation. Verified artifacts and checksums are in `dist/1.0.0rc1-verified/`. Both artifacts are uploaded to [TestPyPI](https://test.pypi.org/project/jusi/1.0.0rc1/) with verified hashes. No Git tag or production PyPI publication exists.
+- Candidate validation passed 253 Python tests and both Neovim suites. Runtime version now comes from installed metadata after a candidate check exposed a hardcoded provider version; see [Incident 0018](incidents/0018-release-version-provider-mismatch.md). RC1 and RC2 remain on TestPyPI as review artifacts.
 
-- Candidate verification exposed a hardcoded bundled-provider version that blocked kernel startup after a version bump. Runtime version now comes from installed metadata; see [Incident 0018](incidents/0018-release-version-provider-mismatch.md).
-
-- Release-facing documentation now separates the README quick start, detailed user guide, contributor setup and release procedure. Version `1.0.0rc1` is available on TestPyPI for review. A sample notebook and demo walkthrough are in `examples/`; a recorded demo draft is available locally in `dist/demo/`; publication remains pending.
+- Release-facing documentation separates the README quick start, user guide, contributor setup and release procedure. The source demo notebook and walkthrough are in `examples/`; the recorded MP4 is attached to the GitHub release.
 
 - Offline `jusi import-ipynb` / `jusi export-ipynb` convert cell source only (import includes Markdown/raw as ordinary executable cells; export creates code cells), with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
 
 - Plugin and family skills now ship in the Python distribution. `jusi install-skills` installs both with an exact-version Git reference, offline cache reuse, edit protection and rollback. External plugin work stays outside the managed core reference. Real-Git integration and isolated wheel installation cover the installer; independent `%%todo` skill evaluation is deferred. See [skills](skills.md) and [ADR 0045](adr/0045-versioned-authoring-skills.md).
 
-- Distribution uses pip for the Python backend and a separate Git/plugin-manager installation for Neovim. The backend wheel excludes frontend assets; `jusi --version` identifies the installed Python distribution. An isolated gate verifies the wheel alongside a separately cloned native Neovim package, including base execution and optional VisiData copy/open. See [installation](installation.md) and [distribution verification](architecture/distribution-verification.md). Publication remains separate.
+- Distribution uses pip for the Python backend and a separate Git/plugin-manager installation for Neovim. The backend wheel excludes frontend assets; `jusi --version` identifies the installed Python distribution. An isolated gate verifies the wheel alongside a separately cloned native Neovim package, including base execution and optional VisiData copy/open. See [installation](installation.md) and [distribution verification](architecture/distribution-verification.md).
 
 - Release lifecycle probes cover editor/service/kernel death across idle, execution, input, terminal client, followup and interrupt-ignoring work. Owned service and HTTP processes follow owner-pipe lifetime; explicit teardown can terminate an interrupt-ignoring kernel. Kernel death is observed during idle and plugin work. External runtime survival and loopback dropped/silent transport loss have dedicated coverage. Real remote-machine loss review remains deferred. See [ADR 0043](adr/0043-owned-process-death-and-transport-loss.md), [Incident 0017](incidents/0017-process-death-cleanup.md), and the [test matrix](architecture/lifecycle-reliability.md).
 
@@ -140,7 +138,7 @@ Deferred:
 
 ## Next Boundary
 
-Review the `1.0.0rc2` TestPyPI candidate and the local demo draft before publication.
+Collect feedback on 1.0 and handle concrete regressions in follow-up releases.
 Real remote connection-loss review remains deferred until a remote target is
 available. Independent `%%todo` skill evaluation is deferred at the user's
 request. Legacy Jusi notebook migration is out of scope; external plugin and
