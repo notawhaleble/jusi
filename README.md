@@ -4,6 +4,8 @@ Jusi brings Jupyter kernels and interactive tools into Neovim. Edit plain-text
 notebooks, execute cells, and work with their outputs in native splits. Notebook
 editing, navigation and history remain available without a running kernel.
 
+![Jusi 1.0 demo](docs/assets/jusi-1.0.gif)
+
 - Cell-local syntax, indentation and completion.
 - Interactive terminal clients, including bundled VisiData.
 - Followup history, output parking and keyboard navigation.

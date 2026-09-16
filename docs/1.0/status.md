@@ -1,8 +1,12 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-15
+Updated: 2026-09-16
 
 ## Current Facts
+
+- Final `1.0.1` is prepared with managed-kernel liveness polling the owned process directly. A reproduced inherited-asyncio-loop error in Jupyter's synchronous wrapper previously reported a live kernel as dead and triggered runtime cleanup. The Codex-session report's original trigger remains unconfirmed. See [Incident 0019](incidents/0019-liveness-wrapper-falsely-reported-kernel-death.md).
+
+- The recorded 1.0 demo is now embedded in the GitHub README from a tracked documentation asset.
 
 - **Jusi 1.0.0 is released.** [PyPI](https://pypi.org/project/jusi/1.0.0/) and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.0) are public. Tag `v1.0.0` identifies `e99463a`; `main` was fast-forwarded to that commit. GitHub assets include the wheel, sdist, checksums and recorded demo.
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1 — 2026-09-16
+
+- Poll the owned kernel process directly when checking liveness. This prevents an
+  inherited running asyncio loop in Jupyter's synchronous wrapper from falsely
+  reporting a healthy kernel as dead and triggering runtime cleanup.
+- Add the recorded Jusi 1.0 demo to the GitHub README.
+
 ## 1.0.0 — 2026-09-15
 
 First stable release of the Neovim-native Jusi rewrite. Includes the features and

@@ -542,3 +542,45 @@ def test_completion_timeout_preserves_kernel_and_late_reply_cannot_supply_next_r
         assert kernel.execute("1 + 1", timeout=1, on_output=lambda _: None).outcome == "succeeded"
     finally:
         kernel.stop(timeout=1)
+
+
+def test_liveness_check_uses_owned_process_with_inherited_running_event_loop():
+    """asyncio.to_thread copies Jupyter's cached loop from the service context."""
+    import asyncio
+    import contextvars
+    import subprocess
+    import sys
+
+    from jupyter_client import KernelManager
+    from jupyter_client.provisioning.local_provisioner import LocalProvisioner
+    from jupyter_core.utils import ensure_event_loop
+
+    process = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"],
+                               stdin=subprocess.PIPE)
+    manager = KernelManager()
+    provisioner = LocalProvisioner(parent=manager)
+    provisioner.process = process
+    provisioner.pid = process.pid
+    manager.provisioner = provisioner
+    stderr_file = tempfile.NamedTemporaryFile(delete=False)
+    kernel = ManagedJupyterKernel(manager, FakeClient(), stderr_file, stderr_file.name)
+
+    async def inspect_from_service():
+        assert ensure_event_loop() is asyncio.get_running_loop()
+        await asyncio.wait_for(asyncio.to_thread(kernel.check_alive), timeout=3)
+
+    try:
+        contextvars.Context().run(asyncio.run, inspect_from_service())
+        assert process.poll() is None
+        process.terminate()
+        process.wait(timeout=3)
+        with pytest.raises(KernelAdapterError) as captured:
+            contextvars.Context().run(asyncio.run, inspect_from_service())
+        assert captured.value.reason == "kernel_died"
+        assert captured.value.diagnostics.signal == 15
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=3)
+        process.stdin.close()
+        kernel._close_resources()

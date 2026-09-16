@@ -606,10 +606,13 @@ class ManagedJupyterKernel:
             raise self._kernel_died("Managed kernel process exited")
 
     def _is_alive(self) -> bool:
-        try:
-            return bool(self._manager.is_alive())
-        except Exception:
-            return False
+        # This adapter owns a local process. Jupyter's synchronous is_alive
+        # wrapper can inherit an already-running asyncio loop through
+        # asyncio.to_thread's copied context and raise despite a live kernel.
+        # Observe the owned process directly, as diagnostics/terminate do;
+        # an event-loop error is not evidence of process death.
+        process = getattr(getattr(self._manager, "provisioner", None), "process", None)
+        return process is not None and process.poll() is None
 
     def _kernel_died(self, message: str) -> KernelAdapterError:
         return KernelAdapterError(
