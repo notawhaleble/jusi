@@ -4,17 +4,13 @@ Updated: 2026-09-16
 
 ## Current Facts
 
-- Final `1.0.1` is prepared with managed-kernel liveness polling the owned process directly. A reproduced inherited-asyncio-loop error in Jupyter's synchronous wrapper previously reported a live kernel as dead and triggered runtime cleanup. The Codex-session report's original trigger remains unconfirmed. See [Incident 0019](incidents/0019-liveness-wrapper-falsely-reported-kernel-death.md).
+- **Jusi 1.0.1 is released.** [PyPI](https://pypi.org/project/jusi/1.0.1/) and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.1) are public. Tag `v1.0.1` identifies `84899ea`; `main` was fast-forwarded to that commit. GitHub assets include the wheel, sdist, checksums and recorded demo.
 
-- The recorded 1.0 demo is now embedded in the GitHub README from a tracked documentation asset.
+- Managed-kernel liveness now polls the owned process directly. A reproduced inherited-asyncio-loop error in Jupyter's synchronous wrapper previously reported a live kernel as dead and triggered runtime cleanup. The Codex-session report's original trigger remains unconfirmed. See [Incident 0019](incidents/0019-liveness-wrapper-falsely-reported-kernel-death.md).
 
-- **Jusi 1.0.0 is released.** [PyPI](https://pypi.org/project/jusi/1.0.0/) and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.0) are public. Tag `v1.0.0` identifies `e99463a`; `main` was fast-forwarded to that commit. GitHub assets include the wheel, sdist, checksums and recorded demo.
+- Release validation passed 254 Python tests with one opt-in skip, both Neovim suites, metadata and checksum checks, and isolated base/VisiData installation. Fresh downloads from production PyPI and GitHub match the verified artifacts. A clean PyPI installation verified the public frontend tag and default `install-skills` release-tag fetch.
 
-- Final artifacts passed metadata checks, 39 targeted tests and isolated installation with base execution and VisiData copy/open. Packaged runtime files are identical to reviewed rc2. A separate fresh installation from production PyPI verified the public frontend tag, default `install-skills` release-tag fetch, execution and VisiData copy/open. Public PyPI and GitHub hashes match the local artifacts in `dist/1.0.0/`.
-
-- Candidate validation passed 253 Python tests and both Neovim suites. Runtime version now comes from installed metadata after a candidate check exposed a hardcoded provider version; see [Incident 0018](incidents/0018-release-version-provider-mismatch.md). RC1 and RC2 remain on TestPyPI as review artifacts.
-
-- Release-facing documentation separates the README quick start, user guide, contributor setup and release procedure. The source demo notebook and walkthrough are in `examples/`; the recorded MP4 is attached to the GitHub release.
+- Release-facing documentation separates the README quick start, user guide, contributor setup and release procedure. The recorded GIF is embedded in the GitHub README; the source demo notebook and walkthrough are in `examples/`, and the recorded MP4 is attached to the GitHub release.
 
 - Offline `jusi import-ipynb` / `jusi export-ipynb` convert cell source only (import includes Markdown/raw as ordinary executable cells; export creates code cells), with overwrite protection, source whitespace preservation, and strict native delimiter validation. Outputs and followup history are excluded. See [conversion](notebook-conversion.md).
 
