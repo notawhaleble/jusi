@@ -123,6 +123,40 @@ local function test_interactive_terminal_is_a_generic_bridge_projection()
   assert(not vim.api.nvim_buf_is_valid(record.buf), "retired surface must delete its terminal buffer")
 end
 
+local function test_interactive_terminal_follows_output_until_manual_scroll()
+  local terminal_buf = vim.api.nvim_create_buf(false, true)
+  local manager = interactive_terminal.new({
+    base_url = "https://target.example/jusi/",
+    command = { "/opt/jusi", "terminal-bridge" },
+    notebook_buf = vim.api.nvim_create_buf(false, true),
+    notebook_id = "nb_scroll",
+    launch = function() return { buf = terminal_buf, job_id = 999 } end,
+  })
+  local record = assert(manager:open(
+    { surface_id = "srf_scroll", client_id = "cli_scroll", kind = "terminal" },
+    { client_id = "cli_scroll", cell_id = "cell_scroll" }
+  ))
+  local lines = {}
+  for index = 1, 30 do lines[index] = "line " .. index end
+  vim.api.nvim_buf_set_lines(terminal_buf, 0, -1, false, lines)
+  record.line_count = #lines
+  local win = vim.api.nvim_open_win(terminal_buf, false, { split = "below", height = 5 })
+
+  manager:prepare_followup("cell_scroll")
+  equal(vim.api.nvim_win_call(win, function() return vim.fn.line("w$") end), 30)
+  vim.api.nvim_win_set_cursor(win, { 1, 0 })
+  vim.api.nvim_win_call(win, function() vim.cmd("normal! zt") end)
+  vim.api.nvim_buf_set_lines(terminal_buf, -1, -1, false, { "line 31", "line 32" })
+  manager:_follow_output(record)
+  assert(record.following[win] == false, "manual scroll must suspend output following")
+  assert(vim.api.nvim_win_call(win, function() return vim.fn.line("w$") end) < 30)
+
+  manager:prepare_followup("cell_scroll")
+  assert(record.following[win] == true, "a followup must resume output following")
+  equal(vim.api.nvim_win_call(win, function() return vim.fn.line("w$") end), 32)
+  manager:close()
+end
+
 local function test_input_echo_and_closed_execution_fencing()
   local presentation = presentation_module.new({ notebook_id = "nb_input_echo" })
   local callbacks = presentation:controller_callbacks()
@@ -188,6 +222,7 @@ function M.run()
   test_unsupported_media_is_local_and_does_not_create_terminal()
   test_invalid_text_payload_is_a_local_surface_failure()
   test_interactive_terminal_is_a_generic_bridge_projection()
+  test_interactive_terminal_follows_output_until_manual_scroll()
 end
 
 return M

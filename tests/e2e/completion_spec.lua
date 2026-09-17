@@ -23,8 +23,11 @@ function M.run()
       if event.kind == "execution.started" then starts = starts + 1 end
       if event.kind == "execution.completed" then completed = true end
     end
-    jusi.execute(buf, 1)
+    vim.api.nvim_win_set_cursor(0, { 2, 0 })
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('i<C-Y><Esc>', true, false, true), 'xt', false)
     wait_for(function() return completed end, "scope setup did not complete")
+    wait_for(function() return vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == '' end,
+      'Ctrl-Y did not clear the executed body')
     for _, case in ipairs({
       { prefix = "jusi_completion_g", choice = "jusi_completion_global", expected = "jusi_completion_globalSUFFIX" },
       { prefix = "from time import s", choice = "sleep", expected = "from time import sleepSUFFIX" },

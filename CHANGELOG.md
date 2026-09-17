@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.0.2 — 2026-09-17
+
+- Run established plugin-client operations outside the serialized kernel lane,
+  allowing Python execution and work on other clients to continue while a
+  plugin is busy. Same-client overlap remains a recoverable conflict.
+- Add Insert-mode `Ctrl-Y` submission that clears only the successfully
+  submitted cell body while preserving magic headers, history and newer edits.
+- Share complete VisiData startup and editor integration through the optional
+  `jusi.visidata_support` helper, including normal user configuration loading.
+- Open editor-action snapshots as disposable scratch buffers so local edits do
+  not create false unsaved-file prompts or block editor exit.
+- Keep interactive terminal views following new output unless the user scrolls
+  away, and open palette-selected notebooks as full-height left columns.
+
 ## 1.0.1 — 2026-09-16
 
 - Poll the owned kernel process directly when checking liveness. This prevents an

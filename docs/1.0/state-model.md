@@ -177,6 +177,8 @@ An isolated plugin-owned runtime when plugin behavior needs a separate process o
 - lifetime: explicitly fenced and stopped; never silently promoted to kernel or
   supervisor lifetime
 
+Established-client work runs independently from the kernel lane and other
+clients; admission rejects overlapping operations on the same client (ADR 0047).
 The worker control path serializes ordinary `execute`, `followup`,
 `complete`, and `editor_action` requests. ADR 0034 adds an independent exact
 interrupt lane and recoverable operation rejections. Health exposes active

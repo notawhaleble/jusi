@@ -24,7 +24,8 @@ registers. Ctrl-O opens the current value as text in a new Neovim split. Selecti
 clipboard commands send tab/newline-separated display values. The application
 reports success only after editor delivery is acknowledged. `JusiClose` closes
 the source client and terminal; a delivered export buffer survives and can be
-saved with ordinary `:write /chosen/path`.
+edited locally as a disposable scratch snapshot without blocking native close
+or editor exit. It is not a file or a writeback session.
 
 Each execution creates a fresh snapshot/client. No-op legacy followups are not
 advertised. This provider does not add notebook-level completion or interruption
@@ -45,6 +46,18 @@ Structural depth validation remains. See [ADR 0039](../adr/0039-user-data-is-not
 User VisiData configuration and plugins load in the target application process.
 The integration installs its copy/open hooks afterward. No VisiData code is
 imported in the service, discovery provider, worker or kernel adapter.
+
+Use the target account's `~/.visidatarc`, VisiData's platform `config.py`, or an
+explicit `VD_CONFIG` path in the service environment. For example,
+`options.disp_menu = False` hides the menu in newly created applications.
+
+Other VisiData-based plugins can share this startup through
+`jusi.visidata_support.initialize_visidata(open_name="selection.txt")`.
+Call it once in the terminal application before constructing sheets, then
+register application commands and call the returned `vd.run(*sheets)`.
+It handles locale, directories, config/plugins and Jusi copy/open integration;
+sheet content and session behavior remain the plugin's responsibility.
+See [ADR 0046](../adr/0046-shared-visidata-application-startup.md).
 
 See [ADR 0037](../adr/0037-bundled-visidata-provider.md),
 [ADR 0036](../adr/0036-application-driven-editor-actions.md), and

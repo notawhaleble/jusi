@@ -78,8 +78,10 @@ fail only the action. Helpers never automatically resubmit an uncertain action.
   before applying content.
 - Copy updates the unnamed/yank registers without moving focus. Open focuses a
   split anchored to a visible window of the source notebook or its terminal.
-  The new modifiable unsaved buffer is independent of the source client; source
-  cleanup never deletes it. No visible source window means open fails.
+  The new modifiable, unlisted `nofile` scratch buffer is independent of the
+  source client; source cleanup never deletes it. Local edits do not set its
+  modified flag, because open is a snapshot without a writeback destination.
+  No visible source window means open fails.
 
 ## Scope and Verification
 

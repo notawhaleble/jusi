@@ -71,6 +71,30 @@ function Mode:edit()
   vim.cmd('startinsert')
   return true
 end
+function Mode:submit_and_edit()
+  local cell, snapshot = self:cell()
+  if not snapshot or not snapshot.valid then return end
+  local model, buf = self.editor.model, self.editor.model.buf
+  local body = model:body(cell)
+  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  if row < snapshot.body_start_row or row >= snapshot.body_end_row then return end
+  return require('jusi').submit(buf, row, function(response, failure)
+    -- Requests can finish after further typing, navigation, deletion or restart.
+    -- Only clear the submitted text in its original model generation.
+    if failure or not response or self.closed or not vim.api.nvim_buf_is_valid(buf)
+        or not vim.bo[buf].modifiable or not model:cell_by_id(cell.id)
+        or not vim.deep_equal(model:body(cell.id), body) then return end
+    local current = model:cell_snapshot(cell.id)
+    if not current or not current.valid then return end
+    local first = current.body_start_row
+    if (body[1] or ''):match('^%s*%%%%[%a][%w_-]*') then first = first + 1 end
+    local editing_here = vim.api.nvim_get_current_buf() == buf
+      and model:cell_at_row(vim.api.nvim_win_get_cursor(0)[1] - 1) == cell
+    vim.api.nvim_buf_set_lines(buf, first, current.body_end_row, false, { '' })
+    model:flush()
+    if editing_here then vim.api.nvim_win_set_cursor(0, { first + 1, 0 }) end
+  end)
+end
 function Mode:copy()
   local _, s = self:cell()
   if not s or not s.valid then return false end

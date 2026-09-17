@@ -79,7 +79,11 @@ function M.apply(result, opts)
     if register == '"' then vim.fn.setreg("0", result.text, result.regtype) end
     return true
   end
-  local buf = vim.api.nvim_create_buf(true, false)
+  -- Open actions deliver disposable snapshots, not files or edit sessions.
+  -- A scratch buffer stays modifiable without acquiring a modified flag, so
+  -- native close/quit never asks the user to save content that has no
+  -- writeback destination.
+  local buf = vim.api.nvim_create_buf(false, true)
   local ok, failure = pcall(function()
     vim.bo[buf].modeline = false
     vim.bo[buf].swapfile = false
@@ -94,7 +98,6 @@ function M.apply(result, opts)
     vim.bo[buf].endofline = eol
     vim.bo[buf].fixendofline = false
     vim.bo[buf].filetype = result.filetype
-    vim.bo[buf].modified = true
     vim.b[buf].jusi_export_name = result.name
     if opts.show ~= false then
       local win = opts.win

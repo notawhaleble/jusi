@@ -2,6 +2,22 @@ local M = {}
 local presentation_window = require("jusi.presentation.window")
 local InteractiveTerminals = {}
 InteractiveTerminals.__index = InteractiveTerminals
+local next_group = 0
+
+local function window_bottom(win)
+  local ok, bottom = pcall(vim.api.nvim_win_call, win, function()
+    return vim.fn.line("w$")
+  end)
+  return ok and bottom or 0
+end
+
+local function scroll_to_bottom(record, win)
+  if not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= record.buf then return end
+  record.following[win] = true
+  pcall(vim.api.nvim_win_call, win, function()
+    vim.cmd("silent! normal! Gzb")
+  end)
+end
 
 local function default_launch(options)
   local buf = vim.api.nvim_create_buf(false, true)
@@ -83,8 +99,47 @@ function InteractiveTerminals:open(surface, client)
   record.buf = launched.buf
   record.window = launched.window
   record.job_id = launched.job_id
+  record.following = {}
+  record.line_count = vim.api.nvim_buf_line_count(record.buf)
+  vim.api.nvim_create_autocmd("TextChangedT", {
+    group = self.group,
+    buffer = record.buf,
+    callback = function() self:_follow_output(record) end,
+  })
   self.surfaces[surface.surface_id] = record
+  for _, win in ipairs(vim.fn.win_findbuf(record.buf)) do scroll_to_bottom(record, win) end
   return record
+end
+
+function InteractiveTerminals:_follow_output(record)
+  if record.closed or not record.buf or not vim.api.nvim_buf_is_valid(record.buf) then return end
+  local previous_line_count = record.line_count or vim.api.nvim_buf_line_count(record.buf)
+  local current_line_count = vim.api.nvim_buf_line_count(record.buf)
+  record.line_count = current_line_count
+  local previous_bottom = math.min(previous_line_count, current_line_count)
+  local visible = {}
+  for _, win in ipairs(vim.fn.win_findbuf(record.buf)) do
+    visible[win] = true
+    if record.following[win] ~= false then
+      if window_bottom(win) < previous_bottom then
+        record.following[win] = false
+      else
+        scroll_to_bottom(record, win)
+      end
+    end
+  end
+  for win, _ in pairs(record.following) do
+    if not visible[win] then record.following[win] = nil end
+  end
+end
+
+function InteractiveTerminals:prepare_followup(cell_id)
+  for _, record in pairs(self.surfaces) do
+    if record.client.cell_id == cell_id and record.buf and vim.api.nvim_buf_is_valid(record.buf) then
+      record.line_count = vim.api.nvim_buf_line_count(record.buf)
+      for _, win in ipairs(vim.fn.win_findbuf(record.buf)) do scroll_to_bottom(record, win) end
+    end
+  end
 end
 
 function InteractiveTerminals:close_surface(surface_id)
@@ -130,12 +185,14 @@ function InteractiveTerminals:close()
   for _, surface_id in ipairs(vim.tbl_keys(self.surfaces)) do
     self:close_surface(surface_id)
   end
+  pcall(vim.api.nvim_del_augroup_by_id, self.group)
 end
 
 function M.new(options)
   vim.validate("base_url", options.base_url, "string")
   vim.validate("command", options.command, "table")
   assert(#options.command > 0, "terminal bridge command must not be empty")
+  next_group = next_group + 1
   return setmetatable({
     base_url = options.base_url:gsub("/+$", ""),
     command = vim.deepcopy(options.command),
@@ -145,6 +202,7 @@ function M.new(options)
     on_failure = options.on_failure,
     launch = options.launch or default_launch,
     surfaces = {},
+    group = vim.api.nvim_create_augroup("jusi-interactive-terminal-" .. next_group, { clear = true }),
   }, InteractiveTerminals)
 end
 

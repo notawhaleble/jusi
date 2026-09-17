@@ -454,7 +454,7 @@ function M.restart(buf)
   end)
 end
 
-function M.execute(buf, row)
+function M.execute(buf, row, callback)
   local context_buf = buf or vim.api.nvim_get_current_buf()
   local session = require_session(context_buf)
   if not session then
@@ -466,10 +466,11 @@ function M.execute(buf, row)
     return nil
   end
   local function execute_cell()
-    return session.controller:execute(cell.id, function(_, failure)
+    return session.controller:execute(cell.id, function(response, failure)
       if failure then
         notify(failure_text(failure), vim.log.levels.ERROR)
       end
+      if callback then callback(response, failure) end
     end)
   end
   local client_ids = clients_for_cell(session, cell.id)
@@ -486,7 +487,7 @@ function M.execute(buf, row)
 end
 
 -- Context selects an existing operation; input and followups keep their identities.
-function M.submit(buf, row)
+function M.submit(buf, row, callback)
   local context_buf = buf or vim.api.nvim_get_current_buf()
   local mode = require("jusi.cellmode").get(context_buf)
   if mode and context_buf == vim.api.nvim_get_current_buf() then
@@ -506,7 +507,7 @@ function M.submit(buf, row)
   local cell = cell_from_context(session, context_buf, row)
   if not cell then notify("cursor is not inside a cell", vim.log.levels.ERROR); return end
   local input = session.controller.pending_input
-  if input and input.cell_id == cell.id then return M.input(context_buf, row) end
+  if input and input.cell_id == cell.id then return M.input(context_buf, row, callback) end
   for _, execution in pairs(session.controller.executions) do
     if execution.cell_id == cell.id and execution.outcome == "running" then
       notify("cell execution is still running", vim.log.levels.INFO); return
@@ -514,9 +515,9 @@ function M.submit(buf, row)
   end
   for _, client in pairs(session.controller.clients) do
     if client.cell_id == cell.id and client.notebook_id == session.model.notebook_id
-        and vim.tbl_contains(client.capabilities, "followup") then return M.followup(context_buf, row) end
+        and vim.tbl_contains(client.capabilities, "followup") then return M.followup(context_buf, row, callback) end
   end
-  return M.execute(context_buf, row)
+  return M.execute(context_buf, row, callback)
 end
 
 function M.park(buf, row)
@@ -558,7 +559,7 @@ function M.editor_action(action, opts)
   end)
 end
 
-function M.followup(buf, row)
+function M.followup(buf, row, callback)
   local context_buf = buf or vim.api.nvim_get_current_buf()
   local session = require_session(context_buf)
   if not session then return nil end
@@ -567,12 +568,14 @@ function M.followup(buf, row)
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
   end
-  return session.controller:followup(cell.id, function(_, failure)
+  session.interactive:prepare_followup(cell.id)
+  return session.controller:followup(cell.id, function(response, failure)
     if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
+    if callback then callback(response, failure) end
   end)
 end
 
-function M.input(buf, row)
+function M.input(buf, row, callback)
   local context_buf = buf or vim.api.nvim_get_current_buf()
   local session = require_session(context_buf)
   if not session then return nil end
@@ -581,8 +584,9 @@ function M.input(buf, row)
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
   end
-  return session.controller:submit_input(cell.id, function(_, failure)
+  return session.controller:submit_input(cell.id, function(response, failure)
     if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
+    if callback then callback(response, failure) end
   end)
 end
 

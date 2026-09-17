@@ -12,6 +12,13 @@ function M.run()
   local test_home = vim.fn.tempname()
   vim.fn.mkdir(test_home, "p")
   vim.env.HOME = test_home
+  local original_config = vim.env.VD_CONFIG
+  vim.env.VD_CONFIG = test_home .. "/.visidatarc"
+  vim.fn.writefile({
+    "options.disp_menu = False",
+    "options.disp_menu_fmt = 'JUSI_MENU_SHOULD_BE_HIDDEN'",
+    "options.disp_status_fmt = 'JUSI_CONFIG_LOADED {sheet.name}'",
+  }, vim.env.VD_CONFIG)
   local original_notify = vim.notify
   vim.notify = function() end
   jusi.setup({ terminal_bridge_command = { ".venv/bin/python", "-m", "jusi", "terminal-bridge" } })
@@ -49,6 +56,8 @@ function M.run()
     local _, record = next(session.interactive.surfaces)
     assert(vim.wait(8000, function() return text(record.buf):find("literal α value", 1, true) ~= nil end, 10), "vd did not show kernel value: " .. text(record.buf) .. vim.inspect(failures))
     assert(not text(record.buf):find("FileExistsError", 1, true), "VisiData state directory initialization raced")
+    assert(text(record.buf):find("JUSI_CONFIG_LOADED", 1, true), "VisiData did not load user config")
+    assert(not text(record.buf):find("JUSI_MENU_SHOULD_BE_HIDDEN", 1, true), "VisiData ignored disp_menu=False")
     local source_client = record.client.client_id
     assert(record.client.plugin_id == "jusi_vd")
     assert(not vim.tbl_contains(record.client.capabilities, "followup"), "vd must not advertise legacy no-op followup")
@@ -61,6 +70,10 @@ function M.run()
     exported = vim.api.nvim_get_current_buf()
     assert(text(exported) == expected)
     assert(not vim.bo[exported].endofline)
+    assert(vim.bo[exported].buftype == "nofile" and not vim.bo[exported].buflisted)
+    vim.api.nvim_buf_set_lines(exported, 0, 1, false, { "locally changed" })
+    assert(not vim.bo[exported].modified, "vd Ctrl-O scratch buffer became modified")
+    vim.api.nvim_buf_set_lines(exported, 0, 1, false, { expected })
     assert(session.controller.clients[source_client] ~= nil)
     local output_number = vim.b[record.buf].jusi_output_number
     assert(type(output_number) == "number")
@@ -87,6 +100,7 @@ function M.run()
   elseif service and service.state ~= "stopped" then service:stop() end
   if exported and vim.api.nvim_buf_is_valid(exported) then vim.api.nvim_buf_delete(exported, { force = true }) end
   vim.env.HOME = original_home
+  vim.env.VD_CONFIG = original_config
   vim.fn.delete(test_home, "rf")
   vim.notify = original_notify
   if not ok then error(failure .. "\nfailures=" .. vim.inspect(failures) .. "\nservice stderr:\n" .. (service and service.stderr or "")) end

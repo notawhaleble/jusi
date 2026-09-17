@@ -106,6 +106,22 @@ function M.run()
     wait_for(3000, function() return terminal_text(record.buf):find("interruptible fixture operation", 1, true) end,
       "fixture did not enter its interruptible operation")
     wait_for(3000, function() return next(session.controller.client_operations) ~= nil end, "no active plugin identity")
+    -- A busy plugin is independent from the IPython execution lane.
+    local python_row = vim.api.nvim_buf_line_count(buf)
+    vim.api.nvim_buf_set_lines(buf, -1, -1, false, { "╭──", "1 + 1", "╰──" })
+    local python_cell = session.model:cell_at_row(python_row)
+    local python_response, python_failure
+    session.controller:execute(python_cell.id, function(result, err)
+      python_response, python_failure = result, err
+    end)
+    wait_for(3000, function() return python_response or python_failure end,
+      "Python execution blocked behind busy plugin")
+    assert(not python_failure, vim.inspect(python_failure))
+    assert(python_response.execution.outcome == "succeeded")
+    assert(not interrupted_response and not interrupt_failure, "plugin work ended before Python completed")
+    assert(next(session.controller.client_operations) ~= nil)
+    jusi.close(buf, python_row)
+    vim.api.nvim_buf_set_lines(buf, python_row, -1, false, {})
     -- The target application can copy while ordinary worker work is blocked.
     vim.fn.setreg('"', "before application copy")
     vim.api.nvim_chan_send(record.job_id, "action:copy\r")
@@ -142,7 +158,8 @@ function M.run()
     wait_for(3000, function() return vim.b.jusi_export_name == "selection.txt" end, "HTTP open did not arrive")
     local exported_buf = vim.api.nvim_get_current_buf()
     assert(table.concat(vim.api.nvim_buf_get_lines(exported_buf, 0, -1, false), "\n") == export_text)
-    assert(vim.bo[exported_buf].modifiable and vim.bo[exported_buf].modified)
+    assert(vim.bo[exported_buf].modifiable and not vim.bo[exported_buf].modified)
+    assert(vim.bo[exported_buf].buftype == "nofile" and not vim.bo[exported_buf].buflisted)
     assert(vim.fn.filereadable(vim.api.nvim_buf_get_name(exported_buf)) == 0)
     vim.api.nvim_win_close(0, true)
     vim.api.nvim_set_current_buf(buf)

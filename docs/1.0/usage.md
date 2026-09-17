@@ -119,6 +119,11 @@ Notebook Normal-mode shortcuts use a literal backslash, independent of mapleader
 
 Existing custom mappings take precedence. Ordinary `G` keeps its native behavior
 outside cell mode; uncounted `G` in cell mode also goes to the last line.
+In Insert mode, `Ctrl-Y` submits the current cell by context and clears its body
+after a successful response, preserving the magic header and history. It keeps
+Insert mode active for the next command. Failed submissions and text edited
+while the request was pending are preserved;
+when the completion popup is visible it retains native completion acceptance.
 
 ## Cell History
 

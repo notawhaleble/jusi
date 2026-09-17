@@ -16,7 +16,8 @@ Completion lists loaded notebook buffers, then discovered magics, then configure
 aliases. Offline notebooks remain available for plain cell creation. Duplicate
 basenames use path labels; backslash escaping supports spaces in notebook names.
 A notebook visible in the current tab is reused. Otherwise the palette opens it
-in a left split in that tab, preserving the source window. Output and focus
+as the leftmost full-height vertical split in that tab, preserving the source
+window and its existing layout. Output and focus
 windows are selected in the anchor notebook's tab, even if the same buffer has
 another view elsewhere.
 

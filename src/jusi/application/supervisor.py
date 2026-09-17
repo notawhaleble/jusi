@@ -1057,15 +1057,15 @@ class Supervisor:
     ) -> dict[str, Any]:
         # Completion is disposable: never queue behind execution or human input.
         resource = ResourceRef("client", client_id) if client_id else ResourceRef("kernel", kernel_id)
-        if not self._operation_lock.acquire(blocking=False):
+        if not client_id and not self._operation_lock.acquire(blocking=False):
             raise self._request_failure(
                 status_code=409, trace_id=trace_id, layer="supervisor", operation="complete",
                 reason="conflict", message="Runtime is busy; request completion again when idle",
                 retryable=True, scope="request", resource=resource,
             )
         try:
-            kernel, handle = self._require_live_kernel(kernel_id, trace_id, "complete")
             with self._state_lock:
+                kernel, handle = self._require_live_kernel(kernel_id, trace_id, "complete")
                 client = self._clients.get(client_id) if client_id else None
             if kernel.notebook_id != notebook_id or (client is not None and (
                 client.kernel_id != kernel_id or client.notebook_id != notebook_id or client.cell_id != cell_id
@@ -1111,7 +1111,8 @@ class Supervisor:
             self._complete_operation(operation, "succeeded", resource=resource)
             return {"operation": operation.to_dict(), "completion": result}
         finally:
-            self._operation_lock.release()
+            if not client_id:
+                self._operation_lock.release()
 
     def followup(
         self, *, client_id: str, body: str, trace_id: str, timeout: float | None = None,
@@ -1123,104 +1124,108 @@ class Supervisor:
         self, *, client_id: str, payload: dict[str, Any], kind: str, trace_id: str, timeout: float | None,
     ) -> dict[str, Any]:
         """Route an operation to an existing client without a kernel execution."""
-        with self._operation_lock:
-            client_ref = ResourceRef("client", client_id)
+        client_ref = ResourceRef("client", client_id)
+        operation = None
+        try:
+            # Admit one operation per client atomically with close/teardown's
+            # fence. Worker I/O never owns the kernel/lifecycle lane.
             with self._state_lock:
+                if any(item["client_id"] == client_id for item in self._client_operations.values()):
+                    raise self._request_failure(
+                        status_code=409, trace_id=trace_id, layer="supervisor", operation=kind,
+                        reason="conflict", message="Client already has an active operation",
+                        retryable=True, scope="request", resource=client_ref,
+                    )
                 operation = self._begin_operation(kind, trace_id, resource=client_ref)
                 client = self._clients.get(client_id)
                 known = client_id in self._known_client_ids
-                capability = "editor_actions" if kind == "editor_action" else kind
-                if client and client_id not in self._closing_clients and capability in client.capabilities:
-                    self._client_operations[operation.operation_id] = {
-                        "operation_id": operation.operation_id, "client_id": client_id, "kind": kind,
-                    }
-            try:
                 if client is None or client_id in self._closing_clients:
                     raise PluginWorkerSelectionError(
                         "Client is closed" if known else "Unknown client",
                         reason="conflict" if known else "not_found",
                     )
+                kernel = self._current_kernel
+                if kernel is None or kernel.kernel_id != client.kernel_id or kernel.state != "on":
+                    raise PluginWorkerSelectionError("Client kernel is no longer active", reason="conflict")
                 capability = "editor_actions" if kind == "editor_action" else kind
                 if capability not in client.capabilities:
                     raise PluginWorkerSelectionError(f"Client does not support {kind}", reason="unsupported")
-                assert self._plugin_workers is not None
-                result = self._plugin_workers.request(
-                    client.plugin_worker_id, kind, payload,
-                    trace_id=trace_id, timeout=timeout, request_id=operation.operation_id,
+                self._client_operations[operation.operation_id] = {
+                    "operation_id": operation.operation_id, "client_id": client_id, "kind": kind,
+                }
+            assert self._plugin_workers is not None
+            result = self._plugin_workers.request(
+                client.plugin_worker_id, kind, payload,
+                trace_id=trace_id, timeout=timeout, request_id=operation.operation_id,
+            )
+            if result.core_requests:
+                # The original handoff owns presentation creation. Later
+                # operations cannot silently replace or add a client surface.
+                raise PluginWorkerError(
+                    "Client operations cannot request new terminal surfaces",
+                    reason="protocol_violation", retryable=False,
                 )
-                if result.core_requests:
-                    # The original handoff owns presentation creation. Later
-                    # operations cannot silently replace or add a client surface.
-                    raise PluginWorkerError(
-                        "Client operations cannot request new terminal surfaces",
-                        reason="protocol_violation", retryable=False,
-                    )
-                if kind == "editor_action":
-                    try:
-                        validate_editor_action(result.result, payload["action"])
-                    except (ProtocolValidationError, UnicodeError) as exc:
-                        raise PluginOperationError(str(exc), reason="protocol_violation", retryable=False) from exc
-                if kind == "complete":
-                    try:
-                        validate_completion(result.result, payload["cursor_pos"])
-                    except ProtocolValidationError as exc:
-                        raise PluginWorkerError(str(exc), reason="protocol_violation", retryable=False) from exc
-            except (PluginWorkerSelectionError, PluginWorkerError) as exc:
-                with self._state_lock:
-                    self._client_operations.pop(operation.operation_id, None)
-                fatal = isinstance(exc, PluginWorkerError) and not isinstance(exc, PluginOperationError)
-                if (isinstance(exc, PluginOperationError) and exc.reason == "cancelled") or (
-                    client_id in self._closing_clients and isinstance(exc, PluginWorkerError)
-                    and exc.reason in {"process_signalled", "process_exited", "channel_closed"}
-                ):
-                    self._complete_operation(operation, "cancelled", resource=client_ref)
-                    return {"operation": operation.to_dict(), "client": client.to_dict(), "result": {"items": []} if kind == "complete" else {}}
-                failure = self._failure(
-                    trace_id=trace_id, layer="plugin_worker" if isinstance(exc, PluginWorkerError) else "supervisor",
-                    operation=kind, reason=exc.reason, message=str(exc),
-                    retryable=exc.retryable if fatal else False,
-                    scope="client" if fatal else "request", resource=client_ref,
-                    process=exc.diagnostics if fatal else None,
-                    details={**(exc.details if fatal else {}),
-                             **({"plugin_worker_id": client.plugin_worker_id,
-                                 "execution_id": client.execution_id} if client else {})},
-                )
-                self._emit_failure(failure)
+            if kind == "editor_action":
+                try:
+                    validate_editor_action(result.result, payload["action"])
+                except (ProtocolValidationError, UnicodeError) as exc:
+                    raise PluginOperationError(str(exc), reason="protocol_violation", retryable=False) from exc
+            if kind == "complete":
+                try:
+                    validate_completion(result.result, payload["cursor_pos"])
+                except ProtocolValidationError as exc:
+                    raise PluginWorkerError(str(exc), reason="protocol_violation", retryable=False) from exc
+        except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+            fatal = isinstance(exc, PluginWorkerError) and not isinstance(exc, PluginOperationError)
+            with self._state_lock:
+                closing = client_id in self._closing_clients
                 if fatal and client is not None:
-                    try:
-                        # Also handles an already fenced/terminated worker.
-                        self._close_client(
-                            client_id=client_id, trace_id=trace_id, timeout=timeout or 5.0,
-                            reason="fatal_failure", failure_id=failure.failure_id,
-                        )
-                    except SupervisorError:
-                        # Close already recorded its cleanup failure and retained
-                        # ownership for a later cleanup attempt.
-                        pass
-                self._complete_operation(operation, "failed", resource=client_ref, failure=failure)
-                raise SupervisorError(
-                    503 if fatal else (404 if exc.reason == "not_found" else 409), failure,
-                ) from exc
-            finally:
+                    self._closing_clients.add(client_id)
+                self._client_operations.pop(operation.operation_id, None)
+            if (isinstance(exc, PluginOperationError) and exc.reason == "cancelled") or (
+                closing and isinstance(exc, PluginWorkerError)
+                and exc.reason in {"process_signalled", "process_exited", "channel_closed"}
+            ):
+                self._complete_operation(operation, "cancelled", resource=client_ref)
+                return {"operation": operation.to_dict(), "client": client.to_dict(), "result": {"items": []} if kind == "complete" else {}}
+            failure = self._failure(
+                trace_id=trace_id, layer="plugin_worker" if isinstance(exc, PluginWorkerError) else "supervisor",
+                operation=kind, reason=exc.reason, message=str(exc),
+                retryable=exc.retryable if fatal else False,
+                scope="client" if fatal else "request", resource=client_ref,
+                process=exc.diagnostics if fatal else None,
+                details={**(exc.details if fatal else {}),
+                         **({"plugin_worker_id": client.plugin_worker_id,
+                             "execution_id": client.execution_id} if client else {})},
+            )
+            self._emit_failure(failure)
+            if fatal and client is not None:
+                try:
+                    # Also handles an already fenced/terminated worker.
+                    self._close_client(
+                        client_id=client_id, trace_id=trace_id, timeout=timeout or 5.0,
+                        reason="fatal_failure", failure_id=failure.failure_id,
+                    )
+                except SupervisorError:
+                    # Close already recorded its cleanup failure and retained
+                    # ownership for a later cleanup attempt.
+                    pass
+            self._complete_operation(operation, "failed", resource=client_ref, failure=failure)
+            raise SupervisorError(
+                503 if fatal else (404 if exc.reason == "not_found" else 409), failure,
+            ) from exc
+        finally:
+            if operation is not None:
                 with self._state_lock:
                     self._client_operations.pop(operation.operation_id, None)
-            self._complete_operation(operation, "succeeded", resource=client_ref)
-            return {"operation": operation.to_dict(), "client": client.to_dict(), "result": result.result}
+        self._complete_operation(operation, "succeeded", resource=client_ref)
+        return {"operation": operation.to_dict(), "client": client.to_dict(), "result": result.result}
 
     def editor_action(self, *, client_id: str, action: str, selection: dict[str, Any], trace_id: str):
-        # Do not queue a selection request behind unrelated work: the selection
-        # in the application may have changed by the time that work finishes.
-        if not self._operation_lock.acquire(blocking=False):
-            raise self._request_failure(status_code=409, trace_id=trace_id, layer="supervisor",
-                operation="editor_action", reason="conflict", message="Runtime is busy", retryable=True,
-                scope="request", resource=ResourceRef("client", client_id))
-        try:
-            response = self._client_operation(client_id=client_id, kind="editor_action",
-                payload={"action": action, "selection": selection}, trace_id=trace_id, timeout=10.0)
-            return {"operation": response["operation"], "client": response["client"],
-                    "editor_action": response["result"] if response["operation"]["outcome"] == "succeeded" else None}
-        finally:
-            self._operation_lock.release()
+        response = self._client_operation(client_id=client_id, kind="editor_action",
+            payload={"action": action, "selection": selection}, trace_id=trace_id, timeout=10.0)
+        return {"operation": response["operation"], "client": response["client"],
+                "editor_action": response["result"] if response["operation"]["outcome"] == "succeeded" else None}
 
     def interrupt_client(self, *, client_id: str, operation_id: str, trace_id: str, timeout: float = 3.0):
         resource = ResourceRef("client", client_id)
@@ -1818,17 +1823,6 @@ class Supervisor:
         An active adapter operation detects its own loss and owns failure order.
         """
         if not self._operation_lock.acquire(blocking=False):
-            # A durable plugin followup holds the lane but does not talk to the
-            # kernel. Observe death here too and release that work before the
-            # next poll performs authoritative kernel retirement.
-            with self._state_lock:
-                kernel, handle = self._current_kernel, self._kernel_handle
-                busy = bool(self._client_operations)
-            if busy and kernel is not None and kernel.state == "on" and handle is not None:
-                try:
-                    handle.check_alive()
-                except KernelAdapterError:
-                    self._stop_client_work_for_teardown(kernel.kernel_id, new_id("trace"))
             return
         try:
             with self._state_lock:

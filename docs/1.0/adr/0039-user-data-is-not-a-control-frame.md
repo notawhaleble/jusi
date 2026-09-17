@@ -51,7 +51,7 @@ Socket upload inactivity and frontend connection/control timeouts remain bounded
 Neovim writes chunks into a private local temporary file. It checks contiguous
 offsets, consistent metadata, source ownership and the remaining lease, then
 applies the complete content once. Open reads that local snapshot into a new
-independent unsaved buffer; copy updates registers. Partial downloads never
+independent, unlisted `nofile` scratch buffer; copy updates registers. Partial downloads never
 mutate the destination. Files are removed after delivery/failure, disconnect,
 runtime retirement and normal editor exit. Completed action outcomes remain
 replay-safe through the existing acknowledgment cache.

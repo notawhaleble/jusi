@@ -1,8 +1,19 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-16
+Updated: 2026-09-17
 
 ## Current Facts
+
+- Final `1.0.2` is prepared with concurrent established-plugin work, shared
+  VisiData application startup, disposable open snapshots, Insert-mode
+  `Ctrl-Y` submission and frontend presentation fixes. Publication checks are
+  in progress.
+
+- Busy established plugin operations no longer hold the kernel execution lane. Different clients and Python cells can run concurrently; same-client overlap receives a recoverable conflict. Initial construction remains a bounded serialized handoff. See [ADR 0047](adr/0047-plugin-work-does-not-own-the-kernel-lane.md) and [Incident 0022](incidents/0022-busy-plugin-blocked-kernel-execution.md).
+
+- Insert-mode `Ctrl-Y` clears a successfully submitted body for the next command, preserving magic headers, history and any newer edits made while waiting. See [ADR 0032](adr/0032-cell-mode-and-contextual-submission.md).
+
+- Optional `jusi.visidata_support.initialize_visidata()` now shares locale, user config/plugins and editor integration between bundled `%%vd` and the companion `jusi-codex` source checkout. This fixes ignored `disp_menu` configuration in Codex sheets; the helper is included in `1.0.2`. See [ADR 0046](adr/0046-shared-visidata-application-startup.md) and [Incident 0020](incidents/0020-visidata-config-skipped-by-codex.md).
 
 - **Jusi 1.0.1 is released.** [PyPI](https://pypi.org/project/jusi/1.0.1/) and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.1) are public. Tag `v1.0.1` identifies `84899ea`; `main` was fast-forwarded to that commit. GitHub assets include the wheel, sdist, checksums and recorded demo.
 
@@ -24,7 +35,7 @@ Updated: 2026-09-16
 
 - Terminal projection windows clear inherited number/sign/fold/status gutters before PTY startup, so their first geometry uses the full split width. Real-terminal coverage enables notebook gutters to reproduce and prevent the mismatch. See [Incident 0015](incidents/0015-inherited-gutters-reduced-initial-terminal-width.md).
 
-- J/J! now complete loaded notebooks, discovered magics and target configuration aliases; magic reuse preserves identity/history and bang uses contextual submission. The Ctrl-\ Ctrl-\ focus chord respects user mappings and finds visible notebooks from unrelated buffers, preferring the current tab. Palette notebooks open on the left; output layout stays in the notebook tab. Shared palette contracts and frontend/real-kernel tests cover the flow. See [ADR 0041](adr/0041-palette-and-focus-controls.md).
+- J/J! now complete loaded notebooks, discovered magics and target configuration aliases; magic reuse preserves identity/history and bang uses contextual submission. The Ctrl-\ Ctrl-\ focus chord respects user mappings and finds visible notebooks from unrelated buffers, preferring the current tab. A notebook absent from the current tab opens as its leftmost full-height column; output layout stays in the notebook tab. Shared palette contracts and frontend/real-kernel tests cover the flow. See [ADR 0041](adr/0041-palette-and-focus-controls.md).
 
 - Backend-driven show_diff now displays two read-only snapshots in native Neovim diff windows in a new tab. It reuses chunked editor delivery and acknowledgment, with no accept/reject or writeback behavior. Shared contracts, paired-transfer tests and the terminal end-to-end fixture cover display and source-close independence. See [ADR 0040](adr/0040-show-diff-is-display-only.md) and the [application guide](architecture/show-diff.md). Display-only diff is ready for manual use.
 - Manual testing between two Macs confirmed remote plain-cell execution, VisiData interaction, zY copy, Ctrl-O open and JusiStop over an SSH-forwarded service connection. Public authentication/TLS deployment and connection-loss testing remain separate.
@@ -35,6 +46,7 @@ Updated: 2026-09-16
 
 - Established plugin operations now support concurrent exact `JusiInterrupt`, recoverable worker rejections, deadline-free followups, and full close of busy work. Health publishes active client operation identities; cancellation preserves the client/surface. See [ADR 0034](adr/0034-concurrent-plugin-operation-interruption.md).
 - Backend-driven copy/open now uses a private target-side client channel, captured UTF-8 content over HTTP, exact editor recipients, replay-safe delivery and acknowledgments independent of ordinary plugin work. Python application helpers and `jusivim PATH` support selected text and target-read files; exported buffers survive source close. Public `JusiCopy`/`JusiOpen` remain withdrawn. See [ADR 0036](adr/0036-application-driven-editor-actions.md) and the [fixture guide](architecture/backend-driven-editor-actions.md). Application work leases and writeback remain deferred.
+- Open actions now use modifiable, unlisted `nofile` scratch buffers. VisiData Ctrl-O and other snapshot exports no longer accumulate false unsaved-file changes or block native close/editor exit; they remain independent snapshots without writeback. See [Incident 0021](incidents/0021-open-snapshots-blocked-editor-exit.md).
 - Bundled `%%vd` now uses ordinary plugin discovery, kernel-expression snapshots, an isolated worker and VisiData terminal, with application-driven `zY` copy and Ctrl-O open. Python containers and pandas tables are supported through data-only snapshots; no-op legacy followups are not advertised. VisiData is available through the optional `vd` extra. See [ADR 0037](adr/0037-bundled-visidata-provider.md), the [usage guide](architecture/bundled-vd.md), and [Incident 0014](incidents/0014-embedded-visidata-startup-and-editor-actions.md). Local and remote VisiData use has passed manual review.
 - The plugin and family development skills are packaged and structurally validated. Independent practical evaluation of the plugin skill is reserved for the planned new `%%todo` plugin, not inferred from bundled `%%vd`. External provider migration remains deferred.
 
@@ -42,7 +54,7 @@ Updated: 2026-09-16
 
 - Folded history now displays plain `history: N entries` with a muted foreground and blank fill; expanded history retains its delimiter. The terminal development fixture visibly displays initial/followup bodies and supports readable line input. Followup success notifications are removed; failures remain visible.
 
-- Offline navigation and buffer-local cell mode now provide legacy-style Normal-mode keys, double-line border overlays in the existing status colors, native Insert behavior, cell text operations and contextual `JusiSubmit` dispatch. Navigation follows linked cells and expanded history; input/followup identities and full cell retirement remain unchanged. See [ADR 0032](adr/0032-cell-mode-and-contextual-submission.md). Manual interaction review passed.
+- Offline navigation and buffer-local cell mode now provide legacy-style Normal-mode keys, Insert-mode `Ctrl-Y` contextual submission, double-line border overlays in the existing status colors, cell text operations and contextual `JusiSubmit` dispatch. Navigation follows linked cells and expanded history; input/followup identities and full cell retirement remain unchanged. See [ADR 0032](adr/0032-cell-mode-and-contextual-submission.md). Manual interaction review passed.
 
 - Followup-capable plugins now capture durable cell history on initial handoff and followup delivery. Native per-window history folds, offline toggle/apply commands, undoable restoration and isolated entry syntax/indentation are implemented. Pending accepted text waits through structural damage and retires with its opener. See [ADR 0031](adr/0031-foldable-followup-history.md).
 

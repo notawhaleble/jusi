@@ -139,7 +139,9 @@ function M.command(command)
     row = start + 1
   end
   model:flush()
-  local win = windows.show(item.buf, { tab = vim.api.nvim_get_current_tabpage(), split = 'left', enter = true })
+  local win = windows.show(item.buf, {
+    tab = vim.api.nvim_get_current_tabpage(), split = 'left', fullheight = true, enter = true,
+  })
   -- Keep the magic header visible but put typing on its body, creating a body
   -- row when a reused cell has only a header before its history/closer.
   if header then row = row + 1 end
@@ -149,7 +151,7 @@ function M.command(command)
     vim.api.nvim_buf_set_lines(item.buf, row, row, false, { '' }); model:flush()
   end
   vim.api.nvim_win_set_cursor(win, { row + 1, 0 })
-  vim.cmd('silent! normal! zv')
+  vim.cmd('silent! normal! zvzz')
   if command.bang then return require('jusi').submit(item.buf, row) end
   if created then vim.cmd.startinsert() end
   return cell

@@ -54,11 +54,20 @@ function M.show(buf, options)
   if not anchor or vim.api.nvim_win_get_tabpage(anchor) ~= tab then
     anchor = vim.api.nvim_tabpage_get_win(tab)
   end
-  local win = vim.api.nvim_open_win(buf, opts.enter == true, {
-    split = opts.split or "below",
-    win = anchor,
-    height = opts.height,
-  })
+  local win
+  if opts.fullheight then
+    win = vim.api.nvim_win_call(anchor, function()
+      vim.cmd('topleft vertical sbuffer ' .. buf)
+      return vim.api.nvim_get_current_win()
+    end)
+    if opts.enter then vim.api.nvim_set_current_win(win) end
+  else
+    win = vim.api.nvim_open_win(buf, opts.enter == true, {
+      split = opts.split or "below",
+      win = anchor,
+      height = opts.height,
+    })
+  end
   prepare_terminal_window(win, buf)
   return win
 end

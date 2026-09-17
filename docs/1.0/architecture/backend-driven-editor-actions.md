@@ -15,7 +15,9 @@ and bounds; the legacy review below records the design rationale.
 
 The application captures content when the user invokes the action. The editor
 must not later query a changed cursor selection. Opening is initially a content
-snapshot, independent of its source client. Writeback is a separate operation.
+snapshot in a modifiable, unlisted `nofile` scratch buffer, independent of its
+source client. Local changes never acquire an unsaved-file flag and do not block
+close or editor exit. Writeback is a separate operation.
 
 ## Applicable legacy behavior
 

@@ -26,9 +26,14 @@ While enabled, native Normal-mode keys select cell actions:
 
 Space and mode-specific mappings are buffer-local. Prior buffer-local mappings
 are restored on exit/detach; global mappings become visible again. User remaps
-made while cell mode is active are not removed on exit. No Insert-mode mappings
-are introduced. Native editing and completion remain available. Insert mode
-restores rounded borders; leaving Insert resumes the selected cell mode.
+made while cell mode is active are not removed on exit. Buffer-local Insert-mode
+`Ctrl-Y` performs the same contextual submission and remains in Insert mode,
+clearing the submitted body after a successful response while preserving its
+magic header and history. Failed submissions, newer edits and replaced model
+generations are preserved. An existing mapping takes precedence, and
+`Ctrl-Y` retains native completion acceptance while the popup menu is visible.
+Other native editing remains available. Insert mode restores rounded borders;
+leaving Insert resumes the selected cell mode.
 
 `JusiNextCell` and `JusiPreviousCell` navigate only cells, with counts, outside
 cell mode as well. `JusiCellNewAbove` and `JusiCellNewBelow` insert an empty valid
@@ -80,8 +85,9 @@ this slice; no placeholder bindings are installed for them.
 
 ## Verification
 
-`tests/frontend/cellmode_spec.lua` exercises real mapped keys, count/boundary
-navigation, expanded/folded history, offline restore, clipboard identity,
-localized deletion, mapping restoration, Insert transitions, double-line overlays,
-payload replacement, and submission precedence. Real service tests exercise
+`tests/frontend/cellmode_spec.lua` and `tests/frontend/output_ids_spec.lua`
+exercise real mapped keys, count/boundary navigation, expanded/folded history,
+offline restore, clipboard identity, localized deletion, mapping restoration,
+Insert transitions and submission, double-line overlays, payload replacement,
+and submission precedence. Real service tests exercise
 `JusiSubmit` for new execution, kernel input and durable-client followups.

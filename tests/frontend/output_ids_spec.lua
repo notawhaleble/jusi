@@ -38,10 +38,41 @@ function M.run()
   assert(vim.api.nvim_win_get_cursor(0)[1]==2)
   keys(tostring(replacement_id)..'\\q')
   assert(#closed==2)
+  local submit, submitted = jusi.submit, 0
+  local resolve
+  jusi.submit = function(context, _, callback)
+    assert(context == buf and vim.fn.mode():sub(1,1) == 'i', 'Ctrl-Y left Insert mode before submission')
+    submitted = submitted + 1
+    resolve = callback
+  end
+  keys('i<C-Y>')
+  assert(submitted == 1, 'Ctrl-Y did not submit from Insert mode')
+  resolve({}, nil)
+  assert(vim.deep_equal(editor.model:body(cells[1]), {''}), 'Ctrl-Y did not clear the submitted body')
+  vim.api.nvim_buf_set_lines(buf,0,-1,false,{'╭──','%%sql main','select 1','╞══','select 0','╰──'})
+  editor.model:flush()
+  local magic = editor.model:cell_at_row(2)
+  vim.api.nvim_win_set_cursor(0,{3,0})
+  keys('i<C-Y>')
+  resolve(nil, {reason='conflict'})
+  assert(editor.model:body(magic)[2] == 'select 1', 'rejected submission cleared the body')
+  keys('i<C-Y>')
+  vim.api.nvim_buf_set_lines(buf,2,3,false,{'select 2'})
+  resolve({}, nil)
+  assert(editor.model:body(magic)[2] == 'select 2', 'late response cleared newer typing')
+  keys('i<C-Y>')
+  resolve({}, nil)
+  assert(vim.deep_equal(editor.model:body(magic), {'%%sql main',''}), 'magic header was not preserved')
+  assert(vim.deep_equal(editor.model:history(magic), {{'select 0'}}), 'clearing body damaged history')
+  vim.cmd.stopinsert()
+  jusi.submit = submit
   vim.keymap.set('n','\\b',function() end,{buffer=buf})
+  local insert_replacement = function() end
+  vim.keymap.set('i','<C-Y>',insert_replacement,{buffer=buf})
   editor:close()
   assert(vim.fn.maparg('\\b','n')~='', 'detach removed user replacement')
   assert(vim.fn.maparg('\\j','n')=='', 'detach left owned mapping')
+  assert(vim.fn.maparg('<C-Y>','i',false,true).callback == insert_replacement, 'detach removed user Insert replacement')
   presentation:close(); jusi._sessions[buf]=nil
   vim.api.nvim_set_current_buf(original); vim.api.nvim_buf_delete(buf,{force=true})
 end

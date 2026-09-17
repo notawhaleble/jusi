@@ -1537,3 +1537,65 @@ def test_client_work_snapshot_exact_interrupt_and_recoverable_export():
     assert result["editor_action"]["text"] == "private selection"
     assert "private selection" not in str(supervisor.events.events_after(0))
     supervisor.close_client(client_id=client_id, trace_id="trace_close")
+
+
+@pytest.mark.parametrize("kind", ["followup", "complete", "editor_action"])
+def test_busy_plugin_does_not_block_kernel_or_other_clients(kind):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    plugin = plugin_entry()
+    plugin["families"][0]["capabilities"] += ["followup", "complete", "editor_actions"]
+    handoff = PluginHandoff(plugin_id="exact_sql", plugin_version="1.0.0", family_id="sql", magic_name="sql", payload={})
+    kernel = FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))
+    workers = FakePluginWorkerFactory()
+    supervisor = Supervisor(FakeFactory(kernel), FakeDiscovery(plugins=[plugin]), PluginWorkerManager(workers))
+    started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+    kernel_id = started["kernel"]["kernel_id"]
+    clients = [supervisor.execute(kernel_id=kernel_id, notebook_id="nb", cell_id=cell,
+                                 code="%%sql", trace_id="trace_execute")["execution"]["client_id"]
+               for cell in ["first", "second"]]
+    kernel.result = KernelExecutionResult("succeeded")
+    entered, release = threading.Event(), threading.Event()
+    result = {"followup": {"accepted": True},
+              "complete": {"items": [], "cursor_start": 0, "cursor_end": 0},
+              "editor_action": {"action": "copy", "text": "selection", "regtype": "v"}}[kind]
+
+    def request(operation, payload, **kwargs):
+        assert operation == kind
+        entered.set()
+        assert release.wait(5)
+        return PluginWorkerOperationResult(result)
+
+    workers.handles[0].request = request
+    def submit():
+        if kind == "followup":
+            return supervisor.followup(client_id=clients[0], body="wait", trace_id="trace_busy")
+        if kind == "complete":
+            return supervisor.complete(kernel_id=kernel_id, notebook_id="nb", cell_id="first",
+                                       client_id=clients[0], body="", cursor_pos=0, trace_id="trace_busy")
+        return supervisor.editor_action(client_id=clients[0], action="copy", selection={}, trace_id="trace_busy")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        busy = pool.submit(submit)
+        try:
+            assert entered.wait(2)
+            active = supervisor.health()["client_operations"]
+            assert len(active) == 1 and active[0]["client_id"] == clients[0]
+            execution = pool.submit(supervisor.execute, kernel_id=kernel_id, notebook_id="nb",
+                                    cell_id="python", code="1 + 1", trace_id="trace_python").result(timeout=1)
+            assert execution["execution"]["outcome"] == "succeeded" and not busy.done()
+            other = pool.submit(supervisor.followup, client_id=clients[1], body="other",
+                                trace_id="trace_other").result(timeout=1)
+            assert other["operation"]["outcome"] == "succeeded"
+            with pytest.raises(SupervisorError) as conflict:
+                supervisor.followup(client_id=clients[0], body="duplicate", trace_id="trace_duplicate")
+            assert conflict.value.failure.reason == "conflict"
+            assert supervisor.health()["client_operations"] == active
+            assert not any(event["kind"] == "operation.started" and event["trace_id"] == "trace_duplicate"
+                           for event in supervisor.events.events_after(0))
+        finally:
+            release.set()
+        assert busy.result(timeout=2)["operation"]["outcome"] == "succeeded"
+    assert supervisor.health()["client_operations"] == []
+    supervisor.stop_kernel(kernel_id=kernel_id, trace_id="trace_stop")
