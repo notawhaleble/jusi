@@ -4,10 +4,10 @@ Updated: 2026-09-17
 
 ## Current Facts
 
-- Final `1.0.2` is prepared with concurrent established-plugin work, shared
-  VisiData application startup, disposable open snapshots, Insert-mode
-  `Ctrl-Y` submission and frontend presentation fixes. Publication checks are
-  in progress.
+- **Jusi 1.0.2 is released.** [PyPI](https://pypi.org/project/jusi/1.0.2/)
+  and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.2)
+  are public. Tag `v1.0.2` identifies `7e7ff27`; `main` was fast-forwarded to
+  that commit. GitHub assets include the verified wheel, sdist and checksums.
 
 - Busy established plugin operations no longer hold the kernel execution lane. Different clients and Python cells can run concurrently; same-client overlap receives a recoverable conflict. Initial construction remains a bounded serialized handoff. See [ADR 0047](adr/0047-plugin-work-does-not-own-the-kernel-lane.md) and [Incident 0022](incidents/0022-busy-plugin-blocked-kernel-execution.md).
 
@@ -15,11 +15,13 @@ Updated: 2026-09-17
 
 - Optional `jusi.visidata_support.initialize_visidata()` now shares locale, user config/plugins and editor integration between bundled `%%vd` and the companion `jusi-codex` source checkout. This fixes ignored `disp_menu` configuration in Codex sheets; the helper is included in `1.0.2`. See [ADR 0046](adr/0046-shared-visidata-application-startup.md) and [Incident 0020](incidents/0020-visidata-config-skipped-by-codex.md).
 
-- **Jusi 1.0.1 is released.** [PyPI](https://pypi.org/project/jusi/1.0.1/) and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.1) are public. Tag `v1.0.1` identifies `84899ea`; `main` was fast-forwarded to that commit. GitHub assets include the wheel, sdist, checksums and recorded demo.
-
 - Managed-kernel liveness now polls the owned process directly. A reproduced inherited-asyncio-loop error in Jupyter's synchronous wrapper previously reported a live kernel as dead and triggered runtime cleanup. The Codex-session report's original trigger remains unconfirmed. See [Incident 0019](incidents/0019-liveness-wrapper-falsely-reported-kernel-death.md).
 
-- Release validation passed 254 Python tests with one opt-in skip, both Neovim suites, metadata and checksum checks, and isolated base/VisiData installation. Fresh downloads from production PyPI and GitHub match the verified artifacts. A clean PyPI installation verified the public frontend tag and default `install-skills` release-tag fetch.
+- Release validation passed 259 Python tests with one opt-in skip, both Neovim
+  suites, metadata, archive, checksum and notebook-conversion checks, and
+  isolated base/VisiData installation. Fresh downloads from production PyPI
+  and GitHub match the verified artifacts. A clean PyPI installation verified
+  the public frontend tag and default `install-skills` release-tag fetch.
 
 - Release-facing documentation separates the README quick start, user guide, contributor setup and release procedure. The recorded GIF is embedded in the GitHub README; the source demo notebook and walkthrough are in `examples/`, and the recorded MP4 is attached to the GitHub release.
 
