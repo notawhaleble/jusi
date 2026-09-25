@@ -93,6 +93,40 @@ def test_production_environment_enumeration_without_explicit_search_path() -> No
     assert result.catalog["discovery_id"] == "discovery_environment"
 
 
+@pytest.mark.parametrize("environment_paths", [False, True])
+def test_symlinked_library_paths_discover_one_installation_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, environment_paths: bool,
+) -> None:
+    library = tmp_path / "lib"
+    root = library / "site-packages"
+    root.mkdir(parents=True)
+    alias = tmp_path / "lib64"
+    alias.symlink_to(library, target_is_directory=True)
+    install_fixture_distribution(root, plugin_id="path_alias")
+    paths = [str(root), str(alias / "site-packages"), str(root)]
+    if environment_paths:
+        monkeypatch.setenv("PYTHONPATH", os.pathsep.join(paths + [os.environ.get("PYTHONPATH", "")]))
+    adapter = FreshProcessPluginCatalogDiscovery(search_paths=None if environment_paths else paths)
+
+    result = adapter.discover(discovery_id="discovery_path_alias", timeout=2)
+
+    plugins = [plugin for plugin in result.catalog["plugins"] if plugin["plugin_id"] == "path_alias"]
+    assert len(plugins) == 1
+
+
+def test_distinct_installations_with_identical_plugin_metadata_still_conflict(tmp_path: Path) -> None:
+    roots = [tmp_path / "lib", tmp_path / "lib64"]
+    for root in roots:
+        root.mkdir()
+        install_fixture_distribution(root, plugin_id="duplicate")
+    adapter = FreshProcessPluginCatalogDiscovery(search_paths=roots)
+
+    with pytest.raises(PluginDiscoveryError, match="Duplicate plugin_id: duplicate") as raised:
+        adapter.discover(discovery_id="discovery_distinct_installations", timeout=2)
+
+    assert raised.value.reason == "conflict"
+
+
 def test_discovery_is_fresh_deterministic_and_never_imports_provider_in_parent(tmp_path: Path) -> None:
     module_name = install_fixture_distribution(tmp_path, plugin_id="sqlite")
     adapter = discoverer(tmp_path)

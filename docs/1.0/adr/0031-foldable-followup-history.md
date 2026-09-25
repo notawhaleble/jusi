@@ -58,8 +58,10 @@ syntax-fold hierarchy.
 ## Locality And Language Context
 
 Initial window attachment enumerates cells. Later structural notifications
-update only affected/retired cell folds. Body typing leaves native folds to
-follow their text; it does not trigger a full fold rebuild or backend work.
+update only affected/retired cell folds. Local edits inside history also update
+only that cell's fold, because native manual folds may retain their old end
+when text is inserted. Body typing leaves native folds to follow their text;
+it does not trigger a full fold rebuild or backend work.
 
 The notebook-owned editing worker renders each history entry in an isolated
 scratch buffer using the cell's current syntax and indentation profiles.

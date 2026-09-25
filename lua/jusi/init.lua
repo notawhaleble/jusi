@@ -157,7 +157,7 @@ local function bind_cell_lifecycle(session)
   controller.on_submission_result = function(command, response, failure) editing.history:result(command, response, failure) end
   local marks_changed = model.on_cells_changed
   model.on_cells_changed = function(ids) marks_changed(ids); editing:changed(ids, true) end
-  model.on_text_changed = function(ids) editing:changed(ids) end
+  model.on_text_changed = function(ids, history_ids) editing:changed(ids, false, history_ids) end
   controller.on_catalog = function() editing:catalog(); editing.cache = {}; editing:schedule() end
   controller.on_status_event = function(event) marks:event(event); editing:event(event) end
   model.on_cells_retired = function(ids)

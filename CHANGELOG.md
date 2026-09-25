@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.3 — 2026-09-26
+
+- Repair followup-history folds after local edits, including a stale range or
+  missing native fold, while keeping ordinary body typing on its local path.
+- Resync cell-mode visuals with the current editor mode when toggled, so the
+  badge and borders agree with active Normal-mode mappings.
+- Scan aliased or repeated Python library paths only once during plugin
+  discovery, preventing false duplicate-plugin conflicts while preserving
+  conflicts between distinct installations.
+
 ## 1.0.2 — 2026-09-17
 
 - Run established plugin-client operations outside the serialized kernel lane,

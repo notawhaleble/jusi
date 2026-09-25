@@ -57,11 +57,12 @@ def _distribution_identity(
 def _entry_points(
     search_paths: list[str],
 ) -> list[tuple[importlib.metadata.EntryPoint, importlib.metadata.Distribution]]:
-    distributions = (
-        importlib.metadata.distributions(path=search_paths)
-        if search_paths
-        else importlib.metadata.distributions()
-    )
+    # Python can expose the same site-packages through both lib and a lib64
+    # symlink. Scan that directory once without hiding distinct installations.
+    unique_paths: dict[str, str] = {}
+    for path in search_paths or sys.path:
+        unique_paths.setdefault(os.path.realpath(path), path)
+    distributions = importlib.metadata.distributions(path=list(unique_paths.values()))
     discovered = [
         (entry_point, distribution)
         for distribution in distributions

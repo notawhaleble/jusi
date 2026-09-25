@@ -22,6 +22,8 @@ The long-lived 1.0 service does not import third-party plugin packages.
 - Plugin discovery runs in a fresh short-lived process and returns a validated,
   data-only catalog. Discovery uses a new versioned entry-point group rather
   than loading 0.x `jusi.display_handlers` implementations as if compatible.
+  Repeated search paths and symlink aliases of one directory are scanned once
+  per attempt. Separate installations claiming the same plugin ID still conflict.
 - Catalog publication is atomic: one broken or conflicting provider fails the
   attempt with exact attribution instead of publishing a partial capability
   snapshot.

@@ -139,5 +139,26 @@ function M.run()
   assert(vim.fn.foldclosed(3) == -1, 'model replacement reset fold state')
   vim.api.nvim_buf_delete(other, { force = true })
   editor:close(); vim.api.nvim_buf_delete(buf, { force = true })
+
+  -- Native manual folds can retain their old end after history gains lines.
+  buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_set_current_buf(buf)
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
+    '╭──', 'body', '╞══', '"""open', '├┄┄', 'last', '╰──', '╭──', 'next', '╰──',
+  })
+  editor = require('jusi.editing').attach(buf); history = editor.history; model = editor.model
+  history:refresh()
+  vim.api.nvim_win_set_cursor(0, { 2, 0 }); assert(history:toggle())
+  vim.api.nvim_buf_set_lines(buf, 5, 5, false, { 'new history line' })
+  settle(); history:refresh()
+  local snapshot = model:cell_snapshot(model:cell_at_row(0))
+  assert(vim.fn.foldlevel(snapshot.close_row) == 1, 'new history line escaped the fold')
+  assert(vim.fn.foldlevel(snapshot.close_row + 1) == 0, 'fold swallowed the closer')
+  vim.api.nvim_win_set_cursor(0, { 4, 0 }); assert(history:toggle())
+  assert(vim.fn.foldclosed(snapshot.history_row + 1) == snapshot.history_row + 1)
+  assert(vim.fn.foldclosedend(snapshot.history_row + 1) == snapshot.close_row)
+  vim.cmd((snapshot.history_row + 1) .. 'normal! zd')
+  vim.api.nvim_win_set_cursor(0, { 2, 0 }); assert(history:toggle())
+  assert(vim.fn.foldlevel(snapshot.history_row + 1) == 1, 'missing native fold was not repaired')
+  editor:close(); vim.api.nvim_buf_delete(buf, { force = true })
 end
 return M

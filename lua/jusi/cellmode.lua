@@ -27,6 +27,7 @@ function Mode:refresh_marks()
 end
 function Mode:set(enabled)
   local buf = self.editor.model.buf
+  self.inserting = vim.api.nvim_get_current_buf() == buf and vim.fn.mode():sub(1, 1) == 'i'
   self.enabled = enabled
   vim.b[buf].jusi_cell_mode = enabled
   vim.b[buf].jusi_cell_mode_active = enabled and not self.inserting

@@ -1,8 +1,12 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-17
+Updated: 2026-09-25
 
 ## Current Facts
+
+- Plugin discovery scans repeated paths and symlink aliases such as `lib`/`lib64` once, preventing false duplicate-plugin startup failures. Distinct installations with the same plugin ID still conflict. See [Incident 0024](incidents/0024-library-path-aliases-duplicated-plugin-discovery.md).
+
+- Local history edits now repair native fold boundaries before collapse, including a missing fold; ordinary body typing keeps its local path. Explicit cell-mode toggles resync Insert state so Normal mappings, border overlays and the badge agree. See [Incident 0023](incidents/0023-history-fold-range-and-cell-mode-visual-drift.md).
 
 - **Jusi 1.0.2 is released.** [PyPI](https://pypi.org/project/jusi/1.0.2/)
   and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.2)

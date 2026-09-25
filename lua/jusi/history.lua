@@ -36,7 +36,10 @@ function History:update(win, id)
       local first, last = position(self, old.first), position(self, old.last)
       if first and vim.fn.foldlevel(first) > 0 then
         closed = vim.fn.foldclosed(first) >= 0
-        if valid and first == s.history_row + 1 and last == s.close_row then return end
+        if valid and first == s.history_row + 1 and last == s.close_row
+            and vim.fn.foldlevel(first - 1) == 0
+            and vim.fn.foldlevel(last) == 1
+            and vim.fn.foldlevel(last + 1) == 0 then return end
         vim.cmd('silent! ' .. first .. 'foldopen!')
         vim.cmd('silent! ' .. first .. 'normal! zd')
       end
@@ -103,9 +106,11 @@ function History:toggle()
   self:refresh()
   local cell = self.model:cell_at_row(vim.api.nvim_win_get_cursor(0)[1] - 1)
   local s = cell and self.model:cell_snapshot(cell)
-  if not s or not s.valid or not s.history_row then return false end
+  if not s or not s.valid or not s.history_row or not s.close_row then return false end
+  self:update(vim.api.nvim_get_current_win(), cell.id)
   local view = vim.fn.winsaveview()
   local line = s.history_row + 1
+  if vim.fn.foldlevel(line) == 0 then return false end
   vim.cmd(line .. (vim.fn.foldclosed(line) >= 0 and 'foldopen!' or 'foldclose'))
   vim.fn.winrestview(view)
   return true

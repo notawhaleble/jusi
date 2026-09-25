@@ -162,8 +162,9 @@ function Editing:schedule()
   self.scheduled = true
   vim.schedule(function() self.scheduled = false; self:refresh() end)
 end
-function Editing:changed(ids, structural)
-  if structural then self.history:changed(ids) end
+function Editing:changed(ids, structural, history_ids)
+  if structural then self.history:changed(ids)
+  elseif history_ids and #history_ids > 0 then self.history:changed(history_ids) end
   -- Invalidate provider attribution even if a magic is edited away and back
   -- while the cell is offscreen.
   for _, id in ipairs(ids) do
@@ -251,7 +252,7 @@ function M.attach(buf)
   local editing = M.new(model, {})
   editing.owns_model = true
   editing.offline_marks = require("jusi.marks").new(model, { clients = {} })
-  model.on_text_changed = function(ids) editing:changed(ids) end
+  model.on_text_changed = function(ids, history_ids) editing:changed(ids, false, history_ids) end
   model.on_cells_changed = function(ids)
     editing.offline_marks.on_cells_changed(ids)
     editing:changed(ids, true)

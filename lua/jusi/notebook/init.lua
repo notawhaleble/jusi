@@ -255,7 +255,7 @@ function Notebook:_is_local_text_edit(first_line, new_last_line)
   if first_line > marker_rows.close or new_last_line > marker_rows.close then
     return false
   end
-  return true, cell, open_row
+  return true, cell, open_row, marker_rows.history and first_line > marker_rows.history
 end
 
 function Notebook:_replace_region(start_row, end_row)
@@ -352,27 +352,30 @@ function Notebook:_structural_region(first_line, new_last_line)
   return start_row, end_row
 end
 
-function Notebook:_notify_text_changed(id)
+function Notebook:_notify_text_changed(id, history)
   if not self.on_text_changed then return end
+  if history then self._pending_history_changes = self._pending_history_changes or {}; self._pending_history_changes[id] = true end
   if self._pending_text_changes then self._pending_text_changes[id] = true; return end
   self._pending_text_changes = { [id] = true }
   vim.schedule(function()
-    local changed = self._pending_text_changes
-    self._pending_text_changes = nil
-    if not self._detached and self.on_text_changed then self.on_text_changed(vim.tbl_keys(changed)) end
+    local changed, history_changed = self._pending_text_changes, self._pending_history_changes
+    self._pending_text_changes, self._pending_history_changes = nil, nil
+    if not self._detached and self.on_text_changed then
+      self.on_text_changed(vim.tbl_keys(changed), history_changed and vim.tbl_keys(history_changed) or {})
+    end
   end)
 end
 
 function Notebook:_on_lines(first_line, old_last_line, new_last_line)
   if self._detached then return end
   if not self._dirty then
-    local is_local, cell, open_row = self:_is_local_text_edit(first_line, new_last_line)
+    local is_local, cell, open_row, history = self:_is_local_text_edit(first_line, new_last_line)
     if is_local then
       if first_line <= open_row + 1 then self:_update_header(cell, open_row) end
       cell.text_revision = cell.text_revision + 1
       self.metrics.body_edit_count = self.metrics.body_edit_count + 1
       self.last_change = { kind = "body", scanned_line_count = new_last_line - first_line, affected_cell_ids = { cell.id } }
-      self:_notify_text_changed(cell.id)
+      self:_notify_text_changed(cell.id, history)
       return
     end
   end
