@@ -4,10 +4,6 @@ Updated: 2026-10-05
 
 ## Current Facts
 
-- Jusi 1.0.4 is the selected patch candidate, including the unpublished frontend
-  fixes below, venv/Docker installation examples and a [JShell recipe](useful-commands.md).
-  Release validation and publication are pending.
-
 - Application-driven open (including VisiData Ctrl-O) anchors snapshots to the requesting client's window, preferring its active/current-tab view before falling back to a visible notebook. Mirrored notebooks no longer redirect opens to their original tab. See [Incident 0026](incidents/0026-editor-open-used-original-notebook-tab.md).
 
 - Switching notebooks in one window now reinstalls the notebook statusline. Missing local terminal-bridge executables report a client-scoped presentation launch failure; failed launches leave no empty projection. The installation guide now shows the required host-side venv bridge path for Docker. See [Incident 0025](incidents/0025-second-notebook-statusline-and-terminal-bridge-launch.md).
@@ -16,10 +12,11 @@ Updated: 2026-10-05
 
 - Local history edits now repair native fold boundaries before collapse, including a missing fold; ordinary body typing keeps its local path. Explicit cell-mode toggles resync Insert state so Normal mappings, border overlays and the badge agree. See [Incident 0023](incidents/0023-history-fold-range-and-cell-mode-visual-drift.md).
 
-- **Jusi 1.0.3 is released.** [PyPI](https://pypi.org/project/jusi/1.0.3/)
-  and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.3)
-  are public. Tag `v1.0.3` identifies `d9e92ef`; GitHub assets include the
-  verified wheel, sdist and checksums.
+- **Jusi 1.0.4 is released.** [PyPI](https://pypi.org/project/jusi/1.0.4/)
+  and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.4)
+  are public. Tag `v1.0.4` identifies `795e78e`; GitHub assets include the
+  verified wheel, sdist and checksums. Installation now includes explicit
+  venv/Docker targets; the [useful commands guide](useful-commands.md) includes JShell.
 
 - Busy established plugin operations no longer hold the kernel execution lane. Different clients and Python cells can run concurrently; same-client overlap receives a recoverable conflict. Initial construction remains a bounded serialized handoff. See [ADR 0047](adr/0047-plugin-work-does-not-own-the-kernel-lane.md) and [Incident 0022](incidents/0022-busy-plugin-blocked-kernel-execution.md).
 
@@ -33,7 +30,9 @@ Updated: 2026-10-05
   suites, metadata, archive and checksum checks, and isolated base/VisiData
   installation. Fresh downloads from production PyPI and GitHub match the
   verified artifacts. A clean PyPI installation verified the public frontend
-  tag and default `install-skills` release-tag fetch.
+  tag, default `install-skills` release-tag fetch, notebook conversion, and the
+  documented venv target with VisiData copy/open without adding its bin to PATH.
+  Docker recipe execution remains unverified because the local daemon is unavailable.
 
 - Release-facing documentation separates the README quick start, user guide, contributor setup and release procedure. The recorded GIF is embedded in the GitHub README; the source demo notebook and walkthrough are in `examples/`, and the recorded MP4 is attached to the GitHub release.
 
@@ -85,7 +84,7 @@ Updated: 2026-10-05
 - The foundation review is accepted; ADRs 0001-0016 and 0018-0042 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
 - `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
-- The Python package is now `1.0.0.dev0` and contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
+- The Python package contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
 - The walking-skeleton protocol supports start, execute, inspect, stop, ordered replayable events, structured failures, and idempotent repeated stop.
 - Jupyter stdout, stderr, display, result, and traceback messages now enter the ordered event log as they arrive instead of being retained until execution completion. Output already observed remains available if the execution later times out or the kernel dies.
 - ADR 0018 bounds each ordinary text-output event to 16 KiB of UTF-8 while preserving exact ordered concatenation. This makes retained output memory finite without parsing ANSI or turning SSE into the sustained interactive stream.
