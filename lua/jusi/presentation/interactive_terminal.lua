@@ -20,6 +20,11 @@ local function scroll_to_bottom(record, win)
 end
 
 local function default_launch(options)
+  if vim.fn.executable(options.command[1]) ~= 1 then
+    error("Local terminal bridge executable not found: " .. options.command[1]
+      .. ". Set terminal_bridge_command to a local Jusi executable"
+      .. " (also required for remote/Docker targets).", 0)
+  end
   local buf = vim.api.nvim_create_buf(false, true)
   vim.bo[buf].bufhidden = "hide"
   vim.bo[buf].swapfile = false
@@ -37,30 +42,30 @@ local function default_launch(options)
     enter = false,
   })
   local job_id
-  vim.api.nvim_buf_call(buf, function()
+  local ok, err = pcall(vim.api.nvim_buf_call, buf, function()
     job_id = vim.fn.jobstart(options.command, {
       term = true,
       on_exit = options.on_exit,
     })
   end)
-  if type(job_id) ~= "number" or job_id <= 0 then
+  if not ok or type(job_id) ~= "number" or job_id <= 0 then
     presentation_window.close_for_buffer(buf)
     pcall(vim.api.nvim_buf_delete, buf, { force = true })
-    error("could not start terminal bridge: " .. tostring(job_id))
+    error("could not start local terminal bridge: " .. tostring(ok and job_id or err), 0)
   end
   return { buf = buf, window = window, job_id = job_id }
 end
 
-function InteractiveTerminals:_failure(reason, message, surface)
+function InteractiveTerminals:_failure(reason, message, surface, launch_failed)
   if self.on_failure then
     self.on_failure({
       trace_id = "",
-      layer = "frontend_transport",
+      layer = launch_failed and "frontend_presentation" or "frontend_transport",
       operation = "attach_terminal_surface",
       reason = reason,
       message = message,
       retryable = true,
-      scope = "transport",
+      scope = launch_failed and "client" or "transport",
       resource = { kind = "surface", id = surface.surface_id },
     })
   end
@@ -93,7 +98,8 @@ function InteractiveTerminals:open(surface, client)
     end,
   })
   if not ok then
-    self:_failure("channel_closed", tostring(launched), surface)
+    record.closed = true
+    self:_failure("spawn_failed", tostring(launched), surface, true)
     return nil
   end
   record.buf = launched.buf

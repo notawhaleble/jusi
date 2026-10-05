@@ -129,15 +129,19 @@ local function bind_cell_lifecycle(session)
   local presentation, interactive = session.presentation, session.interactive
   interactive.editor_id = controller.editor_id
   local delivery = require("jusi.editor_delivery").new(controller, function(content, action, source_path)
-    local wins = vim.fn.win_findbuf(model.buf)
-    local win = wins[1]
-    if content.action == "open" and not win then
+    local win
+    if content.action == "open" then
+      local current = vim.api.nvim_get_current_win()
+      local windows = require("jusi.presentation.window")
+      -- An application action belongs to its exact client. Prefer its active
+      -- view, then its view in this tab, before falling back to the notebook.
       for _, record in pairs(interactive.surfaces) do
-        if record.client.client_id == action.client_id and record.buf then
-          win = vim.fn.win_findbuf(record.buf)[1]
+        if record.client.client_id == action.client_id and record.buf and vim.api.nvim_buf_is_valid(record.buf) then
+          win = vim.api.nvim_win_get_buf(current) == record.buf and current or windows.find(record.buf)
           if win then break end
         end
       end
+      win = win or windows.find(model.buf)
       if not win then return nil end
     end
     return require("jusi.editor_actions").apply(content, { win = win, source_path = source_path })

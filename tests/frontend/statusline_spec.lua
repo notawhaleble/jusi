@@ -56,6 +56,18 @@ function M.run()
   assert(vim.api.nvim_get_hl(0, {name='JusiStatusKernelNeutral'}).bg)
   client:close()
   jusi._sessions[buf] = nil
+  -- A new buffer in the same window restores window-local option defaults.
+  -- Check the installed expression, not just the renderer called directly.
+  local second = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_name(second, '/tmp/second notebook.vipynb')
+  vim.api.nvim_set_current_buf(second)
+  vim.bo[second].filetype = 'jusi'
+  local expression = vim.api.nvim_get_option_value('statusline', {win=win,scope='local'})
+  assert(expression:find('jusi.statusline', 1, true), 'second notebook lost its statusline')
+  assert(vim.api.nvim_eval_statusline(expression, {winid=win,maxwidth=200}).str:find('kernel:', 1, true))
+  vim.api.nvim_set_current_buf(buf)
+  assert(vim.api.nvim_get_option_value('statusline', {win=win,scope='local'}) == expression)
+  vim.api.nvim_buf_delete(second, {force=true})
   vim.api.nvim_set_current_win(win); vim.api.nvim_set_current_buf(original); status.refresh(win)
   assert(vim.api.nvim_get_option_value('statusline',{win=win,scope='local'}) == 'user status')
   vim.api.nvim_set_option_value('statusline',saved,{win=win,scope='local'})

@@ -36,8 +36,10 @@ function M.refresh(win)
   if relevant(vim.api.nvim_win_get_buf(win)) then
     if saved[win] == nil then
       saved[win] = current == expression and '' or current
-      vim.api.nvim_set_option_value('statusline', expression, { win = win, scope = 'local' })
     end
+    -- Neovim restores window-local options when switching buffers, even if
+    -- this window already displayed another notebook.
+    vim.api.nvim_set_option_value('statusline', expression, { win = win, scope = 'local' })
   elseif saved[win] ~= nil then
     if current == expression then vim.api.nvim_set_option_value('statusline', saved[win], { win = win, scope = 'local' }) end
     saved[win] = nil

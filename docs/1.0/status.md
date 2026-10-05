@@ -1,8 +1,16 @@
 # Jusi 1.0 Status
 
-Updated: 2026-09-26
+Updated: 2026-10-05
 
 ## Current Facts
+
+- Jusi 1.0.4 is the selected patch candidate, including the unpublished frontend
+  fixes below, venv/Docker installation examples and a [JShell recipe](useful-commands.md).
+  Release validation and publication are pending.
+
+- Application-driven open (including VisiData Ctrl-O) anchors snapshots to the requesting client's window, preferring its active/current-tab view before falling back to a visible notebook. Mirrored notebooks no longer redirect opens to their original tab. See [Incident 0026](incidents/0026-editor-open-used-original-notebook-tab.md).
+
+- Switching notebooks in one window now reinstalls the notebook statusline. Missing local terminal-bridge executables report a client-scoped presentation launch failure; failed launches leave no empty projection. The installation guide now shows the required host-side venv bridge path for Docker. See [Incident 0025](incidents/0025-second-notebook-statusline-and-terminal-bridge-launch.md).
 
 - Plugin discovery scans repeated paths and symlink aliases such as `lib`/`lib64` once, preventing false duplicate-plugin startup failures. Distinct installations with the same plugin ID still conflict. See [Incident 0024](incidents/0024-library-path-aliases-duplicated-plugin-discovery.md).
 

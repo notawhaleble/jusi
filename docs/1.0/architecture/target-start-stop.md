@@ -30,6 +30,13 @@ For simple `jusi serve` commands the local terminal bridge uses the same
 executable; specify `terminal_bridge_command` explicitly for custom launchers.
 The bridge always runs beside Neovim, including for remote targets.
 
+If plain cells work but plugin terminals report that `jusi` is not executable,
+the missing executable is on the Neovim host, not inside the container or
+remote target. Set the remote profile's `terminal_bridge_command` as above,
+or set it once at the top level of `setup` for all targets that inherit it.
+Installing Jusi only inside Docker is insufficient for interactive terminals.
+Stop and start the notebook after changing its bridge configuration.
+
 `:JusiStart server` connects directly to the service at that URL and starts its
 kernel. The example URL can be a port-forward to a target-side service. Starting
 SSH connections, containers or remote services is not yet automated. A target

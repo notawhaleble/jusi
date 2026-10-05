@@ -77,7 +77,9 @@ fail only the action. Helpers never automatically resubmit an uncertain action.
   human editing. The frontend subtracts fetch round-trip time conservatively
   before applying content.
 - Copy updates the unnamed/yank registers without moving focus. Open focuses a
-  split anchored to a visible window of the source notebook or its terminal.
+  split anchored to the requesting client's visible terminal, preferring its
+  active window and then its view in the current tab. If that client is hidden,
+  it falls back to a visible source notebook, preferring the current tab.
   The new modifiable, unlisted `nofile` scratch buffer is independent of the
   source client; source cleanup never deletes it. Local edits do not set its
   modified flag, because open is a snapshot without a writeback destination.

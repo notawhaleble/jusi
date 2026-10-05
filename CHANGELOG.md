@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.4 — 2026-10-05
+
+- Restore the notebook statusline when switching notebooks in the same window.
+- Report missing local terminal-bridge executables with actionable configuration
+  guidance, and clean up failed terminal launches without leaving empty splits.
+- Open application snapshots beside the requesting client in the current tab,
+  including when a notebook is mirrored across tabs.
+- Document local venv and Docker target setup, including explicit host-side
+  terminal-bridge paths, and add the optional JShell command recipe.
+
 ## 1.0.3 — 2026-09-26
 
 - Repair followup-history folds after local edits, including a stale range or

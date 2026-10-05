@@ -67,6 +67,7 @@ See [conversion](docs/1.0/notebook-conversion.md) for details.
 
 - [Local and remote targets](docs/1.0/architecture/target-start-stop.md)
 - [VisiData: explore data, copy values and open content](docs/1.0/architecture/bundled-vd.md)
+- [Useful commands, including JShell](docs/1.0/useful-commands.md)
 - [Backend configuration](docs/1.0/configuration.md)
 - [Plugin authoring skills](docs/1.0/skills.md): install with `jusi install-skills`
 - [Contributing and tests](CONTRIBUTING.md)

@@ -2,6 +2,9 @@
 
 Start with the [installation guide](installation.md) for setup and a first notebook.
 
+Optional [useful commands](useful-commands.md) include `:JShell` for opening a
+shell in the current file or netrw directory.
+
 ## Jupyter Conversion
 
 Use `jusi import-ipynb notebook.ipynb` to create `notebook.vipynb`, or

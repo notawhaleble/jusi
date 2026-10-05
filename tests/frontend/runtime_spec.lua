@@ -314,10 +314,72 @@ local function test_vipynb_filetype_and_legacy_connection_guard()
   end
 end
 
+local function test_editor_open_anchors_to_requesting_client_in_project_tab()
+  local original = vim.api.nvim_get_current_win()
+  vim.cmd('tabnew')
+  local notebook_win = vim.api.nvim_get_current_win()
+  local notebook_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(notebook_buf, 0, -1, false, { '╭──', '1', '╰──' })
+  local session = jusi.connect({ buf = notebook_buf, transport = FakeTransport.new() })
+  local client_buf = vim.api.nvim_create_buf(false, true)
+  local client = { client_id = 'cli_open_position', cell_id = session.model:cell_at_row(1).id }
+  session.interactive.surfaces.srf_open_position = { buf = client_buf, client = client }
+  local first_client = vim.api.nvim_open_win(client_buf, false, { split = 'below', win = notebook_win })
+  local first_tab = vim.api.nvim_get_current_tabpage()
+  local first_layout = vim.fn.winlayout()
+
+  vim.cmd('tabnew')
+  local project_tab = vim.api.nvim_get_current_tabpage()
+  local mirror = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_buf(mirror, notebook_buf)
+  local client_win = vim.api.nvim_open_win(client_buf, true, { split = 'right', win = mirror })
+  local function open_snapshot()
+    return session.editor_delivery.apply({ action = 'open', text = 'selected value',
+      name = 'value.txt', filetype = 'text' }, { client_id = client.client_id })
+  end
+  local function check_open(anchor)
+    local position = vim.api.nvim_win_get_position(anchor)
+    local width = vim.api.nvim_win_get_width(anchor)
+    local exported = assert(open_snapshot())
+    local opened = vim.api.nvim_get_current_win()
+    equal(vim.api.nvim_get_current_tabpage(), project_tab, 'open jumped to the original notebook tab')
+    equal(vim.api.nvim_win_get_position(opened)[2], position[2], 'open split was not below the requesting client')
+    equal(vim.api.nvim_win_get_width(opened), width)
+    equal(vim.api.nvim_buf_get_lines(exported, 0, -1, false), { 'selected value' })
+    vim.api.nvim_win_close(opened, true)
+    vim.api.nvim_buf_delete(exported, { force = true })
+  end
+  check_open(client_win)
+  -- If focus has moved back to the mirrored notebook, keep the client anchor
+  -- in this tab rather than choosing its earlier view in the first tab.
+  vim.api.nvim_set_current_win(mirror)
+  check_open(client_win)
+  -- Two views of the client in one tab: the active view wins.
+  local other_view = vim.api.nvim_open_win(client_buf, true, { split = 'right', win = mirror })
+  check_open(other_view)
+  equal(vim.api.nvim_win_call(notebook_win, function() return vim.fn.winlayout() end), first_layout,
+    'opening snapshots changed the original notebook tab')
+  vim.api.nvim_win_close(other_view, true)
+  vim.api.nvim_win_close(client_win, true)
+  vim.api.nvim_win_close(first_client, true)
+  vim.api.nvim_set_current_win(mirror)
+  check_open(mirror) -- Hidden client falls back to the current-tab notebook.
+  vim.api.nvim_set_current_tabpage(first_tab)
+  equal(vim.fn.winlayout(), { 'leaf', notebook_win })
+  vim.api.nvim_set_current_tabpage(project_tab)
+  jusi._destroy_session(notebook_buf)
+  vim.cmd('tabclose!')
+  vim.api.nvim_set_current_tabpage(first_tab)
+  vim.cmd('tabclose!')
+  vim.api.nvim_buf_delete(notebook_buf, { force = true })
+  vim.api.nvim_set_current_win(original)
+end
+
 function M.run()
   test_explicit_command_workflow()
   test_client_commands_use_focused_projection_identity()
   test_vipynb_filetype_and_legacy_connection_guard()
+  test_editor_open_anchors_to_requesting_client_in_project_tab()
 end
 
 return M

@@ -123,6 +123,42 @@ local function test_interactive_terminal_is_a_generic_bridge_projection()
   assert(not vim.api.nvim_buf_is_valid(record.buf), "retired surface must delete its terminal buffer")
 end
 
+local function test_terminal_launch_failure_is_local_and_cleans_up()
+  local notebook = vim.api.nvim_get_current_buf()
+  local windows, buffers = vim.api.nvim_list_wins(), vim.api.nvim_list_bufs()
+  local failures = {}
+  local manager = interactive_terminal.new({
+    base_url = 'http://remote.example:9000',
+    command = { '/nonexistent/jusi-test-bridge', 'terminal-bridge' },
+    notebook_buf = notebook,
+    notebook_id = 'nb_spawn_failure',
+    on_failure = function(failure) failures[#failures + 1] = failure end,
+  })
+  local surface = { surface_id = 'srf_spawn_failure', client_id = 'cli_spawn_failure', kind = 'terminal' }
+  local client = { client_id = surface.client_id, cell_id = 'cell_spawn_failure' }
+  assert(manager:open(surface, client) == nil)
+  equal(failures[1].layer, 'frontend_presentation')
+  equal(failures[1].reason, 'spawn_failed')
+  equal(failures[1].scope, 'client')
+  assert(failures[1].message:find('terminal_bridge_command', 1, true))
+  equal(vim.api.nvim_list_wins(), windows)
+  equal(vim.api.nvim_list_bufs(), buffers)
+
+  -- Also cover jobstart throwing after the projection window was allocated.
+  manager.command = { vim.v.progpath }
+  local jobstart = vim.fn.jobstart
+  vim.fn.jobstart = function() error('simulated PTY launch failure') end
+  local ok, result = pcall(manager.open, manager, surface, client)
+  vim.fn.jobstart = jobstart
+  assert(ok and result == nil)
+  equal(failures[2].reason, 'spawn_failed')
+  equal(vim.api.nvim_list_wins(), windows)
+  equal(vim.api.nvim_list_bufs(), buffers)
+  equal(vim.api.nvim_get_current_buf(), notebook)
+  equal(manager.surfaces, {})
+  manager:close()
+end
+
 local function test_interactive_terminal_follows_output_until_manual_scroll()
   local terminal_buf = vim.api.nvim_create_buf(false, true)
   local manager = interactive_terminal.new({
@@ -222,6 +258,7 @@ function M.run()
   test_unsupported_media_is_local_and_does_not_create_terminal()
   test_invalid_text_payload_is_a_local_surface_failure()
   test_interactive_terminal_is_a_generic_bridge_projection()
+  test_terminal_launch_failure_is_local_and_cleans_up()
   test_interactive_terminal_follows_output_until_manual_scroll()
 end
 
