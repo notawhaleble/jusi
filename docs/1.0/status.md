@@ -18,9 +18,10 @@ Updated: 2026-10-10
 
 - Local history edits now repair native fold boundaries before collapse, including a missing fold; ordinary body typing keeps its local path. Explicit cell-mode toggles resync Insert state so Normal mappings, border overlays and the badge agree. See [Incident 0023](incidents/0023-history-fold-range-and-cell-mode-visual-drift.md).
 
-- **Jusi 1.0.5 is being prepared for release.** The candidate includes client
-  attention, current-tab cleanup, transport-close wakeups, and anchored editor
-  delivery. Publication and release checks are pending.
+- **Jusi 1.0.5 is released.** [PyPI](https://pypi.org/project/jusi/1.0.5/)
+  and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.5)
+  are public. Tag `v1.0.5` identifies `cf1b08c`; GitHub assets include the
+  verified wheel, sdist and checksums.
 
 - Busy established plugin operations no longer hold the kernel execution lane. Different clients and Python cells can run concurrently; same-client overlap receives a recoverable conflict. Initial construction remains a bounded serialized handoff. See [ADR 0047](adr/0047-plugin-work-does-not-own-the-kernel-lane.md) and [Incident 0022](incidents/0022-busy-plugin-blocked-kernel-execution.md).
 
@@ -30,10 +31,16 @@ Updated: 2026-10-10
 
 - Managed-kernel liveness now polls the owned process directly. A reproduced inherited-asyncio-loop error in Jupyter's synchronous wrapper previously reported a live kernel as dead and triggered runtime cleanup. The Codex-session report's original trigger remains unconfirmed. See [Incident 0019](incidents/0019-liveness-wrapper-falsely-reported-kernel-death.md).
 
-- Previous 1.0.4 release validation covered all source suites, isolated
-  base/VisiData installation, and production artifact delivery. Validation of
-  1.0.5 is pending. Real remote transport-loss review and independent skill
-  evaluation remain deferred; the Docker recipe remains unverified.
+- Release validation passed 289 Python tests with one opt-in skip, both Neovim
+  suites, metadata/archive/checksum checks, built-wheel notebook conversion,
+  and isolated base/VisiData installation. Fresh PyPI and GitHub downloads match
+  the verified artifacts; the published wheel and public frontend tag passed
+  start/execute/stop and VisiData copy/open. A clean PyPI installation verified
+  the default `install-skills` release-tag fetch. The initial Python run raced
+  the editable version update; the full rerun passed after installation settled.
+  The first Neovim end-to-end run failed SQLite kernel startup; its full rerun
+  and isolated local/public distribution checks passed. Real remote transport-loss
+  review, independent skill evaluation, and Docker recipe execution remain deferred.
 
 - Release-facing documentation separates the README quick start, user guide, contributor setup and release procedure. The recorded GIF is embedded in the GitHub README; the source demo notebook and walkthrough are in `examples/`, and the recorded MP4 is attached to the GitHub release.
 
