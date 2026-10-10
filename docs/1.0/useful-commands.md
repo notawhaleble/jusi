@@ -119,3 +119,16 @@ The notebook opens in the current tab; execution reveals the shell output while
 keeping focus in the notebook. Use Jusi's focus shortcut (Ctrl-\ twice) to enter
 the terminal. See the [palette guide](usage.md#palette-and-focus) for the underlying
 `:J` / `:J!` commands.
+
+## Clean up the current notebook view
+
+After a temporary JShell or other `:J` workflow, press `\Q` from the notebook
+or an output in Normal mode (including notebook cell mode). The built-in
+`:JusiCloseTab` command closes this notebook's outputs visible in the current
+tab and removes its extra notebook windows. It retains the last notebook view
+across all tabs and keeps the kernel running. No optional helper setup is needed.
+
+Clients visible in another tab remain usable there; only their windows in the
+current tab close. Hidden clients, unrelated project windows and application
+exports are preserved. If client cleanup fails, the notebook view remains so
+you can retry. Existing custom `\Q` mappings take precedence.

@@ -1,0 +1,11 @@
+{
+  "protocol_version": 1,
+  "request_id": "areq_fixture",
+  "kind": "application.attention",
+  "content": {
+    "action": "attention",
+    "operation": "request",
+    "kind": "action_required",
+    "message": "Approval requested"
+  }
+}

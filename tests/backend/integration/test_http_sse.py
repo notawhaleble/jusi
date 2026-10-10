@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import socket
+import threading
 import uuid
 from pathlib import Path
 
@@ -244,3 +245,63 @@ def test_http_commands_and_replayable_sse_over_unix_socket(tmp_path: Path) -> No
             os.unlink(socket_path)
         except FileNotFoundError:
             pass
+
+
+@pytest.mark.parametrize("close_server", [False, True], ids=["peer-disconnect", "service-shutdown"])
+def test_idle_sse_disconnect_releases_executor_wait(monkeypatch, close_server):
+    socket_path = f"/tmp/jusi-sse-{uuid.uuid4().hex[:12]}.sock"
+
+    async def scenario():
+        supervisor = Supervisor(FakeFactory(), FakeDiscovery())
+        loop = asyncio.get_running_loop()
+        entered, finished = asyncio.Event(), asyncio.Event()
+        fallback_cancel = threading.Event()
+        original_wait = supervisor.events.wait_after
+        cancellations = []
+
+        def observe_wait(after, *, timeout, cancelled=None):
+            cancellation = cancelled if cancelled is not None else fallback_cancel
+            cancellations.append(cancellation)
+            loop.call_soon_threadsafe(entered.set)
+            try:
+                # A long keepalive interval makes completion depend on an
+                # explicit wakeup, not on the incidental heartbeat timeout.
+                return original_wait(after, timeout=30, cancelled=cancellation)
+            finally:
+                loop.call_soon_threadsafe(finished.set)
+
+        monkeypatch.setattr(supervisor.events, "wait_after", observe_wait)
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(socket_path)
+        listener.listen(4)
+        listener.setblocking(False)
+        server = tornado.httpserver.HTTPServer(make_application(supervisor))
+        server.add_socket(listener)
+        reader, writer = await asyncio.open_unix_connection(socket_path)
+        try:
+            writer.write(b"GET /v1/events?after=1 HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            await writer.drain()
+            assert b"200 OK" in await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 2)
+            await asyncio.wait_for(entered.wait(), 2)
+            if close_server:
+                server.stop()
+                await server.close_all_connections()
+            else:
+                writer.close()
+                await writer.wait_closed()
+            await asyncio.wait_for(finished.wait(), 1)
+            assert cancellations[0].is_set()
+        finally:
+            fallback_cancel.set()
+            for cancellation in cancellations:
+                cancellation.set()
+            supervisor.events.wake_waiters()
+            writer.close()
+            await writer.wait_closed()
+            server.stop()
+            await server.close_all_connections()
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        Path(socket_path).unlink(missing_ok=True)

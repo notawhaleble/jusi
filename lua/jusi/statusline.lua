@@ -16,6 +16,7 @@ local function highlights()
     fg = light and '#302040' or '#f0e6ff', bg = light and '#cbb9e8' or '#5b457a',
     ctermfg = light and 236 or 255, ctermbg = light and 182 or 60, bold = true,
   })
+  vim.api.nvim_set_hl(0, 'JusiStatusAttention', { link = 'WarningMsg' })
 end
 local function notebook(buf)
   return vim.bo[buf].filetype == 'jusi' or require('jusi.cellmode').get(buf) ~= nil
@@ -102,6 +103,10 @@ function M.render(win)
     if view.target and view.state ~= 'off' then parts[#parts + 1] = ' | ' .. escape(view.target) end
     if vim.b[buf].jusi_cell_mode_active then parts[#parts + 1] = ' | %#JusiStatusCellMode# mode:cell ' .. reset end
   end
+  local attention_buf = session and session.buf or buf
+  local attention = require('jusi.attention').count(attention_buf,
+    role == 'interactive_terminal' and vim.b[buf].jusi_client_id or nil)
+  if attention > 0 then parts[#parts + 1] = ' | %#JusiStatusAttention# attention:' .. attention .. ' ' .. reset end
   parts[#parts + 1] = '%=%l:%c '
   return table.concat(parts)
 end

@@ -31,11 +31,12 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
     "interrupt_client": ("client_id", "operation_id"),
     "editor_action": ("client_id", "action"),
     "ack_editor_action": ("action_id", "editor_id", "outcome"),
+    "dismiss_attention": ("attention_id", "editor_id"),
     "restart_notebook": ("runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"),
 }
 LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
-OPERATIONS = {"service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "ack_editor_action", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"}
-EVENT_KINDS = {"editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
+OPERATIONS = {"attention", "dismiss_attention", "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "ack_editor_action", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"}
+EVENT_KINDS = {"client.attention_changed", "editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
 RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
@@ -97,7 +98,7 @@ def _validate_client(client: object, context: str = "client") -> dict[str, Any]:
         context,
     )
     capabilities = client["capabilities"]
-    allowed_capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions"}
+    allowed_capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions", "attention"}
     if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) or any(
         capability not in allowed_capabilities for capability in capabilities
     ):
@@ -159,6 +160,11 @@ def _validate_input_request(value: object) -> dict[str, Any]:
 def _validate_event_payload(data: dict[str, Any]) -> None:
     kind = data["kind"]
     payload = data["payload"]
+    if kind == "client.attention_changed":
+        validate_attention(payload)
+        if data["resource"] != {"kind": "client", "id": payload["client_id"]} or data["operation"] != "attention" or data["layer"] != "client":
+            raise ProtocolValidationError("Attention event ownership mismatch")
+        return
     if kind == "editor_action.requested":
         validate_editor_action_metadata(payload)
         if data["resource"] != {"kind": "client", "id": payload["client_id"]} or data["trace_id"] != payload["trace_id"] or data["operation"] != "editor_action":
@@ -368,6 +374,8 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
     if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key):
         raise ProtocolValidationError("idempotency_key must be a non-empty string when provided")
     allowed = {"protocol_version", "command_id", "trace_id", "kind", "idempotency_key", *COMMAND_FIELDS[expected_kind]}
+    if expected_kind == "dismiss_attention":
+        allowed.add("revision")
     if expected_kind == "complete":
         allowed.update({"cursor_pos", "client_id"})
         cursor = data.get("cursor_pos")
@@ -375,6 +383,8 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
             raise ProtocolValidationError("cursor_pos must be a Unicode character offset within body")
         if "client_id" in data:
             _required_strings(data, ("client_id",), "complete")
+    if expected_kind == "dismiss_attention" and (type(data.get("revision")) is not int or not 1 <= data["revision"] <= 9007199254740991):
+        raise ProtocolValidationError("Invalid attention revision")
     if expected_kind == "editor_action":
         allowed.add("selection")
         if data["action"] not in {"copy", "open", "show_diff"} or not isinstance(data.get("selection"), dict):
@@ -527,6 +537,17 @@ def validate_health_response(data: object) -> dict[str, Any]:
                 or operation["client_id"] not in {client["client_id"] for client in data["clients"]}):
             raise ProtocolValidationError("Invalid active client operation")
         _required_strings(operation, ("operation_id", "client_id"), "client_operations")
+    attention = data.get("attention", [])
+    if not isinstance(attention, list) or len(attention) > 256:
+        raise ProtocolValidationError("Invalid pending attention")
+    seen_attention = set()
+    for item in attention:
+        validate_attention(item)
+        owner = clients_by_id.get(item["client_id"])
+        if (item["state"] != "pending" or item["attention_id"] in seen_attention or owner is None
+                or any(owner[key] != item[key] for key in ("runtime_id", "notebook_id", "cell_id"))):
+            raise ProtocolValidationError("Attention client ownership mismatch")
+        seen_attention.add(item["attention_id"])
     actions = data.get("editor_actions", [])
     if not isinstance(actions, list) or len(actions) > 32:
         raise ProtocolValidationError("Invalid pending editor actions")
@@ -552,7 +573,7 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
     if not isinstance(data["plugins"], list):
         raise ProtocolValidationError("plugins must be an array")
     plugin_ids: set[str] = set()
-    capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions"}
+    capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions", "attention"}
     interactions = {"noninteractive", "request_response", "terminal_interactive"}
     fields = {"plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"}
     family_by_id: dict[str, tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
@@ -824,7 +845,17 @@ def validate_application_action(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("protocol_version") != 1 or not _bounded_string(value.get("request_id"), 3, 128):
         raise ProtocolValidationError("Invalid application action envelope")
     base = {"protocol_version", "kind", "request_id"}
-    if value.get("kind") in {"application.editor_action", "application.editor_action_begin"}:
+    if value.get("kind") == "application.attention":
+        if set(value) != base | {"content"}:
+            raise ProtocolValidationError("Invalid attention envelope")
+        validate_attention_request(value["content"])
+    elif value.get("kind") == "application.attention_result":
+        if (set(value) != base | {"attention_id", "outcome", "reason"}
+                or value["outcome"] not in {"accepted", "failed"}
+                or not _bounded_string(value["attention_id"], 0, 128)
+                or not _bounded_string(value["reason"], 0, 128)):
+            raise ProtocolValidationError("Invalid attention result")
+    elif value.get("kind") in {"application.editor_action", "application.editor_action_begin"}:
         if set(value) != base | {"content"} or not isinstance(value["content"], dict):
             raise ProtocolValidationError("Invalid application action request")
         validate_editor_action(value["content"], value["content"].get("action"))
@@ -872,4 +903,50 @@ def validate_editor_action_ack(value: object) -> dict[str, Any]:
     validate_application_action({"protocol_version": 1, "kind": "application.action_result", "request_id": "ack", **delivery})
     if delivery["outcome"] not in {"delivered", "failed"}:
         raise ProtocolValidationError("Invalid editor acknowledgment outcome")
+    return value
+
+
+def validate_attention_request(value: object) -> dict:
+    if not isinstance(value, dict) or value.get("action") != "attention":
+        raise ProtocolValidationError("Invalid attention request")
+    operation = value.get("operation")
+    fields = {"action", "operation"}
+    if operation in {"request", "update"}:
+        fields |= {"kind", "message"}
+        _validate_attention_message(value)
+    if operation in {"update", "clear"}:
+        fields.add("attention_id")
+        if not _bounded_string(value.get("attention_id"), 3, 128):
+            raise ProtocolValidationError("Invalid attention identity")
+    if operation not in {"request", "update", "clear"} or set(value) != fields:
+        raise ProtocolValidationError("Invalid attention request fields")
+    return value
+
+
+def _validate_attention_message(value: dict) -> None:
+    message = value.get("message")
+    if (value.get("kind") not in {"action_required", "notice"} or not _bounded_string(message, 1, 240)
+            or any(ord(c) < 32 or ord(c) == 127 for c in message)):
+        raise ProtocolValidationError("Invalid attention kind/message")
+
+
+def validate_attention(value: object) -> dict:
+    identities = {"attention_id", "client_id", "runtime_id", "notebook_id", "cell_id"}
+    if not isinstance(value, dict) or set(value) != identities | {"editor_id", "kind", "message", "revision", "state"}:
+        raise ProtocolValidationError("Invalid attention record")
+    for key in identities:
+        if not _bounded_string(value[key], 3, 128):
+            raise ProtocolValidationError("Invalid attention identity")
+    _validate_attention_message(value)
+    if (not _bounded_string(value["editor_id"], 0, 128) or value["state"] not in {"pending", "cleared"}
+            or type(value["revision"]) is not int or not 1 <= value["revision"] <= 9007199254740991):
+        raise ProtocolValidationError("Invalid attention state")
+    return value
+
+
+def validate_attention_ack(value: object) -> dict:
+    if (not isinstance(value, dict) or set(value) != {"ok", "attention_id", "dismissed"}
+            or value["ok"] is not True or value["dismissed"] is not True
+            or not _bounded_string(value["attention_id"], 3, 128)):
+        raise ProtocolValidationError("Invalid attention acknowledgment")
     return value

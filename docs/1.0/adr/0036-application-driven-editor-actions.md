@@ -77,13 +77,17 @@ fail only the action. Helpers never automatically resubmit an uncertain action.
   human editing. The frontend subtracts fetch round-trip time conservatively
   before applying content.
 - Copy updates the unnamed/yank registers without moving focus. Open focuses a
-  split anchored to the requesting client's visible terminal, preferring its
-  active window and then its view in the current tab. If that client is hidden,
-  it falls back to a visible source notebook, preferring the current tab.
+  split anchored to the requesting client's visible terminal. On receipt of
+  the request, capture its active window, otherwise its view in the current
+  tab, otherwise another visible view of that exact client. Preserve the
+  window/buffer/surface identity through content chunks and fetch retries.
+  Delivery revalidates that identity; a closed or repurposed window fails the
+  open rather than redirecting it. Notebook placement is never a fallback.
+  Explicit `nvim_open_win` placement is independent of `switchbuf`/`:sbuffer`.
   The new modifiable, unlisted `nofile` scratch buffer is independent of the
   source client; source cleanup never deletes it. Local edits do not set its
   modified flag, because open is a snapshot without a writeback destination.
-  No visible source window means open fails.
+  No visible client window means open fails.
 
 ## Scope and Verification
 

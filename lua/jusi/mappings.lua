@@ -11,6 +11,7 @@ function M.attach(buf)
     ['00'] = function() require('jusi').restart() end,
     ii = function() require('jusi').interrupt() end,
     q = function() require('jusi').close_number(vim.v.count) end,
+    Q = function() require('jusi').close_tab() end,
     g = function() require('jusi').goto_number(vim.v.count) end,
   }
   local function install(mode, key, callback, description)

@@ -61,7 +61,10 @@ request: legacy blocking edit publishes first, leaving a possible fast-reply rac
    HTTP using the action identity.
 4. Neovim validates ownership and content, applies the existing register/buffer
    delivery helper, then acknowledges the exact action over HTTP. Copy leaves
-   focus alone; open focuses a split belonging to that notebook's presentation.
+   focus alone; open focuses a split below the requesting client's captured
+   window. Notebook location and `switchbuf` do not choose the destination.
+   A hidden client or a source window closed/reused during transfer fails
+   delivery instead of opening in another tab.
    The application/helper reports success only after this acknowledgment.
 
 The same flow handles local and remote targets. The shell helper reads the file

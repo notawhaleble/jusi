@@ -64,6 +64,19 @@ def test_terminal_bytes_are_not_decoded_or_rewritten() -> None:
         handle.stop(timeout=2)
 
 
+def test_terminal_application_keeps_its_normal_python_site_environment(tmp_path) -> None:
+    (tmp_path / "sitecustomize.py").write_text("import os; os.environ['JUSI_TEST_SITE_READY'] = 'yes'\n")
+    program = "import os,sys; print('site=%s no_site=%s' % (os.environ['JUSI_TEST_SITE_READY'], sys.flags.no_site), flush=True)"
+    handle = PosixTerminalBroker().start(
+        TerminalLaunchSpec((sys.executable, "-c", program), env={"PYTHONPATH": str(tmp_path)}),
+        rows=10, cols=40,
+    )
+    try:
+        assert b"site=yes no_site=0" in read_until(handle, b"site=yes no_site=0")
+    finally:
+        handle.stop(timeout=2)
+
+
 def test_cleanup_escalates_and_reaps_term_resistant_process_group() -> None:
     program = """
 import signal

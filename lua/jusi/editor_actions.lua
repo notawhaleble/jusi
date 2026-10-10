@@ -101,7 +101,8 @@ function M.apply(result, opts)
     vim.b[buf].jusi_export_name = result.name
     if opts.show ~= false then
       local win = opts.win
-      if not win or not vim.api.nvim_win_is_valid(win) then win = vim.api.nvim_get_current_win() end
+      if win and not vim.api.nvim_win_is_valid(win) then error("source client window closed") end
+      win = win or vim.api.nvim_get_current_win()
       vim.api.nvim_open_win(buf, true, { split = "below", win = win })
     end
   end)

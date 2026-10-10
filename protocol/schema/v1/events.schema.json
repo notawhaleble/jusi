@@ -27,10 +27,11 @@
       "enum": ["protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"]
     },
     "operation": {
-      "enum": ["service_start", "start_kernel", "stop_kernel", "close_client", "editor_action", "ack_editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"]
+      "enum": ["attention", "dismiss_attention", "service_start", "start_kernel", "stop_kernel", "close_client", "editor_action", "ack_editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"]
     },
     "kind": {
       "enum": [
+        "client.attention_changed",
         "service.ready",
         "operation.started",
         "operation.completed",
@@ -60,6 +61,7 @@
     "payload": {"type": "object"}
   },
   "allOf": [
+    {"if": {"properties": {"kind": {"const": "client.attention_changed"}}}, "then": {"properties": {"payload": {"$ref": "attention.schema.json#/$defs/record"}, "layer": {"const": "client"}, "operation": {"const": "attention"}, "resource": {"properties": {"kind": {"const": "client"}}}}}},
     {
       "if": {
         "properties": {

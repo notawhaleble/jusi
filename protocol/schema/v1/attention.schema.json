@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/attention.schema.json",
+  "$defs": {
+    "request": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "operation",
+            "kind",
+            "message"
+          ],
+          "properties": {
+            "action": {
+              "const": "attention"
+            },
+            "operation": {
+              "const": "request"
+            },
+            "kind": {
+              "enum": [
+                "action_required",
+                "notice"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "operation",
+            "attention_id",
+            "kind",
+            "message"
+          ],
+          "properties": {
+            "action": {
+              "const": "attention"
+            },
+            "operation": {
+              "const": "update"
+            },
+            "attention_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "kind": {
+              "enum": [
+                "action_required",
+                "notice"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "operation",
+            "attention_id"
+          ],
+          "properties": {
+            "action": {
+              "const": "attention"
+            },
+            "operation": {
+              "const": "clear"
+            },
+            "attention_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "record": {
+      "type": "object",
+      "required": [
+        "attention_id",
+        "client_id",
+        "runtime_id",
+        "notebook_id",
+        "cell_id",
+        "editor_id",
+        "kind",
+        "message",
+        "revision",
+        "state"
+      ],
+      "properties": {
+        "attention_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "notebook_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "cell_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "editor_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "kind": {
+          "enum": [
+            "action_required",
+            "notice"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]+$"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "cleared"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "application": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "request_id",
+        "kind",
+        "content"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "kind": {
+          "const": "application.attention"
+        },
+        "content": {
+          "$ref": "#/$defs/request"
+        }
+      },
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "request_id",
+        "kind",
+        "attention_id",
+        "outcome",
+        "reason"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "kind": {
+          "const": "application.attention_result"
+        },
+        "attention_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "outcome": {
+          "enum": [
+            "accepted",
+            "failed"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "ack": {
+      "type": "object",
+      "required": [
+        "ok",
+        "attention_id",
+        "dismissed"
+      ],
+      "properties": {
+        "ok": {
+          "const": true
+        },
+        "attention_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "dismissed": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

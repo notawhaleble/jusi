@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
-from importlib.metadata import version
+
+
+class _VersionAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        from jusi import __version__
+        print(f"Jusi {__version__}")
+        parser.exit()
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jusi")
-    parser.add_argument("--version", action="version", version=f"Jusi {version('jusi')}")
+    parser.add_argument("--version", action=_VersionAction, nargs=0, help="show program's version number and exit")
     subparsers = parser.add_subparsers(dest="command")
     for command, help_text in (("import-ipynb", "convert Jupyter cell sources to a native notebook"),
                                ("export-ipynb", "export native active cell bodies to Jupyter")):
@@ -58,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 2
     from jusi.service import serve
+    import asyncio
     asyncio.run(serve(args.host, args.port, config_path=args.config, owner_stdin=args.owner_stdin))
     return 0
 

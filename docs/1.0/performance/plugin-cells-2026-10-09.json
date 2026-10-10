@@ -1,0 +1,1954 @@
+{
+  "environment": {
+    "python": "3.12.1",
+    "platform": "macOS-14.5-arm64-arm-64bit",
+    "packages": {
+      "jusi": "1.0.4",
+      "visidata": "3.4",
+      "ipykernel": "6.31.0",
+      "jupyter_client": "8.10.0",
+      "tornado": "6.5.10"
+    }
+  },
+  "runs": [
+    {
+      "samples": 12,
+      "instrument": true,
+      "nvim": {
+        "minor": 11,
+        "api_level": 13,
+        "api_prerelease": false,
+        "build": null,
+        "api_compatible": 0,
+        "major": 0,
+        "patch": 4
+      },
+      "kind": "vd",
+      "os": {
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103",
+        "release": "23.5.0",
+        "machine": "arm64",
+        "sysname": "Darwin"
+      },
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 163.106,
+          "min_ms": 163.106,
+          "max_ms": 163.106,
+          "samples_ms": [
+            163.106
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 749.23,
+          "min_ms": 749.23,
+          "max_ms": 749.23,
+          "samples_ms": [
+            749.23
+          ]
+        },
+        "plain_execute_response": {
+          "n": 12,
+          "median_ms": 11.91,
+          "min_ms": 11.408,
+          "max_ms": 18.956,
+          "samples_ms": [
+            18.956,
+            13.517,
+            12.457,
+            11.938,
+            11.92,
+            11.694,
+            11.408,
+            11.713,
+            11.957,
+            11.733,
+            11.9,
+            11.752
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 12,
+          "median_ms": 95.509,
+          "min_ms": 72.361,
+          "max_ms": 100.382,
+          "samples_ms": [
+            72.361,
+            96.345,
+            99.109,
+            97.293,
+            94.642,
+            100.382,
+            94.339,
+            96.612,
+            93.687,
+            98.589,
+            94.673,
+            79.193
+          ]
+        },
+        "execute_visible": {
+          "n": 12,
+          "median_ms": 311.263,
+          "min_ms": 288.681,
+          "max_ms": 327.563,
+          "samples_ms": [
+            288.681,
+            311.174,
+            314.506,
+            310.657,
+            311.352,
+            316.028,
+            309.222,
+            311.562,
+            308.456,
+            314.252,
+            309.974,
+            327.563
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 6,
+          "median_ms": 186.439,
+          "min_ms": 184.564,
+          "max_ms": 186.91,
+          "samples_ms": [
+            186.427,
+            186.45,
+            185.094,
+            186.91,
+            186.803,
+            184.564
+          ]
+        },
+        "application_quit_retired": {
+          "n": 6,
+          "median_ms": 185.781,
+          "min_ms": 152.297,
+          "max_ms": 187.466,
+          "samples_ms": [
+            186.154,
+            187.466,
+            185.409,
+            186.304,
+            184.826,
+            152.297
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 1180.477,
+          "min_ms": 1180.477,
+          "max_ms": 1180.477,
+          "samples_ms": [
+            1180.477
+          ]
+        }
+      },
+      "service": {
+        "FreshProcessPluginCatalogDiscovery.discover": {
+          "n": 1,
+          "median_ms": 75.606,
+          "min_ms": 75.606,
+          "max_ms": 75.606,
+          "samples_ms": [
+            75.606
+          ]
+        },
+        "ManagedJupyterKernelFactory.start": {
+          "n": 1,
+          "median_ms": 663.494,
+          "min_ms": 663.494,
+          "max_ms": 663.494,
+          "samples_ms": [
+            663.494
+          ]
+        },
+        "Supervisor.start_kernel": {
+          "n": 1,
+          "median_ms": 739.815,
+          "min_ms": 739.815,
+          "max_ms": 739.815,
+          "samples_ms": [
+            739.815
+          ]
+        },
+        "ManagedJupyterKernel.execute": {
+          "n": 24,
+          "median_ms": 3.306,
+          "min_ms": 2.647,
+          "max_ms": 5.176,
+          "samples_ms": [
+            5.013,
+            2.923,
+            2.89,
+            2.8,
+            2.647,
+            2.78,
+            2.699,
+            2.719,
+            2.838,
+            2.753,
+            2.811,
+            2.787,
+            3.208,
+            5.176,
+            4.678,
+            4.902,
+            4.427,
+            5.171,
+            4.81,
+            4.977,
+            5.063,
+            4.788,
+            4.708,
+            3.405
+          ]
+        },
+        "Supervisor.execute": {
+          "n": 24,
+          "median_ms": 33.001,
+          "min_ms": 2.806,
+          "max_ms": 79.397,
+          "samples_ms": [
+            5.241,
+            3.094,
+            3.062,
+            2.96,
+            2.806,
+            2.928,
+            2.854,
+            2.872,
+            3.011,
+            2.912,
+            2.963,
+            2.949,
+            60.761,
+            76.842,
+            77.827,
+            77.732,
+            75.488,
+            79.397,
+            75.248,
+            76.658,
+            73.942,
+            76.878,
+            75.674,
+            66.704
+          ]
+        },
+        "FreshProcessPluginWorkerFactory.start": {
+          "n": 12,
+          "median_ms": 69.515,
+          "min_ms": 55.916,
+          "max_ms": 72.278,
+          "samples_ms": [
+            55.916,
+            69.797,
+            71.346,
+            70.957,
+            69.233,
+            72.278,
+            68.732,
+            69.843,
+            67.082,
+            70.255,
+            69.217,
+            61.6
+          ]
+        },
+        "FreshProcessPluginWorker.request": {
+          "n": 12,
+          "median_ms": 0.86,
+          "min_ms": 0.78,
+          "max_ms": 0.92,
+          "samples_ms": [
+            0.862,
+            0.858,
+            0.783,
+            0.903,
+            0.823,
+            0.895,
+            0.809,
+            0.92,
+            0.878,
+            0.872,
+            0.78,
+            0.807
+          ]
+        },
+        "PosixTerminalBroker.start": {
+          "n": 12,
+          "median_ms": 1.728,
+          "min_ms": 1.683,
+          "max_ms": 2.244,
+          "samples_ms": [
+            1.7,
+            1.759,
+            1.693,
+            1.683,
+            1.778,
+            1.786,
+            1.689,
+            1.745,
+            1.733,
+            1.723,
+            1.71,
+            2.244
+          ]
+        },
+        "TerminalSurfaceManager.attach": {
+          "n": 23,
+          "median_ms": 2.13,
+          "min_ms": 0.026,
+          "max_ms": 3.135,
+          "samples_ms": [
+            2.171,
+            2.207,
+            0.037,
+            0.047,
+            2.142,
+            2.13,
+            0.029,
+            0.03,
+            3.135,
+            2.203,
+            0.036,
+            0.027,
+            2.13,
+            2.184,
+            0.03,
+            0.031,
+            2.162,
+            2.225,
+            0.033,
+            0.026,
+            2.554,
+            2.837,
+            0.033
+          ]
+        },
+        "EditorActionManager.close_client": {
+          "n": 18,
+          "median_ms": 0.005,
+          "min_ms": 0.002,
+          "max_ms": 0.008,
+          "samples_ms": [
+            0.005,
+            0.003,
+            0.006,
+            0.005,
+            0.003,
+            0.005,
+            0.004,
+            0.002,
+            0.007,
+            0.003,
+            0.002,
+            0.008,
+            0.005,
+            0.002,
+            0.007,
+            0.004,
+            0.002,
+            0.008
+          ]
+        },
+        "PosixTerminalHandle.stop": {
+          "n": 12,
+          "median_ms": 0.655,
+          "min_ms": 0.015,
+          "max_ms": 1.33,
+          "samples_ms": [
+            1.33,
+            0.02,
+            1.295,
+            0.017,
+            1.308,
+            0.016,
+            1.315,
+            0.02,
+            1.306,
+            0.017,
+            1.289,
+            0.015
+          ]
+        },
+        "TerminalSurfaceManager.close": {
+          "n": 18,
+          "median_ms": 0.12,
+          "min_ms": 0.002,
+          "max_ms": 1.444,
+          "samples_ms": [
+            1.444,
+            0.005,
+            0.118,
+            1.403,
+            0.004,
+            0.115,
+            1.433,
+            0.004,
+            0.124,
+            1.439,
+            0.004,
+            0.121,
+            1.412,
+            0.003,
+            0.137,
+            1.388,
+            0.002,
+            0.071
+          ]
+        },
+        "FreshProcessPluginWorker._finish_readers": {
+          "n": 12,
+          "median_ms": 0.012,
+          "min_ms": 0.009,
+          "max_ms": 0.019,
+          "samples_ms": [
+            0.009,
+            0.018,
+            0.01,
+            0.014,
+            0.009,
+            0.012,
+            0.009,
+            0.017,
+            0.011,
+            0.014,
+            0.01,
+            0.019
+          ]
+        },
+        "FreshProcessPluginWorker.stop": {
+          "n": 12,
+          "median_ms": 9.482,
+          "min_ms": 8.397,
+          "max_ms": 9.741,
+          "samples_ms": [
+            8.397,
+            9.741,
+            9.434,
+            9.575,
+            9.361,
+            9.733,
+            9.405,
+            9.575,
+            9.424,
+            9.53,
+            9.387,
+            9.697
+          ]
+        },
+        "_Endpoint.close": {
+          "n": 12,
+          "median_ms": 159.745,
+          "min_ms": 120.406,
+          "max_ms": 163.155,
+          "samples_ms": [
+            162.914,
+            155.472,
+            162.699,
+            157.684,
+            161.806,
+            154.832,
+            163.155,
+            156.999,
+            163.06,
+            154.92,
+            162.675,
+            120.406
+          ]
+        },
+        "LocalEditorActionBroker.close_client": {
+          "n": 12,
+          "median_ms": 159.952,
+          "min_ms": 120.989,
+          "max_ms": 163.372,
+          "samples_ms": [
+            163.213,
+            155.623,
+            162.932,
+            157.855,
+            162.049,
+            155.08,
+            163.372,
+            157.175,
+            163.292,
+            155.106,
+            162.774,
+            120.989
+          ]
+        },
+        "Supervisor._retire_client": {
+          "n": 12,
+          "median_ms": 160.587,
+          "min_ms": 121.27,
+          "max_ms": 163.935,
+          "samples_ms": [
+            163.793,
+            156.06,
+            163.484,
+            158.438,
+            162.737,
+            155.527,
+            163.935,
+            157.618,
+            163.935,
+            155.578,
+            162.948,
+            121.27
+          ]
+        },
+        "Supervisor.close_client": {
+          "n": 6,
+          "median_ms": 174.845,
+          "min_ms": 174.185,
+          "max_ms": 175.589,
+          "samples_ms": [
+            174.557,
+            175.133,
+            174.381,
+            175.564,
+            175.589,
+            174.185
+          ]
+        },
+        "Supervisor.terminal_surface_failed": {
+          "n": 6,
+          "median_ms": 166.464,
+          "min_ms": 131.288,
+          "max_ms": 168.894,
+          "samples_ms": [
+            166.711,
+            168.894,
+            166.216,
+            168.08,
+            165.97,
+            131.288
+          ]
+        },
+        "ManagedJupyterKernel.stop": {
+          "n": 1,
+          "median_ms": 113.938,
+          "min_ms": 113.938,
+          "max_ms": 113.938,
+          "samples_ms": [
+            113.938
+          ]
+        },
+        "Supervisor.stop_kernel": {
+          "n": 1,
+          "median_ms": 114.242,
+          "min_ms": 114.242,
+          "max_ms": 114.242,
+          "samples_ms": [
+            114.242
+          ]
+        }
+      },
+      "derived": {
+        "execute_return_to_first_attach": {
+          "n": 12,
+          "median_ms": 87.036,
+          "min_ms": 85.9,
+          "max_ms": 98.766,
+          "samples_ms": [
+            85.9,
+            87.328,
+            87.203,
+            86.078,
+            87.096,
+            87.321,
+            86.181,
+            87.293,
+            86.297,
+            86.975,
+            86.629,
+            98.766
+          ]
+        }
+      }
+    },
+    {
+      "os": {
+        "release": "23.5.0",
+        "machine": "arm64",
+        "sysname": "Darwin",
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103"
+      },
+      "samples": 12,
+      "kind": "vd",
+      "instrument": false,
+      "nvim": {
+        "build": null,
+        "patch": 4,
+        "major": 0,
+        "minor": 11,
+        "api_compatible": 0,
+        "api_level": 13,
+        "api_prerelease": false
+      },
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 173.764,
+          "min_ms": 173.764,
+          "max_ms": 173.764,
+          "samples_ms": [
+            173.764
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 562.64,
+          "min_ms": 562.64,
+          "max_ms": 562.64,
+          "samples_ms": [
+            562.64
+          ]
+        },
+        "plain_execute_response": {
+          "n": 12,
+          "median_ms": 11.707,
+          "min_ms": 11.315,
+          "max_ms": 17.86,
+          "samples_ms": [
+            17.86,
+            13.422,
+            12.657,
+            11.738,
+            11.516,
+            11.65,
+            11.315,
+            11.649,
+            11.738,
+            11.719,
+            11.59,
+            11.695
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 12,
+          "median_ms": 93.804,
+          "min_ms": 72.23,
+          "max_ms": 102.166,
+          "samples_ms": [
+            72.23,
+            93.515,
+            92.815,
+            100.248,
+            94.217,
+            91.149,
+            94.393,
+            99.431,
+            94.092,
+            102.166,
+            88.646,
+            91.121
+          ]
+        },
+        "execute_visible": {
+          "n": 12,
+          "median_ms": 308.745,
+          "min_ms": 292.839,
+          "max_ms": 319.521,
+          "samples_ms": [
+            292.839,
+            308.139,
+            306.897,
+            314.915,
+            309.35,
+            303.815,
+            307.009,
+            315.576,
+            310.155,
+            319.521,
+            311.245,
+            305.407
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 6,
+          "median_ms": 185.337,
+          "min_ms": 177.934,
+          "max_ms": 188.81,
+          "samples_ms": [
+            181.091,
+            187.175,
+            185.555,
+            188.81,
+            185.118,
+            177.934
+          ]
+        },
+        "application_quit_retired": {
+          "n": 6,
+          "median_ms": 185.487,
+          "min_ms": 182.168,
+          "max_ms": 187.493,
+          "samples_ms": [
+            185.098,
+            185.877,
+            187.493,
+            184.521,
+            182.168,
+            186.04
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 1177.394,
+          "min_ms": 1177.394,
+          "max_ms": 1177.394,
+          "samples_ms": [
+            1177.394
+          ]
+        }
+      }
+    },
+    {
+      "nvim": {
+        "minor": 11,
+        "api_prerelease": false,
+        "build": null,
+        "patch": 4,
+        "api_level": 13,
+        "major": 0,
+        "api_compatible": 0
+      },
+      "kind": "terminal",
+      "instrument": true,
+      "os": {
+        "machine": "arm64",
+        "sysname": "Darwin",
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103",
+        "release": "23.5.0"
+      },
+      "samples": 8,
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 180.902,
+          "min_ms": 180.902,
+          "max_ms": 180.902,
+          "samples_ms": [
+            180.902
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 612.885,
+          "min_ms": 612.885,
+          "max_ms": 612.885,
+          "samples_ms": [
+            612.885
+          ]
+        },
+        "plain_execute_response": {
+          "n": 8,
+          "median_ms": 11.914,
+          "min_ms": 11.709,
+          "max_ms": 17.661,
+          "samples_ms": [
+            17.661,
+            13.667,
+            12.83,
+            11.935,
+            11.839,
+            11.709,
+            11.893,
+            11.892
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 8,
+          "median_ms": 102.897,
+          "min_ms": 95.648,
+          "max_ms": 107.468,
+          "samples_ms": [
+            95.648,
+            102.384,
+            107.468,
+            102.645,
+            103.15,
+            101.703,
+            103.693,
+            103.479
+          ]
+        },
+        "execute_visible": {
+          "n": 8,
+          "median_ms": 303.589,
+          "min_ms": 296.685,
+          "max_ms": 310.798,
+          "samples_ms": [
+            296.685,
+            299.798,
+            310.798,
+            305.572,
+            302.144,
+            305.68,
+            303.181,
+            303.998
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 4,
+          "median_ms": 198.924,
+          "min_ms": 194.7,
+          "max_ms": 202.316,
+          "samples_ms": [
+            198.078,
+            194.7,
+            202.316,
+            199.769
+          ]
+        },
+        "application_quit_retired": {
+          "n": 4,
+          "median_ms": 198.38,
+          "min_ms": 195.94,
+          "max_ms": 200.84,
+          "samples_ms": [
+            200.046,
+            196.714,
+            195.94,
+            200.84
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 1187.424,
+          "min_ms": 1187.424,
+          "max_ms": 1187.424,
+          "samples_ms": [
+            1187.424
+          ]
+        }
+      },
+      "service": {
+        "FreshProcessPluginCatalogDiscovery.discover": {
+          "n": 1,
+          "median_ms": 130.282,
+          "min_ms": 130.282,
+          "max_ms": 130.282,
+          "samples_ms": [
+            130.282
+          ]
+        },
+        "ManagedJupyterKernelFactory.start": {
+          "n": 1,
+          "median_ms": 473.066,
+          "min_ms": 473.066,
+          "max_ms": 473.066,
+          "samples_ms": [
+            473.066
+          ]
+        },
+        "Supervisor.start_kernel": {
+          "n": 1,
+          "median_ms": 603.958,
+          "min_ms": 603.958,
+          "max_ms": 603.958,
+          "samples_ms": [
+            603.958
+          ]
+        },
+        "ManagedJupyterKernel.execute": {
+          "n": 16,
+          "median_ms": 3.051,
+          "min_ms": 2.759,
+          "max_ms": 4.607,
+          "samples_ms": [
+            4.607,
+            3.074,
+            2.821,
+            2.837,
+            2.795,
+            2.773,
+            2.783,
+            2.759,
+            2.787,
+            3.048,
+            3.437,
+            3.645,
+            3.054,
+            3.212,
+            3.239,
+            3.208
+          ]
+        },
+        "Supervisor.execute": {
+          "n": 16,
+          "median_ms": 44.154,
+          "min_ms": 2.927,
+          "max_ms": 93.91,
+          "samples_ms": [
+            4.824,
+            3.242,
+            2.972,
+            2.988,
+            2.948,
+            2.927,
+            2.938,
+            2.935,
+            83.484,
+            89.639,
+            93.91,
+            89.894,
+            90.502,
+            89.35,
+            91.109,
+            91.365
+          ]
+        },
+        "FreshProcessPluginWorkerFactory.start": {
+          "n": 8,
+          "median_ms": 85.758,
+          "min_ms": 79.591,
+          "max_ms": 89.339,
+          "samples_ms": [
+            79.591,
+            85.155,
+            89.339,
+            85.071,
+            86.362,
+            84.936,
+            86.705,
+            86.988
+          ]
+        },
+        "FreshProcessPluginWorker.request": {
+          "n": 8,
+          "median_ms": 0.313,
+          "min_ms": 0.297,
+          "max_ms": 0.371,
+          "samples_ms": [
+            0.31,
+            0.297,
+            0.343,
+            0.352,
+            0.298,
+            0.371,
+            0.317,
+            0.309
+          ]
+        },
+        "PosixTerminalBroker.start": {
+          "n": 8,
+          "median_ms": 1.882,
+          "min_ms": 1.765,
+          "max_ms": 2.66,
+          "samples_ms": [
+            2.284,
+            1.849,
+            1.839,
+            1.765,
+            1.973,
+            2.66,
+            1.881,
+            1.883
+          ]
+        },
+        "TerminalSurfaceManager.attach": {
+          "n": 16,
+          "median_ms": 1.172,
+          "min_ms": 0.019,
+          "max_ms": 3.104,
+          "samples_ms": [
+            2.66,
+            2.314,
+            0.035,
+            0.029,
+            2.308,
+            2.579,
+            0.024,
+            0.019,
+            2.453,
+            3.104,
+            0.028,
+            0.024,
+            2.341,
+            2.323,
+            0.028,
+            0.029
+          ]
+        },
+        "PosixTerminalHandle.stop": {
+          "n": 8,
+          "median_ms": 0.664,
+          "min_ms": 0.009,
+          "max_ms": 3.505,
+          "samples_ms": [
+            1.307,
+            0.013,
+            3.505,
+            0.009,
+            1.319,
+            0.01,
+            1.322,
+            0.02
+          ]
+        },
+        "TerminalSurfaceManager.close": {
+          "n": 12,
+          "median_ms": 0.125,
+          "min_ms": 0.002,
+          "max_ms": 3.629,
+          "samples_ms": [
+            1.466,
+            0.002,
+            0.118,
+            3.629,
+            0.002,
+            0.121,
+            1.502,
+            0.002,
+            0.129,
+            1.501,
+            0.002,
+            0.2
+          ]
+        },
+        "FreshProcessPluginWorker._finish_readers": {
+          "n": 8,
+          "median_ms": 0.013,
+          "min_ms": 0.008,
+          "max_ms": 0.018,
+          "samples_ms": [
+            0.009,
+            0.018,
+            0.008,
+            0.017,
+            0.01,
+            0.018,
+            0.01,
+            0.015
+          ]
+        },
+        "FreshProcessPluginWorker.stop": {
+          "n": 8,
+          "median_ms": 19.383,
+          "min_ms": 18.038,
+          "max_ms": 19.93,
+          "samples_ms": [
+            19.541,
+            19.784,
+            19.088,
+            19.225,
+            18.88,
+            19.93,
+            18.038,
+            19.629
+          ]
+        },
+        "Supervisor.close_client": {
+          "n": 4,
+          "median_ms": 188.108,
+          "min_ms": 184.402,
+          "max_ms": 191.909,
+          "samples_ms": [
+            187.18,
+            184.402,
+            191.909,
+            189.036
+          ]
+        },
+        "Supervisor.terminal_surface_failed": {
+          "n": 4,
+          "median_ms": 185.891,
+          "min_ms": 183.169,
+          "max_ms": 187.989,
+          "samples_ms": [
+            187.813,
+            183.968,
+            183.169,
+            187.989
+          ]
+        },
+        "ManagedJupyterKernel.stop": {
+          "n": 1,
+          "median_ms": 113.254,
+          "min_ms": 113.254,
+          "max_ms": 113.254,
+          "samples_ms": [
+            113.254
+          ]
+        },
+        "Supervisor.stop_kernel": {
+          "n": 1,
+          "median_ms": 113.597,
+          "min_ms": 113.597,
+          "max_ms": 113.597,
+          "samples_ms": [
+            113.597
+          ]
+        }
+      },
+      "derived": {
+        "execute_return_to_first_attach": {
+          "n": 8,
+          "median_ms": 93.201,
+          "min_ms": 88.806,
+          "max_ms": 97.434,
+          "samples_ms": [
+            88.806,
+            92.258,
+            94.518,
+            92.903,
+            93.499,
+            96.514,
+            92.824,
+            97.434
+          ]
+        }
+      }
+    },
+    {
+      "os": {
+        "machine": "arm64",
+        "release": "23.5.0",
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103",
+        "sysname": "Darwin"
+      },
+      "instrument": true,
+      "samples": 8,
+      "kind": "sqlite",
+      "nvim": {
+        "api_level": 13,
+        "major": 0,
+        "api_compatible": 0,
+        "minor": 11,
+        "patch": 4,
+        "build": null,
+        "api_prerelease": false
+      },
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 161.238,
+          "min_ms": 161.238,
+          "max_ms": 161.238,
+          "samples_ms": [
+            161.238
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 540.119,
+          "min_ms": 540.119,
+          "max_ms": 540.119,
+          "samples_ms": [
+            540.119
+          ]
+        },
+        "plain_execute_response": {
+          "n": 8,
+          "median_ms": 12.233,
+          "min_ms": 11.717,
+          "max_ms": 14.628,
+          "samples_ms": [
+            14.628,
+            12.228,
+            12.693,
+            11.717,
+            12.184,
+            12.238,
+            12.171,
+            12.533
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 8,
+          "median_ms": 74.331,
+          "min_ms": 71.367,
+          "max_ms": 77.323,
+          "samples_ms": [
+            75.591,
+            72.614,
+            75.022,
+            74.037,
+            71.367,
+            74.625,
+            77.323,
+            72.65
+          ]
+        },
+        "execute_visible": {
+          "n": 8,
+          "median_ms": 290.908,
+          "min_ms": 285.708,
+          "max_ms": 322.152,
+          "samples_ms": [
+            322.152,
+            295.798,
+            286.536,
+            292.319,
+            287.343,
+            289.497,
+            297.225,
+            285.708
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 4,
+          "median_ms": 21.406,
+          "min_ms": 21.281,
+          "max_ms": 24.2,
+          "samples_ms": [
+            21.281,
+            21.318,
+            21.495,
+            24.2
+          ]
+        },
+        "application_quit_retired": {
+          "n": 4,
+          "median_ms": 28.155,
+          "min_ms": 25.687,
+          "max_ms": 31.052,
+          "samples_ms": [
+            28.592,
+            25.687,
+            31.052,
+            27.718
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 1178.053,
+          "min_ms": 1178.053,
+          "max_ms": 1178.053,
+          "samples_ms": [
+            1178.053
+          ]
+        }
+      },
+      "service": {
+        "FreshProcessPluginCatalogDiscovery.discover": {
+          "n": 1,
+          "median_ms": 77.786,
+          "min_ms": 77.786,
+          "max_ms": 77.786,
+          "samples_ms": [
+            77.786
+          ]
+        },
+        "ManagedJupyterKernelFactory.start": {
+          "n": 1,
+          "median_ms": 452.394,
+          "min_ms": 452.394,
+          "max_ms": 452.394,
+          "samples_ms": [
+            452.394
+          ]
+        },
+        "Supervisor.start_kernel": {
+          "n": 1,
+          "median_ms": 530.844,
+          "min_ms": 530.844,
+          "max_ms": 530.844,
+          "samples_ms": [
+            530.844
+          ]
+        },
+        "ManagedJupyterKernel.execute": {
+          "n": 16,
+          "median_ms": 3.023,
+          "min_ms": 2.746,
+          "max_ms": 3.879,
+          "samples_ms": [
+            3.879,
+            2.746,
+            3.536,
+            3.02,
+            2.985,
+            3.129,
+            2.959,
+            3.1,
+            2.996,
+            3.168,
+            3.08,
+            2.909,
+            2.985,
+            3.027,
+            2.904,
+            3.065
+          ]
+        },
+        "Supervisor.execute": {
+          "n": 16,
+          "median_ms": 31.673,
+          "min_ms": 2.902,
+          "max_ms": 64.714,
+          "samples_ms": [
+            4.063,
+            2.902,
+            3.722,
+            3.168,
+            3.16,
+            3.283,
+            3.133,
+            3.273,
+            63.626,
+            60.086,
+            61.804,
+            61.505,
+            59.283,
+            62.612,
+            64.714,
+            60.99
+          ]
+        },
+        "FreshProcessPluginWorkerFactory.start": {
+          "n": 8,
+          "median_ms": 57.254,
+          "min_ms": 55.008,
+          "max_ms": 60.496,
+          "samples_ms": [
+            59.46,
+            55.537,
+            57.378,
+            57.129,
+            55.008,
+            58.201,
+            60.496,
+            56.634
+          ]
+        },
+        "FreshProcessPluginWorker.request": {
+          "n": 8,
+          "median_ms": 0.747,
+          "min_ms": 0.687,
+          "max_ms": 0.855,
+          "samples_ms": [
+            0.687,
+            0.765,
+            0.727,
+            0.855,
+            0.752,
+            0.813,
+            0.732,
+            0.742
+          ]
+        },
+        "PosixTerminalBroker.start": {
+          "n": 8,
+          "median_ms": 1.806,
+          "min_ms": 1.742,
+          "max_ms": 2.093,
+          "samples_ms": [
+            1.79,
+            1.821,
+            1.756,
+            1.966,
+            1.742,
+            2.093,
+            1.986,
+            1.779
+          ]
+        },
+        "TerminalSurfaceManager.attach": {
+          "n": 8,
+          "median_ms": 2.241,
+          "min_ms": 2.179,
+          "max_ms": 2.626,
+          "samples_ms": [
+            2.214,
+            2.269,
+            2.179,
+            2.478,
+            2.189,
+            2.626,
+            2.438,
+            2.202
+          ]
+        },
+        "PosixTerminalHandle.stop": {
+          "n": 8,
+          "median_ms": 0.658,
+          "min_ms": 0.008,
+          "max_ms": 3.801,
+          "samples_ms": [
+            1.301,
+            0.015,
+            1.328,
+            0.01,
+            1.314,
+            0.012,
+            3.801,
+            0.008
+          ]
+        },
+        "TerminalSurfaceManager.close": {
+          "n": 12,
+          "median_ms": 0.06,
+          "min_ms": 0.001,
+          "max_ms": 3.988,
+          "samples_ms": [
+            1.446,
+            0.001,
+            0.061,
+            1.505,
+            0.001,
+            0.052,
+            1.485,
+            0.001,
+            0.064,
+            3.988,
+            0.001,
+            0.059
+          ]
+        },
+        "FreshProcessPluginWorker._finish_readers": {
+          "n": 8,
+          "median_ms": 0.013,
+          "min_ms": 0.007,
+          "max_ms": 0.018,
+          "samples_ms": [
+            0.012,
+            0.018,
+            0.01,
+            0.015,
+            0.008,
+            0.014,
+            0.007,
+            0.018
+          ]
+        },
+        "FreshProcessPluginWorker.stop": {
+          "n": 8,
+          "median_ms": 9.367,
+          "min_ms": 8.572,
+          "max_ms": 9.662,
+          "samples_ms": [
+            9.33,
+            9.662,
+            9.381,
+            8.572,
+            9.363,
+            9.491,
+            9.372,
+            9.177
+          ]
+        },
+        "Supervisor.close_client": {
+          "n": 4,
+          "median_ms": 11.172,
+          "min_ms": 11.095,
+          "max_ms": 13.899,
+          "samples_ms": [
+            11.095,
+            11.189,
+            11.155,
+            13.899
+          ]
+        },
+        "Supervisor.terminal_surface_failed": {
+          "n": 4,
+          "median_ms": 9.683,
+          "min_ms": 8.962,
+          "max_ms": 10.011,
+          "samples_ms": [
+            10.011,
+            8.962,
+            9.842,
+            9.523
+          ]
+        },
+        "ManagedJupyterKernel.stop": {
+          "n": 1,
+          "median_ms": 113.388,
+          "min_ms": 113.388,
+          "max_ms": 113.388,
+          "samples_ms": [
+            113.388
+          ]
+        },
+        "Supervisor.stop_kernel": {
+          "n": 1,
+          "median_ms": 113.665,
+          "min_ms": 113.665,
+          "max_ms": 113.665,
+          "samples_ms": [
+            113.665
+          ]
+        }
+      },
+      "derived": {
+        "execute_return_to_first_attach": {
+          "n": 8,
+          "median_ms": 92.231,
+          "min_ms": 87.689,
+          "max_ms": 95.338,
+          "samples_ms": [
+            92.927,
+            95.338,
+            92.572,
+            91.406,
+            87.689,
+            91.89,
+            93.403,
+            88.115
+          ]
+        }
+      }
+    },
+    {
+      "instrument": true,
+      "nvim": {
+        "patch": 4,
+        "build": null,
+        "minor": 11,
+        "api_level": 13,
+        "major": 0,
+        "api_compatible": 0,
+        "api_prerelease": false
+      },
+      "os": {
+        "sysname": "Darwin",
+        "machine": "arm64",
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103",
+        "release": "23.5.0"
+      },
+      "samples": 2,
+      "kind": "vd",
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 157.679,
+          "min_ms": 157.679,
+          "max_ms": 157.679,
+          "samples_ms": [
+            157.679
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 743.544,
+          "min_ms": 743.544,
+          "max_ms": 743.544,
+          "samples_ms": [
+            743.544
+          ]
+        },
+        "plain_execute_response": {
+          "n": 2,
+          "median_ms": 16.16,
+          "min_ms": 14.069,
+          "max_ms": 18.251,
+          "samples_ms": [
+            18.251,
+            14.069
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 2,
+          "median_ms": 91.236,
+          "min_ms": 74.843,
+          "max_ms": 107.63,
+          "samples_ms": [
+            74.843,
+            107.63
+          ]
+        },
+        "execute_visible": {
+          "n": 2,
+          "median_ms": 316.286,
+          "min_ms": 310.203,
+          "max_ms": 322.368,
+          "samples_ms": [
+            310.203,
+            322.368
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 1,
+          "median_ms": 5794.363,
+          "min_ms": 5794.363,
+          "max_ms": 5794.363,
+          "samples_ms": [
+            5794.363
+          ]
+        },
+        "application_quit_retired": {
+          "n": 1,
+          "median_ms": 186.407,
+          "min_ms": 186.407,
+          "max_ms": 186.407,
+          "samples_ms": [
+            186.407
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 1180.194,
+          "min_ms": 1180.194,
+          "max_ms": 1180.194,
+          "samples_ms": [
+            1180.194
+          ]
+        }
+      },
+      "service": {
+        "EventLog.wait_after": {
+          "n": 25,
+          "median_ms": 80.506,
+          "min_ms": 0.011,
+          "max_ms": 1005.114,
+          "samples_ms": [
+            8.248,
+            733.885,
+            12.577,
+            2.692,
+            1.115,
+            10.831,
+            1.46,
+            1.026,
+            9.635,
+            61.281,
+            248.728,
+            1000.786,
+            1003.06,
+            1005.114,
+            1001.939,
+            1002.058,
+            764.293,
+            0.011,
+            22.444,
+            80.506,
+            235.715,
+            165.912,
+            16.58,
+            112.992,
+            1005.078
+          ]
+        },
+        "FreshProcessPluginCatalogDiscovery.discover": {
+          "n": 1,
+          "median_ms": 73.679,
+          "min_ms": 73.679,
+          "max_ms": 73.679,
+          "samples_ms": [
+            73.679
+          ]
+        },
+        "ManagedJupyterKernelFactory.start": {
+          "n": 1,
+          "median_ms": 660.16,
+          "min_ms": 660.16,
+          "max_ms": 660.16,
+          "samples_ms": [
+            660.16
+          ]
+        },
+        "Supervisor.start_kernel": {
+          "n": 1,
+          "median_ms": 734.43,
+          "min_ms": 734.43,
+          "max_ms": 734.43,
+          "samples_ms": [
+            734.43
+          ]
+        },
+        "ManagedJupyterKernel.execute": {
+          "n": 4,
+          "median_ms": 3.888,
+          "min_ms": 3.062,
+          "max_ms": 6.451,
+          "samples_ms": [
+            4.485,
+            3.062,
+            3.292,
+            6.451
+          ]
+        },
+        "Supervisor.execute": {
+          "n": 4,
+          "median_ms": 33.286,
+          "min_ms": 3.213,
+          "max_ms": 81.874,
+          "samples_ms": [
+            4.696,
+            3.213,
+            61.876,
+            81.874
+          ]
+        },
+        "FreshProcessPluginWorkerFactory.start": {
+          "n": 2,
+          "median_ms": 65.143,
+          "min_ms": 56.893,
+          "max_ms": 73.393,
+          "samples_ms": [
+            56.893,
+            73.393
+          ]
+        },
+        "FreshProcessPluginWorker.request": {
+          "n": 2,
+          "median_ms": 0.916,
+          "min_ms": 0.886,
+          "max_ms": 0.946,
+          "samples_ms": [
+            0.886,
+            0.946
+          ]
+        },
+        "PosixTerminalBroker.start": {
+          "n": 2,
+          "median_ms": 1.838,
+          "min_ms": 1.793,
+          "max_ms": 1.884,
+          "samples_ms": [
+            1.884,
+            1.793
+          ]
+        },
+        "TerminalSurfaceManager.attach": {
+          "n": 4,
+          "median_ms": 1.112,
+          "min_ms": 0.032,
+          "max_ms": 2.242,
+          "samples_ms": [
+            2.242,
+            2.19,
+            0.033,
+            0.032
+          ]
+        },
+        "EditorActionManager.close_client": {
+          "n": 3,
+          "median_ms": 0.006,
+          "min_ms": 0.004,
+          "max_ms": 0.009,
+          "samples_ms": [
+            0.009,
+            0.006,
+            0.004
+          ]
+        },
+        "PosixTerminalHandle.stop": {
+          "n": 2,
+          "median_ms": 2804.827,
+          "min_ms": 0.016,
+          "max_ms": 5609.638,
+          "samples_ms": [
+            5609.638,
+            0.016
+          ]
+        },
+        "TerminalSurfaceManager.close": {
+          "n": 3,
+          "median_ms": 0.111,
+          "min_ms": 0.012,
+          "max_ms": 5610.1,
+          "samples_ms": [
+            5610.1,
+            0.012,
+            0.111
+          ]
+        },
+        "FreshProcessPluginWorker._finish_readers": {
+          "n": 2,
+          "median_ms": 0.019,
+          "min_ms": 0.019,
+          "max_ms": 0.02,
+          "samples_ms": [
+            0.019,
+            0.02
+          ]
+        },
+        "FreshProcessPluginWorker.stop": {
+          "n": 2,
+          "median_ms": 14.808,
+          "min_ms": 9.109,
+          "max_ms": 20.506,
+          "samples_ms": [
+            20.506,
+            9.109
+          ]
+        },
+        "_Endpoint.close": {
+          "n": 2,
+          "median_ms": 152.322,
+          "min_ms": 147.792,
+          "max_ms": 156.852,
+          "samples_ms": [
+            147.792,
+            156.852
+          ]
+        },
+        "LocalEditorActionBroker.close_client": {
+          "n": 2,
+          "median_ms": 152.759,
+          "min_ms": 148.503,
+          "max_ms": 157.014,
+          "samples_ms": [
+            148.503,
+            157.014
+          ]
+        },
+        "Supervisor._retire_client": {
+          "n": 2,
+          "median_ms": 153.425,
+          "min_ms": 149.419,
+          "max_ms": 157.43,
+          "samples_ms": [
+            149.419,
+            157.43
+          ]
+        },
+        "Supervisor.close_client": {
+          "n": 1,
+          "median_ms": 5781.203,
+          "min_ms": 5781.203,
+          "max_ms": 5781.203,
+          "samples_ms": [
+            5781.203
+          ]
+        },
+        "Supervisor.terminal_surface_failed": {
+          "n": 1,
+          "median_ms": 166.885,
+          "min_ms": 166.885,
+          "max_ms": 166.885,
+          "samples_ms": [
+            166.885
+          ]
+        },
+        "ManagedJupyterKernel.stop": {
+          "n": 1,
+          "median_ms": 113.529,
+          "min_ms": 113.529,
+          "max_ms": 113.529,
+          "samples_ms": [
+            113.529
+          ]
+        },
+        "Supervisor.stop_kernel": {
+          "n": 1,
+          "median_ms": 113.943,
+          "min_ms": 113.943,
+          "max_ms": 113.943,
+          "samples_ms": [
+            113.943
+          ]
+        },
+        "Supervisor.close": {
+          "n": 1,
+          "median_ms": 0.047,
+          "min_ms": 0.047,
+          "max_ms": 0.047,
+          "samples_ms": [
+            0.047
+          ]
+        },
+        "HTTPServer.close_all_connections": {
+          "n": 1,
+          "median_ms": 0.137,
+          "min_ms": 0.137,
+          "max_ms": 0.137,
+          "samples_ms": [
+            0.137
+          ]
+        },
+        "BaseEventLoop.shutdown_default_executor": {
+          "n": 1,
+          "median_ms": 1003.838,
+          "min_ms": 1003.838,
+          "max_ms": 1003.838,
+          "samples_ms": [
+            1003.838
+          ]
+        }
+      },
+      "derived": {
+        "execute_return_to_first_attach": {
+          "n": 2,
+          "median_ms": 88.481,
+          "min_ms": 87.024,
+          "max_ms": 89.939,
+          "samples_ms": [
+            89.939,
+            87.024
+          ]
+        }
+      }
+    }
+  ],
+  "import_probes": [
+    {
+      "stage": "baseline",
+      "ms": [
+        18.245,
+        17.079,
+        16.84,
+        16.67,
+        16.984,
+        16.715,
+        16.55,
+        16.466
+      ]
+    },
+    {
+      "stage": "worker",
+      "ms": [
+        59.566,
+        60.935,
+        59.694,
+        58.234,
+        59.034,
+        58.314,
+        58.257,
+        58.703
+      ]
+    },
+    {
+      "stage": "bridge",
+      "ms": [
+        91.743,
+        91.178,
+        92.141,
+        91.975,
+        91.641,
+        92.125,
+        91.605,
+        91.041
+      ]
+    },
+    {
+      "stage": "vd",
+      "ms": [
+        48.826,
+        48.394,
+        48.526,
+        48.419,
+        48.905,
+        48.471,
+        48.89,
+        48.241
+      ]
+    },
+    {
+      "stage": "visidata",
+      "ms": [
+        106.347,
+        105.25,
+        105.489,
+        104.791,
+        104.668,
+        104.982,
+        105.08,
+        105.47
+      ]
+    }
+  ],
+  "application_cprofile_probe": {
+    "import_ms": 140.63,
+    "init_ms": 9.567
+  }
+}

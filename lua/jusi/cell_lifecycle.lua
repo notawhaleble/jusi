@@ -42,8 +42,12 @@ function Lifecycle:toggle_park(cell_id)
   return self:set_park(cell_id, not self.parked[cell_id])
 end
 
-function Lifecycle:close_cell(cell_id)
+function Lifecycle:close_cell(cell_id, callback)
   if self.closed then return end
+  if callback then
+    self.close_callbacks[cell_id] = self.close_callbacks[cell_id] or {}
+    table.insert(self.close_callbacks[cell_id], callback)
+  end
   if self.inflight[cell_id] then
     if self.retired[cell_id] then self.again[cell_id] = true end
     return
@@ -62,7 +66,9 @@ function Lifecycle:close_cell(cell_id)
   end
   self.presentation:close_cell(cell_id)
   self.inflight[cell_id] = true
+  local failed
   local function report(failure)
+    failed = failed or failure
     if failure and not self.closed and self.on_failure then
       self.on_failure(failure)
     end
@@ -72,13 +78,16 @@ function Lifecycle:close_cell(cell_id)
     local id = clients[index]
     if not id then
       self.inflight[cell_id] = nil
+      local callbacks = self.close_callbacks[cell_id] or {}
+      self.close_callbacks[cell_id] = nil
+      for _, done in ipairs(callbacks) do done(not failed, failed) end
       if self.again[cell_id] then self.again[cell_id] = nil; self:retire(cell_id) end
       return
     end
     if not controller.clients[id] then close_client(index + 1); return end
     controller:close_client(id, function(_, failure)
       if not failure then self.clients_closed[id] = true end
-      if failure and not self.closed and self.on_failure then self.on_failure(failure) end
+      report(failure)
       close_client(index + 1)
     end)
   end
@@ -162,6 +171,6 @@ function M.new(options)
   return setmetatable({ model = options.model, controller = options.controller,
     presentation = options.presentation, on_failure = options.on_failure,
     parked = {}, retired = {}, scheduled = {}, inflight = {}, again = {}, client_inflight = {},
-    interrupted = {}, clients_closed = {}, closed = false }, Lifecycle)
+    interrupted = {}, clients_closed = {}, close_callbacks = {}, closed = false }, Lifecycle)
 end
 return M

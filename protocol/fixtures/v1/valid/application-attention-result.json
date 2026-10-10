@@ -1,0 +1,8 @@
+{
+  "protocol_version": 1,
+  "request_id": "areq_fixture",
+  "kind": "application.attention_result",
+  "attention_id": "attn_fixture",
+  "outcome": "accepted",
+  "reason": ""
+}

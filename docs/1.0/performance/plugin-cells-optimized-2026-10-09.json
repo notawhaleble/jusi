@@ -1,0 +1,1143 @@
+{
+  "environment": {
+    "python": "3.12.1",
+    "platform": "macOS-14.5-arm64-arm-64bit",
+    "packages": {
+      "jusi": "1.0.4",
+      "visidata": "3.4",
+      "ipykernel": "6.31.0",
+      "jupyter_client": "8.10.0",
+      "tornado": "6.5.10"
+    }
+  },
+  "runs": [
+    {
+      "kind": "vd",
+      "samples": 20,
+      "nvim": {
+        "api_prerelease": false,
+        "api_compatible": 0,
+        "patch": 4,
+        "build": null,
+        "minor": 11,
+        "api_level": 13,
+        "major": 0
+      },
+      "os": {
+        "sysname": "Darwin",
+        "machine": "arm64",
+        "release": "23.5.0",
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103"
+      },
+      "instrument": false,
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 176.366,
+          "min_ms": 176.366,
+          "max_ms": 176.366,
+          "samples_ms": [
+            176.366
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 573.533,
+          "min_ms": 573.533,
+          "max_ms": 573.533,
+          "samples_ms": [
+            573.533
+          ]
+        },
+        "plain_execute_response": {
+          "n": 20,
+          "median_ms": 11.836,
+          "min_ms": 11.592,
+          "max_ms": 19.36,
+          "samples_ms": [
+            19.36,
+            14.155,
+            13.155,
+            12.359,
+            11.833,
+            11.644,
+            11.654,
+            11.843,
+            11.942,
+            11.8,
+            11.681,
+            11.958,
+            11.608,
+            11.592,
+            11.655,
+            11.839,
+            11.939,
+            11.817,
+            11.9,
+            11.662
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 20,
+          "median_ms": 57.997,
+          "min_ms": 56.787,
+          "max_ms": 59.873,
+          "samples_ms": [
+            57.667,
+            58.685,
+            59.873,
+            59.072,
+            58.045,
+            57.949,
+            57.467,
+            58.201,
+            58.554,
+            57.437,
+            56.787,
+            58.209,
+            58.127,
+            56.829,
+            57.787,
+            58.072,
+            57.498,
+            57.703,
+            57.907,
+            58.081
+          ]
+        },
+        "execute_visible": {
+          "n": 20,
+          "median_ms": 263.519,
+          "min_ms": 260.669,
+          "max_ms": 288.524,
+          "samples_ms": [
+            288.524,
+            266.046,
+            265.978,
+            263.479,
+            263.829,
+            264.555,
+            263.559,
+            263.447,
+            264.95,
+            261.703,
+            260.669,
+            263.86,
+            261.908,
+            264.745,
+            262.159,
+            262.471,
+            261.643,
+            261.948,
+            262.285,
+            263.644
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 10,
+          "median_ms": 21.178,
+          "min_ms": 20.427,
+          "max_ms": 21.906,
+          "samples_ms": [
+            21.009,
+            21.906,
+            21.609,
+            21.671,
+            20.427,
+            21.636,
+            20.939,
+            20.79,
+            21.341,
+            21.015
+          ]
+        },
+        "application_quit_retired": {
+          "n": 10,
+          "median_ms": 28.091,
+          "min_ms": 27.512,
+          "max_ms": 29.495,
+          "samples_ms": [
+            27.623,
+            28.406,
+            29.495,
+            28.121,
+            28.303,
+            27.775,
+            28.061,
+            27.973,
+            27.512,
+            28.521
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 152.754,
+          "min_ms": 152.754,
+          "max_ms": 152.754,
+          "samples_ms": [
+            152.754
+          ]
+        }
+      }
+    },
+    {
+      "nvim": {
+        "api_level": 13,
+        "api_prerelease": false,
+        "api_compatible": 0,
+        "build": null,
+        "minor": 11,
+        "major": 0,
+        "patch": 4
+      },
+      "instrument": true,
+      "os": {
+        "release": "23.5.0",
+        "machine": "arm64",
+        "sysname": "Darwin",
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103"
+      },
+      "kind": "vd",
+      "samples": 12,
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 161.799,
+          "min_ms": 161.799,
+          "max_ms": 161.799,
+          "samples_ms": [
+            161.799
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 738.836,
+          "min_ms": 738.836,
+          "max_ms": 738.836,
+          "samples_ms": [
+            738.836
+          ]
+        },
+        "plain_execute_response": {
+          "n": 12,
+          "median_ms": 11.996,
+          "min_ms": 11.514,
+          "max_ms": 20.43,
+          "samples_ms": [
+            20.43,
+            14.273,
+            12.845,
+            12.054,
+            11.872,
+            11.753,
+            11.938,
+            12.267,
+            12.094,
+            11.903,
+            11.514,
+            11.594
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 12,
+          "median_ms": 57.541,
+          "min_ms": 56.852,
+          "max_ms": 59.087,
+          "samples_ms": [
+            58.063,
+            56.852,
+            57.742,
+            58.404,
+            57.34,
+            57.838,
+            57.253,
+            59.087,
+            57.211,
+            58.663,
+            56.973,
+            57.025
+          ]
+        },
+        "execute_visible": {
+          "n": 12,
+          "median_ms": 261.09,
+          "min_ms": 259.04,
+          "max_ms": 267.13,
+          "samples_ms": [
+            267.13,
+            261.119,
+            262.354,
+            261.268,
+            259.591,
+            261.06,
+            260.92,
+            262.418,
+            261.366,
+            260.155,
+            259.04,
+            259.129
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 6,
+          "median_ms": 21.972,
+          "min_ms": 21.522,
+          "max_ms": 54.356,
+          "samples_ms": [
+            22.156,
+            22.047,
+            21.897,
+            54.356,
+            21.522,
+            21.703
+          ]
+        },
+        "application_quit_retired": {
+          "n": 6,
+          "median_ms": 28.671,
+          "min_ms": 27.781,
+          "max_ms": 29.447,
+          "samples_ms": [
+            27.969,
+            29.447,
+            28.814,
+            28.62,
+            27.781,
+            28.722
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 153.415,
+          "min_ms": 153.415,
+          "max_ms": 153.415,
+          "samples_ms": [
+            153.415
+          ]
+        }
+      },
+      "service": {
+        "EventLog.wait_after": {
+          "n": 100,
+          "median_ms": 9.084,
+          "min_ms": 0.004,
+          "max_ms": 728.856,
+          "samples_ms": [
+            8.378,
+            728.856,
+            14.44,
+            2.929,
+            1.116,
+            11.248,
+            1.425,
+            0.953,
+            9.716,
+            1.288,
+            0.74,
+            9.075,
+            1.153,
+            1.014,
+            8.707,
+            1.269,
+            0.954,
+            8.534,
+            1.327,
+            0.994,
+            8.575,
+            0.004,
+            1.161,
+            1.011,
+            8.818,
+            1.255,
+            1.12,
+            9.092,
+            1.35,
+            0.875,
+            8.652,
+            0.004,
+            1.125,
+            0.976,
+            8.526,
+            1.13,
+            1.031,
+            8.457,
+            1.381,
+            0.824,
+            8.617,
+            0.005,
+            45.16,
+            221.895,
+            10.984,
+            0.005,
+            9.367,
+            44.348,
+            224.755,
+            8.996,
+            9.439,
+            44.788,
+            217.294,
+            10.943,
+            0.005,
+            8.857,
+            0.005,
+            45.546,
+            224.091,
+            9.732,
+            9.407,
+            44.751,
+            214.402,
+            10.886,
+            0.008,
+            9.22,
+            45.264,
+            0.196,
+            223.777,
+            8.974,
+            9.426,
+            44.76,
+            224.717,
+            33.356,
+            0.032,
+            9.976,
+            44.932,
+            223.837,
+            9.773,
+            9.254,
+            44.509,
+            216.289,
+            10.862,
+            0.011,
+            9.291,
+            45.105,
+            222.105,
+            9.325,
+            9.15,
+            44.521,
+            214.451,
+            10.891,
+            0.007,
+            8.995,
+            44.661,
+            222.537,
+            9.287,
+            9.104,
+            113.414,
+            1.34
+          ]
+        },
+        "FreshProcessPluginCatalogDiscovery.discover": {
+          "n": 1,
+          "median_ms": 73.749,
+          "min_ms": 73.749,
+          "max_ms": 73.749,
+          "samples_ms": [
+            73.749
+          ]
+        },
+        "ManagedJupyterKernelFactory.start": {
+          "n": 1,
+          "median_ms": 654.934,
+          "min_ms": 654.934,
+          "max_ms": 654.934,
+          "samples_ms": [
+            654.934
+          ]
+        },
+        "Supervisor.start_kernel": {
+          "n": 1,
+          "median_ms": 729.407,
+          "min_ms": 729.407,
+          "max_ms": 729.407,
+          "samples_ms": [
+            729.407
+          ]
+        },
+        "ManagedJupyterKernel.execute": {
+          "n": 24,
+          "median_ms": 3.035,
+          "min_ms": 2.643,
+          "max_ms": 4.911,
+          "samples_ms": [
+            4.911,
+            3.01,
+            2.739,
+            2.693,
+            2.789,
+            2.824,
+            2.864,
+            2.882,
+            2.832,
+            2.763,
+            2.643,
+            2.718,
+            3.015,
+            3.161,
+            3.167,
+            3.219,
+            3.055,
+            3.082,
+            3.243,
+            3.188,
+            3.153,
+            3.086,
+            3.418,
+            3.082
+          ]
+        },
+        "Supervisor.execute": {
+          "n": 24,
+          "median_ms": 25.008,
+          "min_ms": 2.775,
+          "max_ms": 46.469,
+          "samples_ms": [
+            5.115,
+            3.172,
+            2.893,
+            2.821,
+            2.92,
+            2.965,
+            3.007,
+            3.041,
+            2.959,
+            2.906,
+            2.775,
+            2.841,
+            45.718,
+            44.902,
+            45.293,
+            46.114,
+            45.256,
+            46.469,
+            45.273,
+            45.472,
+            45.029,
+            45.539,
+            45.04,
+            45.202
+          ]
+        },
+        "FreshProcessPluginWorkerFactory.start": {
+          "n": 12,
+          "median_ms": 40.485,
+          "min_ms": 39.883,
+          "max_ms": 41.053,
+          "samples_ms": [
+            40.927,
+            39.883,
+            40.458,
+            41.053,
+            40.575,
+            40.536,
+            40.462,
+            40.509,
+            40.275,
+            40.631,
+            40.064,
+            40.286
+          ]
+        },
+        "FreshProcessPluginWorker.request": {
+          "n": 12,
+          "median_ms": 0.792,
+          "min_ms": 0.752,
+          "max_ms": 0.86,
+          "samples_ms": [
+            0.86,
+            0.804,
+            0.836,
+            0.757,
+            0.809,
+            0.798,
+            0.779,
+            0.761,
+            0.79,
+            0.787,
+            0.794,
+            0.752
+          ]
+        },
+        "PosixTerminalBroker.start": {
+          "n": 12,
+          "median_ms": 1.694,
+          "min_ms": 1.642,
+          "max_ms": 1.807,
+          "samples_ms": [
+            1.714,
+            1.789,
+            1.807,
+            1.671,
+            1.683,
+            1.72,
+            1.695,
+            1.71,
+            1.664,
+            1.642,
+            1.667,
+            1.693
+          ]
+        },
+        "TerminalSurfaceManager.attach": {
+          "n": 12,
+          "median_ms": 2.089,
+          "min_ms": 2.032,
+          "max_ms": 2.269,
+          "samples_ms": [
+            2.064,
+            2.269,
+            2.193,
+            2.051,
+            2.106,
+            2.133,
+            2.078,
+            2.148,
+            2.046,
+            2.032,
+            2.046,
+            2.101
+          ]
+        },
+        "EditorActionManager.close_client": {
+          "n": 18,
+          "median_ms": 0.005,
+          "min_ms": 0.002,
+          "max_ms": 0.016,
+          "samples_ms": [
+            0.008,
+            0.003,
+            0.008,
+            0.007,
+            0.003,
+            0.005,
+            0.008,
+            0.002,
+            0.005,
+            0.016,
+            0.008,
+            0.005,
+            0.007,
+            0.003,
+            0.005,
+            0.009,
+            0.002,
+            0.005
+          ]
+        },
+        "PosixTerminalHandle.stop": {
+          "n": 12,
+          "median_ms": 0.646,
+          "min_ms": 0.009,
+          "max_ms": 9.718,
+          "samples_ms": [
+            1.296,
+            0.009,
+            1.298,
+            0.01,
+            1.296,
+            0.009,
+            9.718,
+            0.01,
+            1.282,
+            0.009,
+            1.333,
+            0.009
+          ]
+        },
+        "TerminalSurfaceManager.close": {
+          "n": 18,
+          "median_ms": 0.054,
+          "min_ms": 0.001,
+          "max_ms": 10.456,
+          "samples_ms": [
+            1.382,
+            0.002,
+            0.059,
+            1.376,
+            0.002,
+            0.057,
+            1.371,
+            0.001,
+            0.051,
+            10.456,
+            0.002,
+            0.063,
+            1.362,
+            0.002,
+            0.049,
+            1.406,
+            0.002,
+            0.05
+          ]
+        },
+        "FreshProcessPluginWorker._finish_readers": {
+          "n": 12,
+          "median_ms": 0.013,
+          "min_ms": 0.011,
+          "max_ms": 0.02,
+          "samples_ms": [
+            0.011,
+            0.015,
+            0.013,
+            0.014,
+            0.013,
+            0.013,
+            0.02,
+            0.012,
+            0.013,
+            0.013,
+            0.012,
+            0.011
+          ]
+        },
+        "FreshProcessPluginWorker.stop": {
+          "n": 12,
+          "median_ms": 9.283,
+          "min_ms": 8.979,
+          "max_ms": 23.186,
+          "samples_ms": [
+            9.306,
+            9.025,
+            9.261,
+            9.69,
+            9.255,
+            8.979,
+            23.186,
+            9.596,
+            9.245,
+            9.43,
+            9.198,
+            9.483
+          ]
+        },
+        "_Endpoint.close": {
+          "n": 12,
+          "median_ms": 0.228,
+          "min_ms": 0.198,
+          "max_ms": 0.256,
+          "samples_ms": [
+            0.242,
+            0.235,
+            0.234,
+            0.225,
+            0.227,
+            0.23,
+            0.256,
+            0.222,
+            0.198,
+            0.216,
+            0.219,
+            0.229
+          ]
+        },
+        "LocalEditorActionBroker.close_client": {
+          "n": 12,
+          "median_ms": 0.293,
+          "min_ms": 0.26,
+          "max_ms": 0.327,
+          "samples_ms": [
+            0.327,
+            0.292,
+            0.319,
+            0.292,
+            0.294,
+            0.299,
+            0.322,
+            0.305,
+            0.26,
+            0.265,
+            0.293,
+            0.281
+          ]
+        },
+        "Supervisor._retire_client": {
+          "n": 12,
+          "median_ms": 0.5,
+          "min_ms": 0.434,
+          "max_ms": 0.538,
+          "samples_ms": [
+            0.497,
+            0.512,
+            0.504,
+            0.503,
+            0.45,
+            0.537,
+            0.505,
+            0.538,
+            0.434,
+            0.458,
+            0.451,
+            0.482
+          ]
+        },
+        "Supervisor.close_client": {
+          "n": 6,
+          "median_ms": 11.622,
+          "min_ms": 11.513,
+          "max_ms": 35.269,
+          "samples_ms": [
+            11.607,
+            11.637,
+            11.513,
+            35.269,
+            11.525,
+            11.801
+          ]
+        },
+        "Supervisor.terminal_surface_failed": {
+          "n": 6,
+          "median_ms": 10.198,
+          "min_ms": 9.781,
+          "max_ms": 10.451,
+          "samples_ms": [
+            9.829,
+            10.451,
+            9.781,
+            10.388,
+            10.16,
+            10.237
+          ]
+        },
+        "ManagedJupyterKernel.stop": {
+          "n": 1,
+          "median_ms": 113.646,
+          "min_ms": 113.646,
+          "max_ms": 113.646,
+          "samples_ms": [
+            113.646
+          ]
+        },
+        "Supervisor.stop_kernel": {
+          "n": 1,
+          "median_ms": 113.986,
+          "min_ms": 113.986,
+          "max_ms": 113.986,
+          "samples_ms": [
+            113.986
+          ]
+        },
+        "Supervisor.close": {
+          "n": 1,
+          "median_ms": 0.068,
+          "min_ms": 0.068,
+          "max_ms": 0.068,
+          "samples_ms": [
+            0.068
+          ]
+        },
+        "HTTPServer.close_all_connections": {
+          "n": 1,
+          "median_ms": 0.128,
+          "min_ms": 0.128,
+          "max_ms": 0.128,
+          "samples_ms": [
+            0.128
+          ]
+        },
+        "BaseEventLoop.shutdown_default_executor": {
+          "n": 1,
+          "median_ms": 0.265,
+          "min_ms": 0.265,
+          "max_ms": 0.265,
+          "samples_ms": [
+            0.265
+          ]
+        }
+      },
+      "derived": {
+        "execute_return_to_first_attach": {
+          "n": 12,
+          "median_ms": 81.17,
+          "min_ms": 80.721,
+          "max_ms": 85.308,
+          "samples_ms": [
+            85.308,
+            81.988,
+            81.941,
+            81.255,
+            81.102,
+            80.721,
+            80.938,
+            81.189,
+            81.578,
+            80.903,
+            81.15,
+            81.097
+          ]
+        }
+      }
+    },
+    {
+      "instrument": false,
+      "kind": "sqlite",
+      "os": {
+        "machine": "arm64",
+        "release": "23.5.0",
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103",
+        "sysname": "Darwin"
+      },
+      "samples": 12,
+      "nvim": {
+        "minor": 11,
+        "api_level": 13,
+        "major": 0,
+        "api_compatible": 0,
+        "patch": 4,
+        "api_prerelease": false,
+        "build": null
+      },
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 150.881,
+          "min_ms": 150.881,
+          "max_ms": 150.881,
+          "samples_ms": [
+            150.881
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 735.455,
+          "min_ms": 735.455,
+          "max_ms": 735.455,
+          "samples_ms": [
+            735.455
+          ]
+        },
+        "plain_execute_response": {
+          "n": 12,
+          "median_ms": 11.901,
+          "min_ms": 11.531,
+          "max_ms": 21.133,
+          "samples_ms": [
+            21.133,
+            14.6,
+            13.067,
+            12.132,
+            11.914,
+            11.888,
+            11.722,
+            12.054,
+            11.562,
+            11.531,
+            11.543,
+            11.566
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 12,
+          "median_ms": 56.809,
+          "min_ms": 55.265,
+          "max_ms": 100.11,
+          "samples_ms": [
+            55.265,
+            56.634,
+            55.82,
+            57.333,
+            55.99,
+            56.85,
+            56.787,
+            57.136,
+            56.83,
+            58.651,
+            56.178,
+            100.11
+          ]
+        },
+        "execute_visible": {
+          "n": 12,
+          "median_ms": 252.01,
+          "min_ms": 249.943,
+          "max_ms": 472.85,
+          "samples_ms": [
+            250.515,
+            249.943,
+            251.828,
+            252.026,
+            250.719,
+            251.993,
+            250.753,
+            253.337,
+            252.934,
+            254.872,
+            472.85,
+            340.974
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 6,
+          "median_ms": 21.28,
+          "min_ms": 21.124,
+          "max_ms": 55.082,
+          "samples_ms": [
+            21.699,
+            21.255,
+            21.254,
+            21.124,
+            21.304,
+            55.082
+          ]
+        },
+        "application_quit_retired": {
+          "n": 6,
+          "median_ms": 26.154,
+          "min_ms": 25.551,
+          "max_ms": 27.143,
+          "samples_ms": [
+            27.143,
+            26.186,
+            26.122,
+            26.499,
+            25.961,
+            25.551
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 153.09,
+          "min_ms": 153.09,
+          "max_ms": 153.09,
+          "samples_ms": [
+            153.09
+          ]
+        }
+      }
+    },
+    {
+      "instrument": false,
+      "kind": "terminal",
+      "samples": 12,
+      "nvim": {
+        "minor": 11,
+        "api_level": 13,
+        "major": 0,
+        "api_compatible": 0,
+        "patch": 4,
+        "api_prerelease": false,
+        "build": null
+      },
+      "os": {
+        "release": "23.5.0",
+        "version": "Darwin Kernel Version 23.5.0: Wed May  1 20:16:51 PDT 2024; root:xnu-10063.121.3~5/RELEASE_ARM64_T8103",
+        "sysname": "Darwin",
+        "machine": "arm64"
+      },
+      "frontend": {
+        "service_connect": {
+          "n": 1,
+          "median_ms": 168.067,
+          "min_ms": 168.067,
+          "max_ms": 168.067,
+          "samples_ms": [
+            168.067
+          ]
+        },
+        "kernel_start": {
+          "n": 1,
+          "median_ms": 816.737,
+          "min_ms": 816.737,
+          "max_ms": 816.737,
+          "samples_ms": [
+            816.737
+          ]
+        },
+        "plain_execute_response": {
+          "n": 12,
+          "median_ms": 19.106,
+          "min_ms": 15.077,
+          "max_ms": 33.685,
+          "samples_ms": [
+            19.53,
+            33.685,
+            19.502,
+            19.986,
+            15.077,
+            18.71,
+            17.03,
+            15.158,
+            25.049,
+            22.86,
+            17.292,
+            16.484
+          ]
+        },
+        "execute_surface_projected": {
+          "n": 12,
+          "median_ms": 87.513,
+          "min_ms": 85.993,
+          "max_ms": 114.134,
+          "samples_ms": [
+            114.134,
+            90.192,
+            87.134,
+            85.993,
+            89.407,
+            86.918,
+            88.3,
+            86.401,
+            88.498,
+            86.507,
+            87.452,
+            87.575
+          ]
+        },
+        "execute_visible": {
+          "n": 12,
+          "median_ms": 254.972,
+          "min_ms": 252.039,
+          "max_ms": 319.698,
+          "samples_ms": [
+            319.698,
+            256.132,
+            258.333,
+            256.664,
+            256.193,
+            253.592,
+            253.812,
+            252.336,
+            262.957,
+            252.039,
+            253.015,
+            252.864
+          ]
+        },
+        "explicit_close_retired": {
+          "n": 6,
+          "median_ms": 31.886,
+          "min_ms": 30.975,
+          "max_ms": 32.613,
+          "samples_ms": [
+            32.613,
+            32.506,
+            31.632,
+            31.607,
+            30.975,
+            32.139
+          ]
+        },
+        "application_quit_retired": {
+          "n": 6,
+          "median_ms": 31.285,
+          "min_ms": 29.41,
+          "max_ms": 34.383,
+          "samples_ms": [
+            31.302,
+            30.645,
+            31.268,
+            31.797,
+            34.383,
+            29.41
+          ]
+        },
+        "service_stop": {
+          "n": 1,
+          "median_ms": 154.257,
+          "min_ms": 154.257,
+          "max_ms": 154.257,
+          "samples_ms": [
+            154.257
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -129,6 +129,15 @@ function M.run()
       "application copy blocked behind followup")
     wait_for(3000, function() return terminal_text(record.buf):find("action:copy delivered", 1, true) end,
       "application did not receive copy acknowledgment")
+    -- Attention uses the same independent application channel during busy work.
+    local attention = require('jusi.attention')
+    local active_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_chan_send(record.job_id, "action:attention\r")
+    wait_for(3000, function() return attention.count(buf, original_client) == 1 end,
+      "attention blocked behind plugin work")
+    assert(vim.api.nvim_get_current_win() == active_win, 'attention stole focus')
+    assert(require('jusi.statusline').render(active_win):find('attention:1', 1, true))
+    assert(not interrupted_response and next(session.controller.client_operations), 'attention ended plugin work')
     local old_operation = next(session.controller.client_operations)
     local snapshot
     session.controller.transport:request("GET", "/v1/health", nil, {}, function(result) snapshot = result end)
@@ -139,6 +148,18 @@ function M.run()
     assert(not interrupt_failure, vim.inspect(interrupt_failure))
     assert(interrupted_response.operation.outcome == "cancelled")
     assert(session.controller.clients[original_client] and session.interactive.surfaces[original_surface] == record)
+    jusi.disconnect(buf)
+    jusi.connect({ buf = buf })
+    wait_for(3000, function() return session.controller.transport_state == 'connected' end, 'attention reconnect failed')
+    assert(attention.count(buf, original_client) == 1, 'reconnect lost pending attention')
+    vim.api.nvim_chan_send(record.job_id, "action:clear\r")
+    wait_for(3000, function() return attention.count(buf) == 0 end, 'plugin clear did not remove attention')
+    vim.api.nvim_chan_send(record.job_id, "action:notice\r")
+    wait_for(3000, function() return attention.count(buf) == 1 end, 'completion notice did not arrive')
+    attention.show(false)
+    vim.cmd.stopinsert()
+    wait_for(3000, function() return attention.count(buf) == 0 end, 'client visit did not dismiss notice')
+    vim.api.nvim_set_current_win(active_win)
     local stale_failure
     session.controller:interrupt_client(original_client, old_operation, function(_, err) stale_failure = err end)
     wait_for(3000, function() return stale_failure ~= nil end, "stale interrupt was not rejected")
@@ -213,7 +234,9 @@ function M.run()
       wait_for(3000, function() return terminal_text(record.buf):find("action:" .. action .. " delivered", 1, true) end,
         "application open was not acknowledged")
       vim.api.nvim_win_close(0, true)
-      vim.api.nvim_set_current_buf(buf)
+      -- Closing a client-anchored export returns to the client window. Keep
+      -- it visible when returning to notebook controls for the next request.
+      vim.api.nvim_set_current_win(source_window)
     end
     local source_tab = vim.api.nvim_get_current_tabpage()
     local diff_action
@@ -257,12 +280,24 @@ function M.run()
     assert(session.controller.surfaces[first_surface_id] ~= nil)
     assert(session.controller.kernel_state == "on")
 
-    jusi.close(buf, 1)
+    -- Tab cleanup ends the exact client even during active worker work, removes
+    -- the temporary notebook mirror, and retains the source and project view.
+    for _, win in ipairs(vim.fn.win_findbuf(record.buf)) do vim.api.nvim_win_close(win, true) end
+    vim.cmd.tabnew()
+    local cleanup_tab, project_win = vim.api.nvim_get_current_tabpage(), vim.api.nvim_get_current_win()
+    local mirror_win = vim.api.nvim_open_win(buf, true, { split = 'left' })
+    vim.api.nvim_open_win(record.buf, true, { split = 'below' })
+    vim.cmd.JusiCloseTab()
     wait_for(5000, function()
       return next(session.controller.clients) == nil
         and next(session.controller.surfaces) == nil
         and next(session.interactive.surfaces) == nil
-    end, "explicit client close did not retire the terminal surface")
+        and not vim.api.nvim_win_is_valid(mirror_win)
+    end, "tab cleanup did not retire the terminal surface and notebook mirror")
+    assert(vim.api.nvim_win_is_valid(source_window) and vim.api.nvim_win_get_buf(source_window) == buf)
+    assert(vim.api.nvim_win_is_valid(project_win) and #vim.api.nvim_tabpage_list_wins(cleanup_tab) == 1)
+    vim.api.nvim_set_current_tabpage(cleanup_tab); vim.cmd('tabclose!')
+    vim.api.nvim_set_current_tabpage(source_tab)
     assert(session.controller.kernel_state == "on")
     wait_for(3000, function() return close_response or close_failure end, "close left followup hanging")
     assert(close_response and close_response.operation.outcome == "cancelled", vim.inspect(close_failure))

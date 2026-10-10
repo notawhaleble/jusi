@@ -1,0 +1,5 @@
+{
+  "action": "attention",
+  "operation": "clear",
+  "attention_id": "attn_fixture"
+}

@@ -3,6 +3,8 @@ from pathlib import Path
 from queue import Queue
 import subprocess
 import sys
+import socket
+import threading
 
 import pytest
 from types import SimpleNamespace
@@ -11,11 +13,47 @@ from jusi.application.editor_actions import EditorActionManager
 from jusi.infrastructure.editor_action_socket import LocalEditorActionBroker
 
 
+def test_idle_listener_wakes_on_close_and_closes_incomplete_requests(monkeypatch):
+    from jusi.infrastructure import editor_action_socket
+
+    waiting = threading.Event()
+    select = editor_action_socket.select.select
+
+    def observe_wait(*args):
+        waiting.set()
+        return select(*args)
+
+    monkeypatch.setattr(editor_action_socket.select, "select", observe_wait)
+    endpoint = editor_action_socket._Endpoint(lambda _: pytest.fail("incomplete request was submitted"))
+    peer = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        assert waiting.wait(1)
+        peer.settimeout(1)
+        peer.connect(endpoint.path)
+        # The client sends neither a complete frame nor EOF. Cleanup must wake
+        # both the idle accept loop and any reader already assigned this peer.
+        peer.sendall(b"\x00")
+        endpoint.close()
+        assert not endpoint.thread.is_alive()
+        assert endpoint.socket.fileno() == -1
+        assert endpoint.wakeup_reader.fileno() == -1
+        assert endpoint.wakeup_writer.fileno() == -1
+        assert not Path(endpoint.path).exists()
+        try:
+            assert peer.recv(1) == b""
+        except ConnectionResetError:
+            pass
+        endpoint.close()
+    finally:
+        endpoint.close()
+        peer.close()
+
+
 @pytest.mark.parametrize("text", ["  α\tβ\n\n", "Unicode 0 α\n" * 500000], ids=["small", "six-megabytes"])
 def test_file_helper_reads_at_target_and_waits_for_editor_confirmation(tmp_path: Path, text: str):
     notices = Queue()
     manager = EditorActionManager(notices.put, timeout=3)
-    manager.register(SimpleNamespace(client_id="cli_file", runtime_id="run_file", notebook_id="nb_file", cell_id="cell_file"))
+    manager.register(SimpleNamespace(capabilities=("editor_actions",), client_id="cli_file", runtime_id="run_file", notebook_id="nb_file", cell_id="cell_file"))
     manager.connect("editor_file", "connection_file")
     manager.bind("cli_file", "editor_file")
     broker = LocalEditorActionBroker()
@@ -56,7 +94,7 @@ def test_channel_reports_unavailable_editor_and_unblocks_on_client_close():
 
     notices = Queue()
     manager = EditorActionManager(notices.put, timeout=3)
-    manager.register(SimpleNamespace(client_id="cli_file", runtime_id="run_file", notebook_id="nb_file", cell_id="cell_file"))
+    manager.register(SimpleNamespace(capabilities=("editor_actions",), client_id="cli_file", runtime_id="run_file", notebook_id="nb_file", cell_id="cell_file"))
     broker = LocalEditorActionBroker()
     env = broker.open("cli_file", lambda content: manager.submit("cli_file", content))
     content = {"action": "copy", "text": "snapshot", "regtype": "v"}
@@ -84,7 +122,7 @@ def test_application_diff_streams_both_snapshots_and_acknowledges_display(monkey
     from jusi.editor_client import show_diff
     notices = Queue()
     manager = EditorActionManager(notices.put, timeout=3)
-    manager.register(SimpleNamespace(client_id="cli_diff", runtime_id="run_diff", notebook_id="nb_diff", cell_id="cell_diff"))
+    manager.register(SimpleNamespace(capabilities=("editor_actions",), client_id="cli_diff", runtime_id="run_diff", notebook_id="nb_diff", cell_id="cell_diff"))
     manager.connect("editor_diff", "connection_diff")
     manager.bind("cli_diff", "editor_diff")
     broker = LocalEditorActionBroker()

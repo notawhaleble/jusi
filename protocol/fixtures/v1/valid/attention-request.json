@@ -1,0 +1,6 @@
+{
+  "action": "attention",
+  "operation": "request",
+  "kind": "action_required",
+  "message": "Approval requested"
+}

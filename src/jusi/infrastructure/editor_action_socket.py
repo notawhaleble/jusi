@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import select
 import socket
 import tempfile
 import threading
@@ -21,12 +22,14 @@ class _Endpoint:
             self.socket.bind(self.path)
             os.chmod(self.path, 0o600)
             self.socket.listen(8)
-            self.socket.settimeout(.2)
+            self.socket.setblocking(False)
+            self.wakeup_reader, self.wakeup_writer = socket.socketpair()
         except OSError:
             self.socket.close()
             self.directory.cleanup()
             raise
         self.stopped = threading.Event()
+        self.close_lock = threading.Lock()
         self.slots = threading.BoundedSemaphore(32)
         self.connections: set[socket.socket] = set()
         self.lock = threading.Lock()
@@ -37,8 +40,11 @@ class _Endpoint:
     def _accept(self) -> None:
         while not self.stopped.is_set():
             try:
+                readable, _, _ = select.select([self.socket, self.wakeup_reader], [], [])
+                if self.wakeup_reader in readable or self.stopped.is_set():
+                    return
                 connection, _ = self.socket.accept()
-            except socket.timeout:
+            except BlockingIOError:
                 continue
             except OSError:
                 return
@@ -46,6 +52,10 @@ class _Endpoint:
                 connection.close()
                 continue
             with self.lock:
+                if self.stopped.is_set():
+                    connection.close()
+                    self.slots.release()
+                    return
                 self.connections.add(connection)
             threading.Thread(target=self._handle, args=(connection,), daemon=True).start()
 
@@ -55,9 +65,10 @@ class _Endpoint:
                 connection.settimeout(5)
                 with connection.makefile("rwb") as stream:
                     request = validate_application_action(read_frame(stream))
-                    if request["kind"] not in {"application.editor_action", "application.editor_action_begin"}:
+                    if request["kind"] not in {"application.editor_action", "application.editor_action_begin", "application.attention"}:
                         raise ProtocolValidationError("Expected application action request")
                     snapshot = None
+                    attention = request["kind"] == "application.attention"
                     try:
                         content = request["content"]
                         if request["kind"] == "application.editor_action_begin":
@@ -72,11 +83,11 @@ class _Endpoint:
                             content = snapshot
                         result = self.submit(content)
                     except (EditorActionError, ValueError, OSError) as exc:
-                        result = {"action_id": "", "outcome": "failed", "reason": getattr(exc, "reason", "invalid_request")}
+                        result = {"attention_id" if attention else "action_id": "", "outcome": "failed", "reason": getattr(exc, "reason", "invalid_request")}
                     finally:
                         if snapshot is not None:
                             snapshot.close()
-                    write_frame(stream, {"protocol_version": 1, "kind": "application.action_result",
+                    write_frame(stream, {"protocol_version": 1, "kind": "application.attention_result" if attention else "application.action_result",
                                          "request_id": request["request_id"], **result})
         except (OSError, ValueError, EOFError):
             pass
@@ -86,17 +97,24 @@ class _Endpoint:
             self.slots.release()
 
     def close(self) -> None:
-        self.stopped.set()
-        self.socket.close()
-        self.thread.join(timeout=1)
-        with self.lock:
-            for connection in self.connections:
-                try:
-                    connection.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-                connection.close()
-        self.directory.cleanup()
+        with self.close_lock:
+            if self.stopped.is_set():
+                return
+            self.stopped.set()
+            # Closing a listening socket in another thread does not wake accept
+            # on every platform. EOF on this private socket wakes select directly.
+            self.wakeup_writer.close()
+            self.thread.join(timeout=1)
+            self.socket.close()
+            self.wakeup_reader.close()
+            with self.lock:
+                for connection in self.connections:
+                    try:
+                        connection.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+                    connection.close()
+            self.directory.cleanup()
 
 
 class LocalEditorActionBroker:

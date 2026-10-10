@@ -1,0 +1,7 @@
+{
+  "action": "attention",
+  "operation": "request",
+  "kind": "action_required",
+  "message": "Approval requested",
+  "client_id": "cli_other"
+}

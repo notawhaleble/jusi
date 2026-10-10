@@ -74,6 +74,21 @@ function M.run()
   delivery:request(unconfirmed.action)
   assert(applied == before and delivery.seen[lost_ack].outcome == "delivered", "unconfirmed delivery was evicted")
 
+  -- A transient fetch retry must keep the original presentation context.
+  local captures, destination = 0, { win = 1001 }
+  local retrying = Delivery.new(c, function(_, _, _, context)
+    assert(context == destination, "retry replaced the captured destination")
+    return true
+  end, function() captures = captures + 1; return destination end)
+  local retry_response = vim.deepcopy(response); retry_response.action.action_id = "act_retry_destination"
+  retrying:request(retry_response.action)
+  local request_count = #requests
+  requests[#requests].callback(nil, { layer = "frontend_transport" })
+  assert(vim.wait(1000, function() return #requests > request_count end, 10))
+  requests[#requests].callback(retry_response)
+  assert(captures == 1 and acks[#acks].outcome == "delivered")
+  retrying:close()
+
   -- UTF-8 chunks stage privately, then apply once; replay never appends twice.
   local chunked = vim.deepcopy(response)
   chunked.action.action_id = "act_chunks"

@@ -1,0 +1,7 @@
+{
+  "action": "attention",
+  "operation": "update",
+  "kind": "action_required",
+  "message": "Approval requested",
+  "attention_id": "attn_fixture"
+}

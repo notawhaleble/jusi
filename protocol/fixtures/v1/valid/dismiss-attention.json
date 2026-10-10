@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_fixture",
+  "trace_id": "trace_fixture",
+  "kind": "dismiss_attention",
+  "attention_id": "attn_fixture",
+  "editor_id": "editor_id_fixture",
+  "revision": 1
+}

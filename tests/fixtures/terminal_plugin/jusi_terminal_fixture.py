@@ -28,7 +28,7 @@ def catalog_entry() -> dict:
         "families": [{
             "family_id": "terminal_fixture",
             "magic_name": "terminal_fixture",
-            "capabilities": ["execute", "followup", "complete", "interrupt", "editor_actions"],
+            "capabilities": ["execute", "followup", "complete", "interrupt", "editor_actions", "attention"],
         }],
         "kernel_extensions": ["jusi_terminal_fixture"],
         "worker_entry_point": "jusi_terminal_fixture:create_worker",
@@ -132,6 +132,7 @@ def run_application() -> int:
 
     typed = ""
     selection = ""
+    attention_id = None
 
     def draw_size(prefix: str) -> None:
         size = os.get_terminal_size(sys.stdin.fileno())
@@ -170,10 +171,17 @@ def run_application() -> int:
                 return 7
             for char in decoder.decode(value):
                 if char in "\r\n":
-                    if typed in {"action:copy", "action:open", "action:file", "action:diff"}:
+                    if typed in {"action:copy", "action:open", "action:file", "action:diff", "action:attention", "action:notice", "action:clear"}:
                         from jusi import editor_client
                         try:
-                            if typed == "action:copy":
+                            if typed in {"action:attention", "action:notice"}:
+                                attention_id = editor_client.request_attention(
+                                    kind="action_required" if typed == "action:attention" else "notice",
+                                    message="Fixture needs review" if typed == "action:attention" else "Fixture finished")
+                            elif typed == "action:clear":
+                                if attention_id:
+                                    editor_client.clear_attention(attention_id)
+                            elif typed == "action:copy":
                                 editor_client.copy(selection)
                             elif typed == "action:diff":
                                 editor_client.show_diff(selection, selection + "\nchanged α",

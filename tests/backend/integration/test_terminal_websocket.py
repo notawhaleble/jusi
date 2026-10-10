@@ -117,6 +117,48 @@ def test_terminal_websocket_relays_control_and_opaque_bytes() -> None:
     asyncio.run(scenario())
 
 
+def test_idle_terminal_disconnect_wakes_its_executor_reader():
+    async def idle_scenario():
+        loop = asyncio.get_running_loop()
+        entered, finished = asyncio.Event(), asyncio.Event()
+
+        class ObservedQueue(queue.Queue):
+            def get(self, block=True, timeout=None):
+                loop.call_soon_threadsafe(entered.set)
+                try:
+                    return super().get(block, timeout=30)
+                finally:
+                    loop.call_soon_threadsafe(finished.set)
+
+        supervisor = FakeSurfaceSupervisor()
+        supervisor.attachment.chunks = ObservedQueue()
+        sockets = tornado.netutil.bind_sockets(0, address="127.0.0.1")
+        server = tornado.httpserver.HTTPServer(make_application(supervisor))
+        server.add_sockets(sockets)
+        port = sockets[0].getsockname()[1]
+        connection = await tornado.websocket.websocket_connect(
+            f"ws://127.0.0.1:{port}/v1/surfaces/srf_test/terminal",
+            subprotocols=["jusi.terminal.v1"],
+        )
+        try:
+            await connection.write_message(json.dumps({
+                "protocol_version": 1, "kind": "attach", "surface_id": "srf_test",
+                "attachment_id": "att_test", "cursor": "0", "rows": 21, "columns": 79,
+            }))
+            assert json.loads(await asyncio.wait_for(connection.read_message(), 2))["kind"] == "attached"
+            await asyncio.wait_for(entered.wait(), 2)
+            connection.close()
+            await asyncio.wait_for(supervisor.detached.wait(), 2)
+            await asyncio.wait_for(finished.wait(), 1)
+        finally:
+            supervisor.attachment.chunks.put(TerminalChunk(0, b""))
+            connection.close()
+            server.stop()
+            await server.close_all_connections()
+
+    asyncio.run(idle_scenario())
+
+
 class RealSurfaceSupervisor:
     def __init__(self, manager: TerminalSurfaceManager) -> None:
         self.manager = manager

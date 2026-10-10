@@ -79,3 +79,15 @@ worker and terminal application. CI enforces the import boundaries instead of
 these machine-dependent elapsed times. Future SQL work should retain a
 diagnostic execute-to-first-draw benchmark and record warm/cold process and
 target conditions when changing this baseline.
+
+## Plugin Lifecycle Profile
+
+The [2026-10-09 local plugin profile](performance/plugin-cells-2026-10-09.md)
+records fresh-worker/bridge/application startup, explicit close, application
+quit and whole-service exit, with a normal-service control run and executable
+development harness. These diagnostic measurements do not impose CI timing
+thresholds.
+
+The [optimization follow-up](performance/plugin-cells-optimization-2026-10-09.md)
+records the implemented wakeup/import changes and controlled before/after
+measurements, while retaining the original raw baseline.

@@ -28,11 +28,12 @@ local command_fields = {
   interrupt_client = { "client_id", "operation_id" },
   editor_action = { "client_id", "action" },
   ack_editor_action = { "action_id", "editor_id", "outcome" },
+  dismiss_attention = { "attention_id", "editor_id" },
   restart_notebook = { "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name" },
 }
 local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
-local operations = set({ "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "ack_editor_action", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events" })
-local event_kinds = set({ "editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
+local operations = set({ "attention", "dismiss_attention", "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "ack_editor_action", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events" })
+local event_kinds = set({ "client.attention_changed", "editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
 local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
@@ -103,7 +104,7 @@ local function validate_client(client)
   for _, field in ipairs({ "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "created_at" }) do
     if not nonempty_string(client[field]) then return false, "invalid client identity" end
   end
-  local allowed_capabilities = set({ "execute", "followup", "complete", "interrupt", "editor_actions" })
+  local allowed_capabilities = set({ "execute", "followup", "complete", "interrupt", "editor_actions", "attention" })
   if type(client.capabilities) ~= "table" then return false, "invalid client capabilities" end
   local seen = {}
   for _, capability in ipairs(client.capabilities) do
@@ -199,6 +200,11 @@ local function validate_event_payload(event)
   local payload = event.payload
   local kind = event.kind
   local ok, err
+  if kind == "client.attention_changed" then
+    if not M.validate_attention(payload) or event.resource.kind ~= "client" or event.resource.id ~= payload.client_id
+        or event.operation ~= "attention" or event.layer ~= "client" then return false, "invalid attention event" end
+    return true
+  end
   if kind == "editor_action.requested" then
     local valid, error = M.validate_editor_action_metadata(payload)
     if not valid then return false, error end
@@ -324,6 +330,11 @@ function M.validate_command(command, expected_kind)
     if command.client_id ~= nil and not nonempty_string(command.client_id) then
       return false, "invalid completion client identity"
     end
+  end
+  if expected_kind == "dismiss_attention" then
+    allowed.revision = true
+    if type(command.revision) ~= "number" or command.revision % 1 ~= 0
+        or command.revision < 1 or command.revision > 9007199254740991 then return false, "invalid attention revision" end
   end
   if expected_kind == "editor_action" then
     allowed.selection = true
@@ -557,6 +568,19 @@ function M.validate_health_response(response)
         or not set({ "followup", "complete", "editor_action" })[operation.kind] then return false, "invalid active client operation" end
   end
 
+  local attention = response.attention or {}
+  if type(attention) ~= "table" or not vim.islist(attention) or #attention > 256 then return false, "invalid attention list" end
+  local seen_attention = {}
+  for _, item in ipairs(attention) do
+    if not M.validate_attention(item) or item.state ~= "pending" or seen_attention[item.attention_id] then return false, "invalid attention item" end
+    seen_attention[item.attention_id] = true
+    local found = false
+    for _, client in ipairs(response.clients) do
+      if client.client_id == item.client_id and client.runtime_id == item.runtime_id
+          and client.notebook_id == item.notebook_id and client.cell_id == item.cell_id then found = true end
+    end
+    if not found then return false, "attention ownership mismatch" end
+  end
   local actions = response.editor_actions or {}
   if type(actions) ~= "table" or not vim.islist(actions) or #actions > 32 then return false, "invalid pending editor actions" end
   local seen_actions = {}
@@ -581,7 +605,7 @@ function M.validate_plugin_catalog(catalog)
   local top = { protocol_version = true, catalog_version = true, discovery_id = true, plugins = true }
   for field, _ in pairs(catalog) do if not top[field] then return false, "unknown plugin catalog field: " .. field end end
   local ids = {}
-  local capabilities = set({ "execute", "followup", "complete", "interrupt", "editor_actions" })
+  local capabilities = set({ "execute", "followup", "complete", "interrupt", "editor_actions", "attention" })
   local interactions = set({ "noninteractive", "request_response", "terminal_interactive" })
   local plugin_fields = set({ "plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction" })
   local family_by_id = {}
@@ -793,7 +817,14 @@ function M.validate_application_action(value)
   if type(value) ~= "table" or value.protocol_version ~= 1 or not bounded_string(value.request_id, 3, 128) then
     return false, "invalid application action envelope"
   end
-  if value.kind == "application.editor_action" or value.kind == "application.editor_action_begin" then
+  if value.kind == "application.attention" then
+    if not exact_fields(value, { "protocol_version", "kind", "request_id", "content" }) then return false, "invalid attention envelope" end
+    return M.validate_attention_request(value.content)
+  elseif value.kind == "application.attention_result" then
+    return exact_fields(value, { "protocol_version", "kind", "request_id", "attention_id", "outcome", "reason" })
+      and bounded_string(value.attention_id, 0, 128) and bounded_string(value.reason, 0, 128)
+      and (value.outcome == "accepted" or value.outcome == "failed"), "invalid attention result"
+  elseif value.kind == "application.editor_action" or value.kind == "application.editor_action_begin" then
     local ok = exact_fields(value, { "protocol_version", "kind", "request_id", "content" })
     if not ok or type(value.content) ~= "table" then return false, "invalid application action request" end
     if value.kind == "application.editor_action_begin" and value.content.text ~= "" then return false, "invalid stream header" end
@@ -837,6 +868,38 @@ function M.validate_editor_action_ack(value)
     return false, "invalid acknowledgment result"
   end
   return true
+end
+
+local function attention_message(value)
+  return (value.kind == "notice" or value.kind == "action_required") and type(value.message) == "string"
+    and vim.fn.strchars(value.message) >= 1 and vim.fn.strchars(value.message) <= 240
+    and not value.message:find('[%z\1-\31\127]')
+end
+function M.validate_attention_request(value)
+  if type(value) ~= "table" or value.action ~= "attention" then return false, "invalid attention request" end
+  local fields = { "action", "operation" }
+  if value.operation == "request" or value.operation == "update" then
+    vim.list_extend(fields, { "kind", "message" })
+    if not attention_message(value) then return false, "invalid attention message" end
+  end
+  if value.operation == "clear" or value.operation == "update" then
+    fields[#fields+1] = "attention_id"
+    if not bounded_string(value.attention_id, 3, 128) then return false, "invalid attention identity" end
+  end
+  return set({ "request", "update", "clear" })[value.operation] == true and exact_fields(value, fields), "invalid attention fields"
+end
+function M.validate_attention(value)
+  local ids = { "attention_id", "client_id", "runtime_id", "notebook_id", "cell_id" }
+  if type(value) ~= "table" then return false, "invalid attention record" end
+  for _, key in ipairs(ids) do if not bounded_string(value[key], 3, 128) then return false, "invalid attention identity" end end
+  local fields = vim.list_extend(vim.deepcopy(ids), { "editor_id", "kind", "message", "revision", "state" })
+  return exact_fields(value, fields) and attention_message(value) and bounded_string(value.editor_id, 0, 128)
+    and (value.state == "pending" or value.state == "cleared") and type(value.revision) == "number"
+    and value.revision % 1 == 0 and value.revision >= 1 and value.revision <= 9007199254740991, "invalid attention record"
+end
+function M.validate_attention_ack(value)
+  return type(value) == "table" and exact_fields(value, { "ok", "attention_id", "dismissed" })
+    and value.ok == true and value.dismissed == true and bounded_string(value.attention_id, 3, 128), "invalid attention acknowledgment"
 end
 
 return M

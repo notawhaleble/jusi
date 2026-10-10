@@ -71,10 +71,24 @@ class EventLog:
                     raise EventCursorExpired(after, earliest)
             return [dict(event) for event in self._events if event["sequence"] > after]
 
-    def wait_after(self, after: int, *, timeout: float) -> list[dict[str, Any]]:
+    def wake_waiters(self) -> None:
+        """Wake readers whose owning transport has closed or been cancelled."""
         with self._condition:
+            self._condition.notify_all()
+
+    def wait_after(
+        self, after: int, *, timeout: float, cancelled: threading.Event | None = None,
+    ) -> list[dict[str, Any]]:
+        with self._condition:
+            if cancelled is not None and cancelled.is_set():
+                return []
             events = self.events_after(after)
             if events:
                 return events
-            self._condition.wait(timeout)
+            self._condition.wait_for(
+                lambda: self._sequence > after or (cancelled is not None and cancelled.is_set()),
+                timeout,
+            )
+            if cancelled is not None and cancelled.is_set():
+                return []
             return self.events_after(after)

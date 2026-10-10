@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.5 — 2026-10-10
+
+- Add client-owned attention requests and completion notices, with statusline
+  counts, tab indicators, `:JusiAttention`, and optional notification hooks.
+- Add `:JusiCloseTab` / `\Q` to clean up the current notebook’s visible
+  artifacts in the current tab while preserving its last view and running kernel.
+- Wake owned readers when transports close and reduce startup imports, improving
+  plugin launch, close, and service shutdown latency.
+- Keep application-driven editor opens anchored to the requesting client window
+  throughout transfer and retries; fail delivery if that window is unavailable.
+
 ## 1.0.4 — 2026-10-05
 
 - Restore the notebook statusline when switching notebooks in the same window.

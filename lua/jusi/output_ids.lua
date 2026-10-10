@@ -10,7 +10,8 @@ function M.attach(buf)
   vim.api.nvim_create_autocmd('BufWipeout', { buffer = buf, once = true, callback = function() buffers[id] = nil end })
   vim.api.nvim_buf_call(buf, function()
     for key, callback in pairs({ G = function() require('jusi').goto_number(vim.v.count) end,
-        Q = function() require('jusi').close_number(vim.v.count) end }) do
+        Q = function() require('jusi').close_number(vim.v.count) end,
+        ['\\Q'] = function() require('jusi').close_tab() end }) do
       if vim.fn.maparg(key, 'n') == '' then vim.keymap.set('n', key, callback, { buffer = buf, silent = true }) end
     end
   end)

@@ -36,6 +36,7 @@ end
 
 function Delivery:finish(action, record, outcome)
   discard(record)
+  record.context = nil
   record.outcome = outcome
   record.expires = vim.uv.hrtime() + 35e9
   self:ack(action, record)
@@ -65,6 +66,14 @@ function Delivery:request(action, attempt)
     self:finish(action, record, "failed")
     return
   end
+  if not record.captured then
+    record.captured = true
+    if self.capture then record.context = self.capture(action) end
+    if record.context == false then
+      self:finish(action, record, "failed")
+      return
+    end
+  end
   record.fetching = true
   local epoch, started = c.supervisor_id, vim.uv.hrtime()
   c.transport:request("GET", "/v1/editor-actions/" .. action.action_id .. "?editor_id=" .. c.editor_id .. "&offset=" .. (record.offset or 0),
@@ -73,9 +82,12 @@ function Delivery:request(action, attempt)
       if self.closed or record.cancelled then discard(record); return end
       if failure then
         discard(record)
-        self.seen[action.action_id] = nil
         if failure.layer == "frontend_transport" and (attempt or 0) < 3 then
+          -- Restart content staging without changing the captured destination.
+          record.offset, record.header = nil, nil
           vim.defer_fn(function() self:request(action, (attempt or 0) + 1) end, 250)
+        else
+          self.seen[action.action_id] = nil
         end
         return
       end
@@ -110,12 +122,12 @@ function Delivery:request(action, attempt)
             local closed = record.file:close(); record.file = nil
             local stat = vim.uv.fs_stat(record.path)
             if closed and stat and stat.size == record.offset then
-              local ok, result = pcall(self.apply, record.header, action, record.path)
+              local ok, result = pcall(self.apply, record.header, action, record.path, record.context)
               delivered = ok and result ~= nil and result ~= false
             end
           end
         else
-          local ok, result = pcall(self.apply, response.content, action)
+          local ok, result = pcall(self.apply, response.content, action, nil, record.context)
           delivered = ok and result ~= nil and result ~= false
         end
       end
@@ -143,8 +155,8 @@ function Delivery:close()
   end
 end
 
-function M.new(controller, apply)
-  local self = setmetatable({ controller = controller, apply = apply, seen = {}, completed = {} }, Delivery)
+function M.new(controller, apply, capture)
+  local self = setmetatable({ controller = controller, apply = apply, capture = capture, seen = {}, completed = {} }, Delivery)
   self.exit_autocmd = vim.api.nvim_create_autocmd("VimLeavePre", { once = true, callback = function() self:close() end })
   return self
 end

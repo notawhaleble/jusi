@@ -10,7 +10,7 @@ from jusi.application.editor_actions import EditorActionError, EditorActionManag
 def setup(timeout=1):
     notices = Queue()
     manager = EditorActionManager(notices.put, timeout=timeout)
-    manager.register(SimpleNamespace(client_id="cli_one", runtime_id="run_one", notebook_id="nb_one", cell_id="cell_one"))
+    manager.register(SimpleNamespace(capabilities=("editor_actions",), client_id="cli_one", runtime_id="run_one", notebook_id="nb_one", cell_id="cell_one"))
     manager.connect("editor_one", "connection_one")
     manager.bind("cli_one", "editor_one")
     return manager, notices

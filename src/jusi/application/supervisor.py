@@ -69,7 +69,7 @@ class Supervisor:
         self._terminal_surfaces = terminal_surfaces
         self._runtime_configuration = runtime_configuration
         self._editor_action_broker = editor_action_broker
-        self.editor_actions = EditorActionManager(self._publish_editor_action)
+        self.editor_actions = EditorActionManager(self._publish_editor_action, publish_attention=self._publish_attention)
         if terminal_surfaces is not None:
             terminal_surfaces.set_fatal_handler(self.terminal_surface_failed)
         self._operation_lock = threading.RLock()
@@ -99,7 +99,7 @@ class Supervisor:
         )
 
     def health(self) -> dict[str, Any]:
-        with self._state_lock:
+        with self._state_lock, self.editor_actions.inspection_lock():
             active_execution = self._active_kernel_execution
             return {
                 "status": "ready",
@@ -111,6 +111,7 @@ class Supervisor:
                 "executions": [active_execution[0].to_dict()] if active_execution is not None else [],
                 "client_operations": list(self._client_operations.values()),
                 "editor_actions": self.editor_actions.pending(),
+                "attention": self.editor_actions.pending_attention(),
                 "pending_input": dict(self._pending_input) if self._pending_input is not None else None,
                 "clients": [client.to_dict() for client in self._clients.values()],
                 "surfaces": [surface.to_dict() for surface in self._surfaces.values()],
@@ -119,6 +120,20 @@ class Supervisor:
     def _publish_editor_action(self, metadata: dict[str, str]) -> None:
         self.events.append(trace_id=metadata["trace_id"], layer="client", operation="editor_action",
             kind="editor_action.requested", resource=ResourceRef("client", metadata["client_id"]), payload=metadata)
+
+    def _publish_attention(self, item: dict) -> None:
+        self.events.append(trace_id=new_id("trace"), layer="client", operation="attention",
+            kind="client.attention_changed", resource=ResourceRef("client", item["client_id"]), payload=item)
+
+    def _submit_application(self, client_id: str, content):
+        if isinstance(content, dict) and content.get("action") == "attention":
+            with self._state_lock:
+                return self.editor_actions.attention(client_id, content)
+        return self.editor_actions.submit(client_id, content)
+
+    def dismiss_attention(self, attention_id: str, editor_id: str, revision: int) -> dict:
+        with self._state_lock:
+            return self.editor_actions.dismiss_attention(attention_id, editor_id, revision)
 
     def record_failure(self, failure: Failure) -> None:
         self._emit_failure(failure)
@@ -833,10 +848,10 @@ class Supervisor:
                     )
                     assert self._terminal_surfaces is not None
                     try:
-                        if "editor_actions" in client.capabilities and self._editor_action_broker is not None:
+                        if {"editor_actions", "attention"}.intersection(client.capabilities) and self._editor_action_broker is not None:
                             self.editor_actions.register(client)
                             environment = self._editor_action_broker.open(client_id,
-                                lambda content, owner=client_id: self.editor_actions.submit(owner, content))
+                                lambda content, owner=client_id: self._submit_application(owner, content))
                             request = replace(request, environment_overrides={**request.environment_overrides, **environment})
                         self._terminal_surfaces.prepare(surface, request)
                     except (TerminalSurfaceError, OSError) as exc:

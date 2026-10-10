@@ -322,7 +322,8 @@ local function test_editor_open_anchors_to_requesting_client_in_project_tab()
   vim.api.nvim_buf_set_lines(notebook_buf, 0, -1, false, { '╭──', '1', '╰──' })
   local session = jusi.connect({ buf = notebook_buf, transport = FakeTransport.new() })
   local client_buf = vim.api.nvim_create_buf(false, true)
-  local client = { client_id = 'cli_open_position', cell_id = session.model:cell_at_row(1).id }
+  local client = { client_id = 'cli_open_position', runtime_id = 'run_open_position', cell_id = session.model:cell_at_row(1).id }
+  session.controller.clients[client.client_id] = client
   session.interactive.surfaces.srf_open_position = { buf = client_buf, client = client }
   local first_client = vim.api.nvim_open_win(client_buf, false, { split = 'below', win = notebook_win })
   local first_tab = vim.api.nvim_get_current_tabpage()
@@ -333,14 +334,43 @@ local function test_editor_open_anchors_to_requesting_client_in_project_tab()
   local mirror = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(mirror, notebook_buf)
   local client_win = vim.api.nvim_open_win(client_buf, true, { split = 'right', win = mirror })
-  local function open_snapshot()
-    return session.editor_delivery.apply({ action = 'open', text = 'selected value',
-      name = 'value.txt', filetype = 'text' }, { client_id = client.client_id })
+  local pending, outcome, sequence = nil, nil, 0
+  session.controller.transport.request = function(_, method, _, payload, _, callback)
+    if method == 'GET' then pending = callback
+    else
+      outcome = payload.outcome
+      callback({ ok = true, delivery = { action_id = payload.action_id, outcome = outcome, reason = '' } })
+    end
   end
-  local function check_open(anchor)
+  local function begin_snapshot()
+    sequence = sequence + 1
+    pending, outcome = nil, nil
+    local action = { action = 'open', action_id = 'act_position_' .. sequence, client_id = client.client_id,
+      runtime_id = client.runtime_id, cell_id = client.cell_id, notebook_id = session.model.notebook_id,
+      editor_id = session.controller.editor_id, trace_id = 'trace_open_position' }
+    session.controller.on_editor_action(action)
+    return { ok = true, action = action, remaining_ms = 29000,
+      content = { action = 'open', text = 'selected value', name = 'value.txt', filetype = 'text' } }
+  end
+  local function open_snapshot(during_transfer)
+    local response = begin_snapshot()
+    assert(pending, 'visible client did not start delivery')
+    if during_transfer then
+      -- Exercise the chunked remote path and change focus before the last chunk.
+      response.offset, response.next_offset, response.eof = 0, #response.content.text, false
+      pending(vim.deepcopy(response))
+      during_transfer()
+      response.offset, response.eof = response.next_offset, true
+      response.content.text = ''
+    end
+    pending(response)
+    equal(outcome, 'delivered')
+    return vim.api.nvim_get_current_buf()
+  end
+  local function check_open(anchor, during_transfer)
     local position = vim.api.nvim_win_get_position(anchor)
     local width = vim.api.nvim_win_get_width(anchor)
-    local exported = assert(open_snapshot())
+    local exported = assert(open_snapshot(during_transfer))
     local opened = vim.api.nvim_get_current_win()
     equal(vim.api.nvim_get_current_tabpage(), project_tab, 'open jumped to the original notebook tab')
     equal(vim.api.nvim_win_get_position(opened)[2], position[2], 'open split was not below the requesting client')
@@ -349,7 +379,17 @@ local function test_editor_open_anchors_to_requesting_client_in_project_tab()
     vim.api.nvim_win_close(opened, true)
     vim.api.nvim_buf_delete(exported, { force = true })
   end
+  local switchbuf = vim.o.switchbuf
+  vim.o.switchbuf = 'useopen,usetab'
+  check_open(client_win, function() vim.api.nvim_set_current_win(first_client) end)
+  -- Notebook placement, including being entirely hidden, is irrelevant.
+  local unrelated = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_win_set_buf(notebook_win, unrelated)
+  vim.api.nvim_win_set_buf(mirror, unrelated)
+  vim.api.nvim_set_current_win(client_win)
   check_open(client_win)
+  vim.api.nvim_win_set_buf(notebook_win, notebook_buf)
+  vim.api.nvim_win_set_buf(mirror, notebook_buf)
   -- If focus has moved back to the mirrored notebook, keep the client anchor
   -- in this tab rather than choosing its earlier view in the first tab.
   vim.api.nvim_set_current_win(mirror)
@@ -359,11 +399,28 @@ local function test_editor_open_anchors_to_requesting_client_in_project_tab()
   check_open(other_view)
   equal(vim.api.nvim_win_call(notebook_win, function() return vim.fn.winlayout() end), first_layout,
     'opening snapshots changed the original notebook tab')
+  -- Reusing the captured window must not redirect to the other client view,
+  -- the notebook, or an unrelated replacement buffer.
+  vim.api.nvim_set_current_win(other_view)
+  local response = begin_snapshot()
+  vim.api.nvim_win_set_buf(other_view, unrelated)
+  pending(response)
+  equal(outcome, 'failed')
+  equal(vim.api.nvim_get_current_win(), other_view)
+  vim.api.nvim_win_set_buf(other_view, client_buf)
+  response = begin_snapshot()
   vim.api.nvim_win_close(other_view, true)
+  local before = vim.api.nvim_get_current_win()
+  pending(response)
+  equal(outcome, 'failed')
+  equal(vim.api.nvim_get_current_win(), before)
   vim.api.nvim_win_close(client_win, true)
   vim.api.nvim_win_close(first_client, true)
   vim.api.nvim_set_current_win(mirror)
-  check_open(mirror) -- Hidden client falls back to the current-tab notebook.
+  begin_snapshot()
+  equal(outcome, 'failed', 'hidden client fell back to a notebook window')
+  equal(pending, nil, 'hidden client unnecessarily fetched content')
+  vim.o.switchbuf = switchbuf
   vim.api.nvim_set_current_tabpage(first_tab)
   equal(vim.fn.winlayout(), { 'leaf', notebook_win })
   vim.api.nvim_set_current_tabpage(project_tab)
@@ -372,6 +429,7 @@ local function test_editor_open_anchors_to_requesting_client_in_project_tab()
   vim.api.nvim_set_current_tabpage(first_tab)
   vim.cmd('tabclose!')
   vim.api.nvim_buf_delete(notebook_buf, { force = true })
+  vim.api.nvim_buf_delete(unrelated, { force = true })
   vim.api.nvim_set_current_win(original)
 end
 

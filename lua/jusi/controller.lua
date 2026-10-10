@@ -55,6 +55,7 @@ function Controller:_accept_health_snapshot(response)
     return nil, self:_transport_failure("protocol_violation", validation_error)
   end
   self.pending_editor_actions = response.editor_actions or {}
+  self.pending_attention = response.attention or {}
   local kernel = response.kernel
   if kernel == vim.NIL then
     kernel = nil
@@ -196,6 +197,7 @@ function Controller:connect(callback)
       editor_id = self.editor_id,
       on_open = function()
         self.transport_state = "connected"
+        if self.on_attention_snapshot then self.on_attention_snapshot(self.pending_attention or {}) end
         if self.on_state_changed then self.on_state_changed() end
         if self.on_editor_action then
           for _, action in ipairs(self.pending_editor_actions or {}) do self.on_editor_action(action) end
@@ -421,6 +423,8 @@ function Controller:_on_event(event)
     end
   end
   if event.kind == "editor_action.requested" and self.on_editor_action then self.on_editor_action(event.payload) end
+  if event.kind == "client.attention_changed" and self.on_attention then self.on_attention(event.payload) end
+  if event.kind == "client.closed" and self.on_attention_closed then self.on_attention_closed(event.resource.id) end
   if self.on_status_event then self.on_status_event(event) end
   if self.on_event then
     self.on_event(event)

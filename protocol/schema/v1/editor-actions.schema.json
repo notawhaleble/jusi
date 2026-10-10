@@ -404,6 +404,8 @@
     }
   },
   "oneOf": [
+    {"$ref": "attention.schema.json#/$defs/application"},
+    {"$ref": "attention.schema.json#/$defs/result"},
     {
       "$ref": "#/$defs/request"
     },

@@ -1,10 +1,16 @@
 # Jusi 1.0 Status
 
-Updated: 2026-10-05
+Updated: 2026-10-10
 
 ## Current Facts
 
-- Application-driven open (including VisiData Ctrl-O) anchors snapshots to the requesting client's window, preferring its active/current-tab view before falling back to a visible notebook. Mirrored notebooks no longer redirect opens to their original tab. See [Incident 0026](incidents/0026-editor-open-used-original-notebook-tab.md).
+- Core `:JusiCloseTab` / `\Q` cleans up the current notebook's visible artifacts in the current tab and closes extra notebook views while retaining the last view and running kernel. Shared clients remain usable in other tabs; hidden clients and unrelated project windows are preserved. See [ADR 0050](adr/0050-current-tab-notebook-cleanup.md) and [useful commands](useful-commands.md#clean-up-the-current-notebook-view).
+
+- Client-owned attention now supports action-required requests and completion notices through the private application channel, with reconnect snapshots, exact notice dismissal, statusline counts, persistent native tab backgrounds, `:JusiAttention`, and optional host-side bell/notification hooks. Visible client windows determine tab ownership; hidden clients fall back to notebook views. Custom tablines remain untouched. Application prompts and approvals remain plugin-owned. See [ADR 0049](adr/0049-client-attention.md) and the [plugin guide](architecture/client-attention.md).
+
+- Plugin lifecycle optimization reduced local bundled VisiData execute-to-visible from 309 to 264 ms, explicit close from 185 to 21 ms, application quit from 185 to 28 ms, and owned service/kernel stop from 1.18 s to 153 ms. Transport close now wakes owned socket/SSE/terminal readers; fresh processes avoid version-metadata and annotation-only imports. See [before/after measurements](performance/plugin-cells-optimization-2026-10-09.md), [ADR 0048](adr/0048-owned-waits-wake-on-transport-close.md), and [Incident 0027](incidents/0027-idle-waits-delayed-plugin-cleanup.md).
+
+- Application-driven open (including shell helpers and VisiData Ctrl-O) captures the requesting client's window before content transfer and retains that anchor through chunks/retries. Notebook fallback is removed; a hidden, closed or repurposed client window fails delivery instead of redirecting it. The follow-up report's other-machine frontend version remains unverified. See [Incident 0026](incidents/0026-editor-open-used-original-notebook-tab.md).
 
 - Switching notebooks in one window now reinstalls the notebook statusline. Missing local terminal-bridge executables report a client-scoped presentation launch failure; failed launches leave no empty projection. The installation guide now shows the required host-side venv bridge path for Docker. See [Incident 0025](incidents/0025-second-notebook-statusline-and-terminal-bridge-launch.md).
 
@@ -12,11 +18,9 @@ Updated: 2026-10-05
 
 - Local history edits now repair native fold boundaries before collapse, including a missing fold; ordinary body typing keeps its local path. Explicit cell-mode toggles resync Insert state so Normal mappings, border overlays and the badge agree. See [Incident 0023](incidents/0023-history-fold-range-and-cell-mode-visual-drift.md).
 
-- **Jusi 1.0.4 is released.** [PyPI](https://pypi.org/project/jusi/1.0.4/)
-  and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.4)
-  are public. Tag `v1.0.4` identifies `795e78e`; GitHub assets include the
-  verified wheel, sdist and checksums. Installation now includes explicit
-  venv/Docker targets; the [useful commands guide](useful-commands.md) includes JShell.
+- **Jusi 1.0.5 is being prepared for release.** The candidate includes client
+  attention, current-tab cleanup, transport-close wakeups, and anchored editor
+  delivery. Publication and release checks are pending.
 
 - Busy established plugin operations no longer hold the kernel execution lane. Different clients and Python cells can run concurrently; same-client overlap receives a recoverable conflict. Initial construction remains a bounded serialized handoff. See [ADR 0047](adr/0047-plugin-work-does-not-own-the-kernel-lane.md) and [Incident 0022](incidents/0022-busy-plugin-blocked-kernel-execution.md).
 
@@ -26,13 +30,10 @@ Updated: 2026-10-05
 
 - Managed-kernel liveness now polls the owned process directly. A reproduced inherited-asyncio-loop error in Jupyter's synchronous wrapper previously reported a live kernel as dead and triggered runtime cleanup. The Codex-session report's original trigger remains unconfirmed. See [Incident 0019](incidents/0019-liveness-wrapper-falsely-reported-kernel-death.md).
 
-- Release validation passed 262 Python tests with one opt-in skip, both Neovim
-  suites, metadata, archive and checksum checks, and isolated base/VisiData
-  installation. Fresh downloads from production PyPI and GitHub match the
-  verified artifacts. A clean PyPI installation verified the public frontend
-  tag, default `install-skills` release-tag fetch, notebook conversion, and the
-  documented venv target with VisiData copy/open without adding its bin to PATH.
-  Docker recipe execution remains unverified because the local daemon is unavailable.
+- Previous 1.0.4 release validation covered all source suites, isolated
+  base/VisiData installation, and production artifact delivery. Validation of
+  1.0.5 is pending. Real remote transport-loss review and independent skill
+  evaluation remain deferred; the Docker recipe remains unverified.
 
 - Release-facing documentation separates the README quick start, user guide, contributor setup and release procedure. The recorded GIF is embedded in the GitHub README; the source demo notebook and walkthrough are in `examples/`, and the recorded MP4 is attached to the GitHub release.
 

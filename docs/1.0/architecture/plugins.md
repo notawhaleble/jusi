@@ -186,3 +186,10 @@ calling the blocking delivery helper; success means editor acknowledgment.
 `jusivim PATH` reads at the application target. No plugin-specific Lua, terminal
 escape command, or shared frontend filesystem is involved. Writeback and
 application-originated interruptible work publication remain separate contracts.
+
+## Attention
+
+Terminal applications can declare the `attention` capability to publish durable
+requests for user activity or completion notices independently of busy worker
+operations. See [client attention](client-attention.md) for the Python helpers,
+frontend controls, ownership and cleanup contract.

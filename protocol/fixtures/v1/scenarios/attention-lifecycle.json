@@ -1,0 +1,49 @@
+{
+  "request": {
+    "action": "attention",
+    "operation": "request",
+    "kind": "action_required",
+    "message": "Approval requested"
+  },
+  "pending": {
+    "attention_id": "attn_fixture",
+    "client_id": "client_id_fixture",
+    "runtime_id": "runtime_id_fixture",
+    "notebook_id": "notebook_id_fixture",
+    "cell_id": "cell_id_fixture",
+    "editor_id": "editor_id_fixture",
+    "kind": "action_required",
+    "message": "Approval requested",
+    "revision": 1,
+    "state": "pending"
+  },
+  "update": {
+    "attention_id": "attn_fixture",
+    "client_id": "client_id_fixture",
+    "runtime_id": "runtime_id_fixture",
+    "notebook_id": "notebook_id_fixture",
+    "cell_id": "cell_id_fixture",
+    "editor_id": "editor_id_fixture",
+    "kind": "action_required",
+    "message": "Question ready",
+    "revision": 2,
+    "state": "pending"
+  },
+  "clear": {
+    "attention_id": "attn_fixture",
+    "client_id": "client_id_fixture",
+    "runtime_id": "runtime_id_fixture",
+    "notebook_id": "notebook_id_fixture",
+    "cell_id": "cell_id_fixture",
+    "editor_id": "editor_id_fixture",
+    "kind": "action_required",
+    "message": "Approval requested",
+    "revision": 3,
+    "state": "cleared"
+  },
+  "assertions": {
+    "duplicate_alerts": 0,
+    "focus_changes": 0,
+    "kernel_state": "on"
+  }
+}

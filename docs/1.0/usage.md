@@ -110,6 +110,7 @@ Notebook Normal-mode shortcuts use a literal backslash, independent of mapleader
 
 | Key | Action |
 | --- | --- |
+| `\Q` | Clean up this notebook's current-tab outputs and extra notebook views |
 | `\a` / `\b` | New cell above / below |
 | `\c` / `\x` | Edit / delete cell |
 | `\y` / `\p` | Copy cell / paste below |
@@ -119,6 +120,13 @@ Notebook Normal-mode shortcuts use a literal backslash, independent of mapleader
 | `\ii` / `\00` | Interrupt / restart |
 | `\q` / `{id}\q` | Close current / numbered output |
 | `{id}\g` | Jump to numbered output's cell |
+
+`\Q` (or `:JusiCloseTab`) closes this notebook's outputs in the current tab and
+removes its notebook windows while another notebook view remains. The last
+notebook view is retained. Clients also visible in another tab are preserved;
+only their current-tab windows close. Hidden clients and unrelated project
+windows are left alone. It works in both notebook modes and output Normal mode;
+the kernel keeps running. Cleanup failure retains the notebook view for retry.
 
 Existing custom mappings take precedence. Ordinary `G` keeps its native behavior
 outside cell mode; uncounted `G` in cell mode also goes to the last line.
@@ -264,3 +272,13 @@ Applications can call `jusi.editor_client.show_diff(before, after, ...)` to
 display read-only snapshots in a new native Neovim diff tab. This uses the same
 remote-capable transfer channel as copy/open and acknowledges display only.
 See the [show-diff guide](architecture/show-diff.md).
+
+## Clients needing attention
+
+Plugins can publish a short question/approval indicator or completion notice.
+The notebook/client statusline shows `attention:N`. `:JusiAttention` visits the
+client (or offers a picker); `:JusiAttention!` dismisses notices only. Visiting
+never approves an action. The default tabline keeps the owning tab amber for
+questions/approvals or blue for notices, with a pending count, until resolved.
+New items notify without stealing focus; an unfocused
+terminal gets a configurable best-effort bell. See [attention settings](architecture/client-attention.md).

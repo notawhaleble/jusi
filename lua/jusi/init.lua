@@ -128,26 +128,32 @@ local function bind_cell_lifecycle(session)
   controller.on_state_changed = require("jusi.statusline").redraw
   local presentation, interactive = session.presentation, session.interactive
   interactive.editor_id = controller.editor_id
-  local delivery = require("jusi.editor_delivery").new(controller, function(content, action, source_path)
+  local function capture_destination(action)
+    if action.action ~= "open" then return nil end
+    local current = vim.api.nvim_get_current_win()
+    local windows = require("jusi.presentation.window")
+    for surface_id, record in pairs(interactive.surfaces) do
+      if record.client.client_id == action.client_id and record.buf and vim.api.nvim_buf_is_valid(record.buf) then
+        local win = vim.api.nvim_win_get_buf(current) == record.buf and current or windows.find(record.buf)
+        if win then return { win = win, buf = record.buf, surface_id = surface_id } end
+      end
+    end
+    return false -- A notebook window is not the source of an application open.
+  end
+  local delivery = require("jusi.editor_delivery").new(controller, function(content, action, source_path, destination)
     local win
     if content.action == "open" then
-      local current = vim.api.nvim_get_current_win()
-      local windows = require("jusi.presentation.window")
-      -- An application action belongs to its exact client. Prefer its active
-      -- view, then its view in this tab, before falling back to the notebook.
-      for _, record in pairs(interactive.surfaces) do
-        if record.client.client_id == action.client_id and record.buf and vim.api.nvim_buf_is_valid(record.buf) then
-          win = vim.api.nvim_win_get_buf(current) == record.buf and current or windows.find(record.buf)
-          if win then break end
-        end
-      end
-      win = win or windows.find(model.buf)
-      if not win then return nil end
+      if not destination then return nil end
+      local record = interactive.surfaces[destination.surface_id]
+      win = destination.win
+      if not record or record.client.client_id ~= action.client_id or record.buf ~= destination.buf
+          or not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= destination.buf then return nil end
     end
     return require("jusi.editor_actions").apply(content, { win = win, source_path = source_path })
-  end)
+  end, capture_destination)
   controller.on_editor_action = function(action) delivery:request(action) end
   session.editor_delivery = delivery
+  session.attention = require("jusi.attention").attach(session)
   local lifecycle = cell_lifecycle.new({ model = model, controller = controller, presentation = presentation,
     on_failure = function(failure) notify(failure_text(failure), vim.log.levels.ERROR) end })
   session.lifecycle = lifecycle
@@ -217,6 +223,7 @@ local function retire_session(session)
   require("jusi.statusline").retain(session)
   starts[session.buf] = nil
   if session.editor_delivery then session.editor_delivery:close() end
+  if session.attention then session.attention:close() end
   if session.lifecycle then session.lifecycle:detach() end
   if session.marks then session.marks:close() end
   if session.editing then session.editing:close() end
@@ -229,6 +236,7 @@ end
 
 local function replace_frontend_runtime(session, notebook_id)
   if session.editor_delivery then session.editor_delivery:close() end
+  if session.attention then session.attention:close() end
   if session.lifecycle then session.lifecycle:detach() end
   if session.marks then session.marks:close() end
   if session.editing then session.editing:close() end
@@ -663,6 +671,20 @@ function M.close(buf, row)
   return session.lifecycle:close_cell(cell.id)
 end
 
+function M.close_tab(buf)
+  local context = buf or vim.api.nvim_get_current_buf()
+  local session = current_session(context)
+  if not session then
+    local mode = require('jusi.cellmode').get(context)
+    if not mode then notify('current buffer is not a Jusi notebook or output', vim.log.levels.WARN); return end
+    return require('jusi.tab_cleanup').close({ buf = mode.editor.model.buf })
+  end
+  return require('jusi.tab_cleanup').close(session, {
+    is_current = function() return sessions[session.buf] == session end,
+    on_error = function(message) notify(message, vim.log.levels.ERROR) end,
+  })
+end
+
 local function focus_notebook_cell(session, cell)
   local window = presentation_window.show(session.buf, {
     anchor_buf = vim.api.nvim_get_current_buf(),
@@ -934,6 +956,9 @@ local function create_commands()
     return
   end
   commands_created = true
+  vim.api.nvim_create_user_command("JusiAttention", function(command)
+    require("jusi.attention").show(command.bang)
+  end, { bang = true, desc = "Visit pending clients; bang dismisses notices only" })
   vim.api.nvim_create_user_command("J", function(command)
     local ok, err = pcall(require("jusi.palette").command, command)
     if not ok then notify(tostring(err), vim.log.levels.ERROR) end
@@ -1009,6 +1034,8 @@ local function create_commands()
   vim.api.nvim_create_user_command("JusiClose", function()
     M.close()
   end, {})
+  vim.api.nvim_create_user_command('JusiCloseTab', function() M.close_tab() end,
+    { desc = 'Close current-tab outputs and notebook views, preserving the last notebook view' })
   vim.api.nvim_create_user_command("JusiToggleFocus", function()
     M.toggle_focus()
   end, {})
@@ -1058,6 +1085,7 @@ function M.setup(options)
     config.targets = vim.deepcopy(opts.targets)
   end
   create_commands()
+  require("jusi.attention").setup(opts.attention)
   require("jusi.focus").setup()
   require("jusi.statusline").setup()
 end

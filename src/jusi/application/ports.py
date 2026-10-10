@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, TYPE_CHECKING
 
-from jusi.domain.models import ProcessDiagnostics
+if TYPE_CHECKING:
+    from jusi.domain.models import ProcessDiagnostics
 
 
 @dataclass(frozen=True)

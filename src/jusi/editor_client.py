@@ -63,6 +63,45 @@ def open_text(text: str, *, name: str = "selection.txt", filetype: str = "") -> 
     return deliver({"action": "open", "text": text, "name": name, "filetype": filetype})
 
 
+def _attention(content: dict) -> str:
+    """Wait only for target-side acceptance, never for editor focus or a human."""
+    path = os.environ.get("JUSI_EDITOR_ACTION_SOCKET")
+    if not path:
+        raise EditorDeliveryError("No Jusi client action channel is available")
+    request_id = f"areq_{uuid.uuid4().hex}"
+    request = {"protocol_version": 1, "kind": "application.attention", "request_id": request_id,
+               "content": {"action": "attention", **content}}
+    validate_application_action(request)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(5)
+            connection.connect(path)
+            with connection.makefile("rwb") as stream:
+                write_frame(stream, request)
+                result = validate_application_action(read_frame(stream))
+    except (OSError, EOFError, ValueError) as exc:
+        raise EditorDeliveryError("Attention acceptance could not be confirmed; request was not retried") from exc
+    if result["kind"] != "application.attention_result" or result["request_id"] != request_id:
+        raise EditorDeliveryError("Attention response identity mismatch")
+    if result["outcome"] != "accepted":
+        raise EditorDeliveryError(f"Attention rejected: {result['reason']}")
+    return result["attention_id"]
+
+
+def request_attention(*, kind: str, message: str) -> str:
+    """Publish an action_required or notice item for this client and return its ID."""
+    return _attention({"operation": "request", "kind": kind, "message": message})
+
+
+def update_attention(attention_id: str, *, kind: str, message: str) -> None:
+    _attention({"operation": "update", "attention_id": attention_id, "kind": kind, "message": message})
+
+
+def clear_attention(attention_id: str) -> None:
+    """Resolve/withdraw an item; frontend focus never resolves action_required."""
+    _attention({"operation": "clear", "attention_id": attention_id})
+
+
 
 def show_diff(before: str, after: str, *, before_name: str = "before.txt",
               after_name: str = "after.txt", filetype: str = "") -> dict[str, str]:

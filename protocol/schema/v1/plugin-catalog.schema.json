@@ -81,7 +81,8 @@
                       "followup",
                       "complete",
                       "interrupt",
-                      "editor_actions"
+                      "editor_actions",
+                      "attention"
                     ]
                   }
                 },

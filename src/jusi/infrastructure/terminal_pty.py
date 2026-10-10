@@ -162,7 +162,9 @@ class PosixTerminalBroker:
             environment = {**self._base_env, **spec.env}
             launcher = Path(__file__).with_name("terminal_child.py")
             process = subprocess.Popen(
-                (sys.executable, os.fspath(launcher), "--", *spec.argv),
+                # The stdlib-only launcher needs no site initialization. The
+                # exec'ed application still gets its normal Python environment.
+                (sys.executable, "-S", os.fspath(launcher), "--", *spec.argv),
                 cwd=spec.cwd,
                 env=environment,
                 stdin=slave_fd,

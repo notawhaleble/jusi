@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+import threading
 from typing import Any
 
 import tornado.web
@@ -401,9 +402,11 @@ class NotebookRuntimeRestartHandler(BaseHandler):
 
 
 class EditorActionDeliveryHandler(BaseHandler):
+    error_operation = "editor_action"
+
     def action_error(self, action_id: str, exc: EditorActionError) -> None:
         failure = Failure(failure_id=new_id("fail"), trace_id=new_id("trace"), layer="client",
-            operation="editor_action", reason=exc.reason, message=str(exc), retryable=False,
+            operation=self.error_operation, reason=exc.reason, message=str(exc), retryable=False,
             scope="request", resource=ResourceRef("supervisor", self.supervisor.supervisor_id))
         self.write_json(409, {"ok": False, "failure": failure.to_dict()})
 
@@ -433,15 +436,39 @@ class EditorActionDeliveryHandler(BaseHandler):
         self.write_json(200, {"ok": True, "delivery": result})
 
 
+class AttentionHandler(EditorActionDeliveryHandler):
+    error_operation = "dismiss_attention"
+
+    def post(self, attention_id: str) -> None:
+        command = self.parse_command("dismiss_attention")
+        if command is None:
+            return
+        try:
+            if command["attention_id"] != attention_id:
+                raise EditorActionError("Attention identity must match URL", "invalid_request")
+            result = self.supervisor.dismiss_attention(attention_id, command["editor_id"], command["revision"])
+        except EditorActionError as exc:
+            self.action_error(attention_id, exc)
+            return
+        self.write_json(200, {"ok": True, **result})
+
+    def get(self, attention_id: str) -> None:
+        self.set_status(405)
+        self.finish()
+
+
 class EventsHandler(BaseHandler):
     def initialize(self, supervisor: Supervisor) -> None:
         super().initialize(supervisor)
         self._connection_closed = False
+        self._event_wait_cancelled = threading.Event()
         self.editor_id = ""
         self.connection_id = new_id("econn")
 
     def on_connection_close(self) -> None:
         self._connection_closed = True
+        self._event_wait_cancelled.set()
+        self.supervisor.events.wake_waiters()
         self.supervisor.editor_actions.disconnect(self.editor_id, self.connection_id)
 
     async def get(self) -> None:
@@ -473,7 +500,12 @@ class EventsHandler(BaseHandler):
             await self.flush()
             while not self._connection_closed:
                 if not pending:
-                    pending = await asyncio.to_thread(self.supervisor.events.wait_after, cursor, timeout=1.0)
+                    pending = await asyncio.to_thread(
+                        self.supervisor.events.wait_after, cursor, timeout=1.0,
+                        cancelled=self._event_wait_cancelled,
+                    )
+                if self._connection_closed:
+                    return
                 if not pending:
                     self.write(": keepalive\n\n")
                     await self.flush()
@@ -488,6 +520,8 @@ class EventsHandler(BaseHandler):
         except (StreamClosedError, asyncio.CancelledError):
             return
         finally:
+            self._event_wait_cancelled.set()
+            self.supervisor.events.wake_waiters()
             self.supervisor.editor_actions.disconnect(self.editor_id, self.connection_id)
 
 
@@ -506,6 +540,8 @@ class TerminalSurfaceHandler(tornado.websocket.WebSocketHandler):
         self.surface_id = surface_id
         if self.selected_subprotocol != "jusi.terminal.v1":
             self.close(code=1002, reason="jusi.terminal.v1 subprotocol is required")
+            return
+        self.set_nodelay(True)
 
     async def on_message(self, message: str | bytes) -> None:
         if isinstance(message, bytes):
@@ -585,6 +621,7 @@ class TerminalSurfaceHandler(tornado.websocket.WebSocketHandler):
     def on_close(self) -> None:
         if self._pump_task is not None:
             self._pump_task.cancel()
+        self._wake_pump()
         if self.attachment_id:
             try:
                 loop = asyncio.get_running_loop()
@@ -605,21 +642,34 @@ class TerminalSurfaceHandler(tornado.websocket.WebSocketHandler):
 
     async def _pump(self) -> None:
         assert self.attachment is not None
-        while True:
-            try:
-                item = await asyncio.to_thread(self.attachment.chunks.get, True, 0.5)
-            except queue.Empty:
-                if self.ws_connection is None:
+        try:
+            while True:
+                try:
+                    item = await asyncio.to_thread(self.attachment.chunks.get, True, 0.5)
+                except queue.Empty:
+                    if self.ws_connection is None:
+                        return
+                    continue
+                if isinstance(item, TerminalStreamFailure):
+                    await self._failure("stream", self._wire_reason(item.reason), item.message)
                     return
-                continue
-            if isinstance(item, TerminalStreamFailure):
-                await self._failure("stream", self._wire_reason(item.reason), item.message)
-                return
-            assert isinstance(item, TerminalChunk)
+                assert isinstance(item, TerminalChunk)
+                try:
+                    await self.write_message(encode_terminal_output_frame(item.cursor, item.data), binary=True)
+                except tornado.websocket.WebSocketClosedError:
+                    return
+        finally:
+            self._wake_pump()
+
+    def _wake_pump(self) -> None:
+        # Cancelling to_thread does not cancel queue.get in its executor thread.
+        # Each attachment owns this queue, so waking a retired reader cannot
+        # consume output from a subsequent attachment.
+        if self.attachment is not None:
             try:
-                await self.write_message(encode_terminal_output_frame(item.cursor, item.data), binary=True)
-            except tornado.websocket.WebSocketClosedError:
-                return
+                self.attachment.chunks.put_nowait(TerminalStreamFailure("channel_closed", "Terminal transport closed"))
+            except queue.Full:
+                pass  # A full queue already wakes the blocked reader.
 
     async def _failure(self, operation: str, reason: str, message: str) -> None:
         attachment_id = self.attachment_id or "att_unset"
@@ -651,6 +701,7 @@ def make_application(supervisor: Supervisor) -> tornado.web.Application:
             (r"/v1/health", HealthHandler, handler_args),
             (r"/v1/events", EventsHandler, handler_args),
             (r"/v1/editor-actions/([^/]+)", EditorActionDeliveryHandler, handler_args),
+            (r"/v1/attention/([^/]+)", AttentionHandler, handler_args),
             (r"/v1/surfaces/([^/]+)/terminal", TerminalSurfaceHandler, handler_args),
             (r"/v1/kernels", KernelsHandler, handler_args),
             (r"/v1/kernels/([^/]+)", KernelHandler, handler_args),

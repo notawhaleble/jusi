@@ -7,7 +7,7 @@ import time
 import uuid
 from typing import Any, Callable
 
-from jusi.protocol import validate_editor_action
+from jusi.protocol import validate_editor_action, validate_attention_request
 from .text_snapshot import TextSnapshot
 
 
@@ -31,7 +31,8 @@ class _Action:
 class EditorActionManager:
     """Client-owned delivery snapshots, independent of the ordinary work lane."""
 
-    def __init__(self, publish: Callable[[dict[str, str]], None], *, timeout: float = 30.0) -> None:
+    def __init__(self, publish: Callable[[dict[str, str]], None], *, timeout: float = 30.0,
+                 publish_attention: Callable | None = None) -> None:
         self._publish = publish
         self._timeout = timeout
         self._lock = threading.RLock()
@@ -39,9 +40,17 @@ class EditorActionManager:
         self._owners: dict[str, str] = {}
         self._connections: dict[str, set[str]] = {}
         self._actions: OrderedDict[str, _Action] = OrderedDict()
+        self._publish_attention = publish_attention or (lambda item: None)
+        self._attention: dict[str, dict[str, Any]] = {}
+        self._capabilities: dict[str, tuple] = {}
+
+    def inspection_lock(self):
+        """Keep health's event cursor and client-channel snapshots consistent."""
+        return self._lock
 
     def register(self, client) -> None:
         with self._lock:
+            self._capabilities[client.client_id] = tuple(client.capabilities)
             self._clients[client.client_id] = {key: getattr(client, key) for key in
                 ("client_id", "runtime_id", "notebook_id", "cell_id")}
 
@@ -71,6 +80,60 @@ class EditorActionManager:
                 self._owners[client_id] = editor_id
             else:
                 self._owners.pop(client_id, None)
+            for item in self._attention.values():
+                if item["client_id"] == client_id and item["editor_id"] != (editor_id or ""):
+                    item["editor_id"] = editor_id or ""
+                    item["revision"] += 1
+                    self._publish_attention(dict(item))
+
+    def attention(self, client_id: str, request: dict) -> dict:
+        """Accept immediately, including while the owning editor is disconnected."""
+        validate_attention_request(request)
+        with self._lock:
+            client = self._clients.get(client_id)
+            if client is None or "attention" not in self._capabilities.get(client_id, ()):
+                raise EditorActionError("Client cannot publish attention", "unsupported")
+            operation = request["operation"]
+            attention_id = request.get("attention_id")
+            item = self._attention.get(attention_id)
+            if item is not None and item["client_id"] != client_id:
+                raise EditorActionError("Attention belongs to another client")
+            if operation == "clear":
+                if item is not None:
+                    self._clear_attention(item)
+                return {"attention_id": attention_id, "outcome": "accepted", "reason": ""}
+            if operation == "update" and item is None:
+                raise EditorActionError("Attention is no longer pending", "not_found")
+            if operation == "request":
+                if len(self._attention) >= 256 or sum(i["client_id"] == client_id for i in self._attention.values()) >= 32:
+                    raise EditorActionError("Attention capacity reached", "capacity_exceeded")
+                attention_id = f"attn_{uuid.uuid4().hex}"
+                item = {**client, "attention_id": attention_id, "editor_id": self._owners.get(client_id, ""),
+                        "revision": 0, "state": "pending"}
+                self._attention[attention_id] = item
+            item.update(kind=request["kind"], message=request["message"], revision=item["revision"] + 1)
+            self._publish_attention(dict(item))
+            return {"attention_id": attention_id, "outcome": "accepted", "reason": ""}
+
+    def pending_attention(self) -> list[dict]:
+        with self._lock:
+            return [dict(item) for item in self._attention.values()]
+
+    def dismiss_attention(self, attention_id: str, editor_id: str, revision: int) -> dict:
+        with self._lock:
+            item = self._attention.get(attention_id)
+            if item is None:
+                return {"attention_id": attention_id, "dismissed": True}
+            if item["editor_id"] != editor_id or not editor_id:
+                raise EditorActionError("Attention belongs to another editor")
+            if item["kind"] != "notice" or item["revision"] != revision:
+                raise EditorActionError("Only the current notice can be dismissed")
+            self._clear_attention(item)
+            return {"attention_id": attention_id, "dismissed": True}
+
+    def _clear_attention(self, item: dict) -> None:
+        self._attention.pop(item["attention_id"], None)
+        self._publish_attention({**item, "revision": item["revision"] + 1, "state": "cleared"})
 
     def submit(self, client_id: str, content: dict[str, Any]) -> dict[str, str]:
         if isinstance(content, TextSnapshot):
@@ -92,6 +155,8 @@ class EditorActionManager:
             editor_id = self._owners.get(client_id)
             if client is None:
                 raise EditorActionError("Action client is closed")
+            if "editor_actions" not in self._capabilities.get(client_id, ()):
+                raise EditorActionError("Client cannot submit editor actions", "unsupported")
             if not editor_id or not self._connections.get(editor_id):
                 raise EditorActionError("Owning editor is not connected", "unreachable")
             pending = [a for a in self._actions.values() if a.result is None]
@@ -154,6 +219,10 @@ class EditorActionManager:
 
     def close_client(self, client_id: str) -> None:
         with self._lock:
+            for item in list(self._attention.values()):
+                if item["client_id"] == client_id:
+                    self._clear_attention(item)
+            self._capabilities.pop(client_id, None)
             self._clients.pop(client_id, None)
             self._owners.pop(client_id, None)
             for action in self._actions.values():

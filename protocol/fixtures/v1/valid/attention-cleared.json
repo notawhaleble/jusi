@@ -1,0 +1,12 @@
+{
+  "attention_id": "attn_fixture",
+  "client_id": "client_id_fixture",
+  "runtime_id": "runtime_id_fixture",
+  "notebook_id": "notebook_id_fixture",
+  "cell_id": "cell_id_fixture",
+  "editor_id": "editor_id_fixture",
+  "kind": "action_required",
+  "message": "Approval requested",
+  "revision": 2,
+  "state": "cleared"
+}

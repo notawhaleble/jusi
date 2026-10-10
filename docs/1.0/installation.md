@@ -48,7 +48,7 @@ register its interpreter as that environment's `python3` kernel:
 
 ```sh
 python3 -m venv "$HOME/.venvs/jusi"
-"$HOME/.venvs/jusi/bin/python" -m pip install 'jusi[vd]==1.0.4'
+"$HOME/.venvs/jusi/bin/python" -m pip install 'jusi[vd]==1.0.5'
 "$HOME/.venvs/jusi/bin/python" -m ipykernel install --sys-prefix --name python3
 ```
 
@@ -60,7 +60,7 @@ For Docker, put this `Dockerfile` in an empty directory:
 
 ```dockerfile
 FROM python:3.12-slim
-RUN python -m pip install --no-cache-dir 'jusi[vd]==1.0.4' \
+RUN python -m pip install --no-cache-dir 'jusi[vd]==1.0.5' \
     && python -m ipykernel install --sys-prefix --name python3
 WORKDIR /work
 CMD ["jusi", "serve", "--host", "0.0.0.0", "--port", "8765"]
@@ -69,8 +69,8 @@ CMD ["jusi", "serve", "--host", "0.0.0.0", "--port", "8765"]
 Build it there, then run the service with its port published on host loopback:
 
 ```sh
-docker build -t jusi-kernel:1.0.4 .
-docker run --rm --name jusi-kernel -p 127.0.0.1:9000:8765 jusi-kernel:1.0.4
+docker build -t jusi-kernel:1.0.5 .
+docker run --rm --name jusi-kernel -p 127.0.0.1:9000:8765 jusi-kernel:1.0.5
 ```
 
 Keep that command running while using the Docker target. The service listens

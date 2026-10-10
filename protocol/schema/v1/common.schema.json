@@ -21,7 +21,7 @@
     },
     "operation": {
       "enum": [
-        "service_start",
+        "attention", "dismiss_attention", "service_start",
         "start_kernel",
         "stop_kernel",
         "ack_editor_action", "complete", "followup", "close_client", "interrupt_client", "editor_action",
