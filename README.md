@@ -1,42 +1,60 @@
 # Jusi
 
-Jusi brings Jupyter kernels and interactive tools into Neovim. Edit plain-text
-notebooks, execute cells, and work with their outputs in native splits. Notebook
-editing, navigation and history remain available without a running kernel.
+Jusi позволяет работать с ядрами Jupyter и интерактивными инструментами в Neovim.
+Редактируйте текстовые блокноты, выполняйте ячейки и работайте с их выводом
+в отдельных окнах Neovim. Редактирование, навигация и история доступны
+даже без запущенного ядра.
 
-![Jusi 1.0 demo](docs/assets/jusi-1.0.gif)
+![Демонстрация Jusi 1.0](docs/assets/jusi-1.0.gif)
 
-- Cell-local syntax, indentation and completion.
-- Interactive terminal clients, including bundled VisiData.
-- Followup history, output parking and keyboard navigation.
-- Local or remote kernels through a target-side Python service.
-- Plugin-driven copy, open and diff display in Neovim.
+- Подсветка синтаксиса, отступы и автодополнение отдельно для каждой ячейки.
+- Интерактивные терминальные клиенты, включая встроенную интеграцию с VisiData.
+- История запросов к клиенту, закрепление вывода и навигация с клавиатуры.
+- Локальные и удалённые ядра через Python-сервис на стороне целевого окружения.
+- Копирование, открытие и просмотр различий в Neovim по запросу плагинов.
 
-## Install
+## Установка
 
-Install the backend in your Python 3.9+ environment:
+Установите бэкенд в своё окружение Python 3.9+:
 
 ```sh
 pip install jusi
-# Or include VisiData:
+# Или установите вместе с VisiData:
 pip install 'jusi[vd]'
 ```
 
-Install `notawhaleble/jusi` through your Neovim plugin manager, or use a native
-package directory:
+Установите фронтенд из репозитория `ssh://my-org/Python/Jusi.git`
+через менеджер плагинов Neovim с явным URL или используйте стандартный
+каталог пакетов:
 
 ```sh
-git clone https://github.com/notawhaleble/jusi.git \
+git clone ssh://my-org/Python/Jusi.git \
   "${XDG_DATA_HOME:-$HOME/.local/share}/nvim/site/pack/jusi/start/jusi"
 ```
 
-The frontend requires Neovim 0.11+, curl and a POSIX shell. Keep the backend
-and frontend on matching releases and make `jusi` available on Neovim's PATH.
-See [installation](docs/1.0/installation.md) for configuration and upgrades.
+Фронтенду нужны Neovim 0.11+, curl и POSIX-совместимая оболочка. Используйте
+одинаковые версии бэкенда и фронтенда; команда `jusi` должна быть доступна
+в PATH Neovim. Настройка и обновление описаны в [руководстве по установке](docs/1.0/installation.md).
 
-## First notebook
+## Готовые плагины
 
-Save this as `example.vipynb` and open it in Neovim:
+Для Jusi доступны готовые плагины оболочки, PostgreSQL, ClickHouse и GigaCode:
+
+| Плагин | Возможности | Установка |
+| --- | --- | --- |
+| Shell | Интерактивная оболочка через `%%shell` | `pip install jusi-shell` |
+| PostgreSQL | SQL-запросы и просмотр результатов в VisiData | `pip install jusi-postgres` |
+| ClickHouse | SQL-запросы и просмотр результатов в VisiData | `pip install jusi-clickhouse` |
+| GigaCode | Работа с агентом GigaCode через `%%acp` | `pip install jusi-gigacode` |
+
+Устанавливайте плагины в Python-окружение сервиса и ядра на целевом узле.
+После установки перезапустите блокнот командой `:JusiRestart`.
+SQL-плагинам нужна настройка подключения, а GigaCode — установленная команда
+`gigacode` на целевом узле. Подробнее — в [руководстве по готовым плагинам](docs/1.0/available-plugins.md).
+
+## Первый блокнот
+
+Сохраните этот текст в `example.vipynb` и откройте файл в Neovim:
 
 ```text
 ╭──
@@ -44,36 +62,39 @@ Save this as `example.vipynb` and open it in Neovim:
 ╰──
 ```
 
-Run `:JusiStart local`, then `:JusiExecute` inside the cell. The result opens in
-a split. Press Ctrl-\ twice to toggle focus between the cell and its output.
-Use `:JusiStop` to close the kernel and its owned service.
+Выполните `:JusiStart local`, затем `:JusiExecute`, находясь внутри ячейки.
+Результат откроется в отдельном окне. Нажмите Ctrl-\ дважды, чтобы переключить
+фокус между ячейкой и её выводом. Команда `:JusiStop` закрывает ядро
+и запущенный для него сервис.
 
-Space toggles cell mode: Enter submits, `j`/`k` navigate cells, `B` creates a
-cell below, and `S` parks an output so it survives later executions.
-See the [user guide](docs/1.0/usage.md) for all controls, input, history and status.
+Пробел переключает режим ячеек: Enter отправляет содержимое, `j`/`k` перемещают
+между ячейками, `B` создаёт ячейку ниже, а `S` закрепляет вывод, чтобы он
+сохранялся при последующих выполнениях.
+Все команды, ввод, история и статусы описаны в [руководстве пользователя](docs/1.0/usage.md).
 
-## Jupyter notebooks
+## Блокноты Jupyter
 
 ```sh
 jusi import-ipynb notebook.ipynb
 jusi export-ipynb notebook.vipynb -o exported.ipynb
 ```
 
-Import preserves code, Markdown and raw sources as ordinary native cells.
-Export creates code cells. Outputs and followup history are excluded.
-See [conversion](docs/1.0/notebook-conversion.md) for details.
+При импорте исходный текст ячеек кода, Markdown и raw сохраняется в обычных
+ячейках Jusi. При экспорте создаются ячейки кода. Вывод и история запросов
+не включаются. Подробнее — в [руководстве по преобразованию](docs/1.0/notebook-conversion.md).
 
-## Learn more
+## Дополнительные материалы
 
-- [Local and remote targets](docs/1.0/architecture/target-start-stop.md)
-- [VisiData: explore data, copy values and open content](docs/1.0/architecture/bundled-vd.md)
-- [Useful commands, including JShell](docs/1.0/useful-commands.md)
-- [Backend configuration](docs/1.0/configuration.md)
-- [Plugin authoring skills](docs/1.0/skills.md): install with `jusi install-skills`
-- [Contributing and tests](CONTRIBUTING.md)
-- [Release notes](CHANGELOG.md)
+- [Локальные и удалённые целевые окружения](docs/1.0/architecture/target-start-stop.md)
+- [VisiData: просмотр данных, копирование значений и открытие содержимого](docs/1.0/architecture/bundled-vd.md)
+- [Полезные команды, включая JShell](docs/1.0/useful-commands.md)
+- [Настройка бэкенда](docs/1.0/configuration.md)
+- [Навыки для разработки плагинов](docs/1.0/skills.md): установка через `jusi install-skills`
+- [Участие в разработке и тесты](CONTRIBUTING.md)
+- [История изменений](CHANGELOG.md)
 
-Jusi 1.0 requires Neovim; it does not support Vim or legacy Jusi notebook
-syntax. [Architecture](docs/1.0/architecture/overview.md),
-[design intent](docs/1.0/intent.md), and [implementation status](docs/1.0/status.md)
-are maintained separately from the user guides.
+Jusi 1.0 требует Neovim; Vim и старый синтаксис блокнотов Jusi не поддерживаются.
+[Архитектура](docs/1.0/architecture/overview.md),
+[модель состояний](docs/1.0/state-model.md) и
+[владение компонентами](docs/1.0/ownership.md) документируются отдельно
+от пользовательских руководств.

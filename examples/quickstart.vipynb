@@ -4,9 +4,9 @@
 
 ╭──
 rows = [
-    {"name": "Ada", "team": "North", "score": 12},
-    {"name": "Lin", "team": "South", "score": 18},
-    {"name": "Sam", "team": "North", "score": 15},
+    {"name": "Ада", "team": "Север", "score": 12},
+    {"name": "Лин", "team": "Юг", "score": 18},
+    {"name": "Сэм", "team": "Север", "score": 15},
 ]
 sum(row["score"] for row in rows)
 ╰──
@@ -17,6 +17,6 @@ rows
 ╰──
 
 ╭──
-name = input("Name: ")
-print(f"Hello, {name}!")
+name = input("Имя: ")
+print(f"Привет, {name}!")
 ╰──

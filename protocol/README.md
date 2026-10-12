@@ -1,123 +1,150 @@
-# Jusi Protocol
+# Протокол Jusi
 
-This directory contains the versioned, language-neutral Jusi 1.0 wire contract.
+Этот каталог содержит версионируемый контракт передачи данных Jusi 1.0,
+не зависящий от языка реализации.
 
-Protocol version `1` is a new HTTP/SSE contract. It is not the line-delimited stdio protocol whose historical envelopes also used the integer `1`.
+Версия протокола `1` — новый контракт HTTP/SSE. Это не построчный протокол
+stdio, в исторических конвертах которого также использовалось число `1`.
 
-## Baseline Transport
+## Базовый транспорт
 
-- HTTP commands and resource inspection
-- SSE for ordered backend-to-frontend events
-- Neovim terminal rendering for textual/ANSI output
-- a dedicated PTY or stream only for genuinely interactive, bidirectional, or high-volume clients
+- Команды HTTP и проверка ресурсов.
+- SSE для упорядоченных событий от бэкенда к фронтенду.
+- Отрисовка текстового/ANSI-вывода в терминале Neovim.
+- Отдельный PTY или поток только для интерактивных, двусторонних клиентов
+  или клиентов с большим объёмом данных.
 
-Terminal presentation does not determine kernel ownership or lifecycle.
+Терминальное представление не определяет владение ядром или его жизненный цикл.
 
-## Event Rules
+## Правила событий
 
-- Every supervisor event has a monotonically increasing `sequence` within that supervisor's event epoch.
-- Every event has an `event_id`, `occurred_at`, `trace_id`, `layer`, and `operation`.
-- Resource events carry explicit typed resource references.
-- Failures use the shared failure shape; free-form strings are supplementary diagnostics, not the taxonomy.
-- Every declared event kind has a closed payload shape. Python and Lua reject missing fields, unknown payload fields, invalid outcomes, and resource/trace identity mismatches before dispatch.
-- SSE resumption uses the last observed event identifier or cursor. The frontend does not fill gaps by guessing state.
-- The SSE adapter emits an immediate comment to confirm that the stream is open. Comments carry no resource truth and consume no event sequence.
-- Before opening SSE, the frontend inspects health for the supervisor identity, authoritative kernel snapshot, and retained event window. ADR 0008 defines when to replay and when to replace stale frontend state from that snapshot.
-- Health includes any active execution identity. The `interrupt` command names
-  that exact execution and kernel; it never means “interrupt whatever is current.”
-- Consecutive `execution.output` events are ordered terminal writes. Their data
-  must be concatenated without inserting separators; the service may split one
-  kernel text message at a UTF-8-safe boundary to keep retained events bounded,
-  as specified by ADR 0018.
+- Каждое событие супервизора имеет монотонно возрастающий `sequence`
+  в пределах эпохи событий этого супервизора.
+- Каждое событие содержит `event_id`, `occurred_at`, `trace_id`, `layer` и `operation`.
+- События ресурсов содержат явные типизированные ссылки на ресурсы.
+- Сбои используют общую структуру ошибки; произвольные строки служат
+  дополнительной диагностикой, а не классификацией.
+- У каждого объявленного вида события закрытая структура полезной нагрузки.
+  Python и Lua до диспетчеризации отклоняют отсутствующие и неизвестные поля
+  нагрузки, некорректные результаты и несовпадения идентификаторов ресурсов
+  и трассировки.
+- Восстановление SSE использует последний наблюдавшийся идентификатор события
+  или курсор. Фронтенд не заполняет пробелы догадками о состоянии.
+- Адаптер SSE немедленно отправляет комментарий для подтверждения открытия
+  потока. Комментарии не несут сведений о ресурсах и не расходуют номера событий.
+- Перед открытием SSE фронтенд проверяет health, получая идентификатор
+  супервизора, авторитетный снимок ядра и окно сохранённых событий.
+  ADR 0008 определяет, когда воспроизводить события, а когда заменять
+  устаревшее состояние фронтенда этим снимком.
+- Health включает идентификатор активного выполнения, если оно есть.
+  Команда `interrupt` указывает именно это выполнение и ядро;
+  она никогда не означает «прервать то, что сейчас выполняется».
+- Последовательные события `execution.output` — упорядоченные записи
+  в терминал. Их данные нужно объединять без добавления разделителей;
+  сервис может делить одно текстовое сообщение ядра на границе,
+  безопасной для UTF-8, чтобы ограничить размер сохраняемых событий,
+  как определено в ADR 0018.
 
-The initial workflow fixture is `fixtures/v1/scenarios/walking-skeleton.json`; `fixtures/v1/scenarios/event-payloads.json` covers every initial event kind. Concrete valid and invalid envelopes under `fixtures/v1/` are consumed by both Python and Lua conformance tests.
+Фикстура первоначального сценария — `fixtures/v1/scenarios/walking-skeleton.json`;
+`fixtures/v1/scenarios/event-payloads.json` охватывает все исходные виды событий.
+Конкретные корректные и некорректные конверты в `fixtures/v1/` используются
+проверками соответствия и Python, и Lua.
 
-## Plugin Catalog
+## Каталог плагинов
 
-`schema/v1/plugin-catalog.schema.json` defines the data-only catalog boundary
-from ADR 0010. The valid fixture deliberately contains two exact providers
-claiming the same `sql` family; provider coexistence is not itself a conflict.
-Duplicate exact `plugin_id` values are rejected by both Python and Lua.
-One kernel-extension module may belong to only one exact plugin in a catalog.
+`schema/v1/plugin-catalog.schema.json` определяет границу каталога,
+содержащего только данные, из ADR 0010. Корректная фикстура намеренно содержит
+два конкретных провайдера одного семейства `sql`; их совместное присутствие
+само по себе не является конфликтом. Повторяющиеся конкретные значения
+`plugin_id` отклоняются и Python, и Lua. Один модуль расширения ядра
+может принадлежать только одному конкретному плагину каталога.
 
-## Kernel Plugin Control
+## Управление плагинами ядра
 
-`schema/v1/plugin-kernel.schema.json` defines the private kernel adapter
-attestation and exact-provider handoff records from ADR 0013. These records use
-dedicated Jupyter MIME types; they are consumed by the target-side service and
-never presented as cell output. The service accepts at most one handoff per
-execution and bounds each encoded control record to 1 MiB. A handoff remains
-opaque until its exact plugin, version, family, and magic identity match the
-immutable runtime catalog.
+`schema/v1/plugin-kernel.schema.json` определяет закрытые записи подтверждения
+адаптера ядра и передачи управления конкретному провайдеру из ADR 0013.
+Эти записи используют отдельные MIME-типы Jupyter; их обрабатывает сервис
+целевого окружения, и они никогда не показываются как вывод ячейки.
+Сервис принимает не более одной передачи управления на выполнение
+и ограничивает каждую закодированную управляющую запись размером 1 МиБ.
+Передача остаётся непрозрачной, пока её конкретные плагин, версия, семейство
+и магическая команда не совпадут с неизменяемым каталогом среды выполнения.
 
-## Plugin Worker Control
+## Управление рабочими процессами плагинов
 
-`schema/v1/plugin-worker.schema.json` defines the generic private control
-envelope from ADR 0011. It is not an HTTP/SSE or terminal transport. Python and
-Lua consume the same identity, operation, result, and failure fixtures even
-though only the Python supervisor/worker boundary currently carries these
-messages. Plugin-owned payload and result objects remain opaque to core. Every
-successful worker result also carries a `core_requests` array. The first
-supported typed request is `terminal_surface.create`: the worker supplies a target-side argv,
-absolute-or-null cwd, environment overrides, and generic terminal capabilities;
-it never supplies a frontend command or credentials.
-These requests are private backend control data and are never forwarded as an implicit
-frontend plugin API. Frontend-visible plugin behavior uses versioned generic
-client/surface, control, action, and failure contracts from ADR 0015.
+`schema/v1/plugin-worker.schema.json` определяет общий закрытый управляющий
+конверт из ADR 0011. Это не HTTP/SSE и не терминальный транспорт. Python и Lua
+используют одинаковые фикстуры идентификаторов, операций, результатов
+и ошибок, хотя сейчас эти сообщения передаются только между супервизором
+и рабочим процессом Python. Принадлежащие плагину объекты нагрузки
+и результата остаются непрозрачными для ядра Jusi. Каждый успешный результат
+рабочего процесса также содержит массив `core_requests`. Первый поддерживаемый
+типизированный запрос — `terminal_surface.create`: рабочий процесс передаёт
+argv целевого окружения, абсолютный cwd или null, переопределения окружения
+и общие возможности терминала; команды фронтенда и учётные данные не передаются.
+Это закрытые управляющие данные бэкенда; они никогда не передаются
+как неявный API плагина фронтенда. Видимое фронтенду поведение плагинов
+использует версионируемые общие контракты клиентов, поверхностей, управления,
+действий и ошибок из ADR 0015.
 
-## Plugin Client Lifecycle
+## Жизненный цикл клиента плагина
 
-A successful exact-plugin handoff creates a durable `client` resource and an
-exact target-side worker. `client.created` announces that identity; ordinary
-plugin application errors remain plugin-rendered, while fatal worker/control
-failures use `failure.occurred` and retire only that client. The explicit,
-idempotent `close_client` command stops the exact worker and emits
-`client.closed`. Kernel stop and full notebook restart retire remaining clients
-as runtime cleanup.
+Успешная передача управления конкретному плагину создаёт долговременный ресурс
+`client` и конкретный рабочий процесс в целевом окружении. `client.created`
+объявляет этот идентификатор; обычные ошибки приложения плагина отображаются
+самим плагином, а фатальные ошибки рабочего процесса или управления используют
+`failure.occurred` и удаляют только этот клиент. Явная идемпотентная команда
+`close_client` останавливает конкретный рабочий процесс и выдаёт `client.closed`.
+Остановка ядра и полный перезапуск блокнота удаляют оставшихся клиентов
+в рамках очистки среды выполнения.
 
-## Terminal Surfaces
+## Терминальные поверхности
 
-A terminal surface is a public resource owned by one client and notebook
-runtime. Health snapshots include all current `surfaces`, while
-`surface.created` and `surface.closed` provide the ordered lifecycle. The
-descriptor contains only generic capabilities and a relative WebSocket endpoint
-using subprotocol `jusi.terminal.v1`; it never exposes a target process command,
-environment, or authentication data to the frontend. Terminal bytes and attach
-control belong to the dedicated stream described by ADR 0016, not SSE.
+Терминальная поверхность — публичный ресурс, принадлежащий одному клиенту
+и среде выполнения блокнота. Снимки health включают все текущие `surfaces`,
+а `surface.created` и `surface.closed` обеспечивают упорядоченный жизненный
+цикл. Дескриптор содержит только общие возможности и относительный адрес
+WebSocket с подпротоколом `jusi.terminal.v1`; он никогда не раскрывает фронтенду
+команду целевого процесса, окружение или данные аутентификации. Байты терминала
+и управление подключением относятся к отдельному потоку из ADR 0016, а не SSE.
 
-`schema/v1/terminal-stream.schema.json` closes every JSON text control on that
-WebSocket. The client begins with `attach`, naming the surface, a fresh
-`attachment_id`, the next output byte cursor it expects, and the actual terminal
-geometry. The server sends `attached` only after it has accepted that cursor and
-applied and verified those rows and columns at the target PTY. `resize` and
-`resized` share a fresh `resize_id`; the acknowledgement echoes the exact
-geometry that was applied. Rows and columns are integers from 1 through 65535.
+`schema/v1/terminal-stream.schema.json` задаёт закрытую структуру каждого
+текстового управляющего сообщения JSON в этом WebSocket. Клиент начинает
+с `attach`, указывая поверхность, новый `attachment_id`, следующий ожидаемый
+байтовый курсор вывода и фактическую геометрию терминала. Сервер отправляет
+`attached` только после принятия курсора, применения и проверки числа строк
+и столбцов целевого PTY. `resize` и `resized` используют общий новый `resize_id`;
+подтверждение повторяет точную применённую геометрию. Строки и столбцы — целые
+числа от 1 до 65535.
 
-Cursors are canonical decimal strings in the inclusive uint64 range
-`0..18446744073709551615`. A cursor names the next byte to consume, so replay
-starting at cursor `N` begins with byte `N`. Strings preserve all uint64 values
-across JSON implementations, including Lua runtimes whose numbers cannot
-represent every uint64 exactly. An unavailable retained cursor yields the typed
-`cursor_expired` failure; it never silently attaches at a newer position.
+Курсоры — канонические десятичные строки в включительном диапазоне uint64
+`0..18446744073709551615`. Курсор указывает следующий байт для чтения,
+поэтому воспроизведение с курсора `N` начинается с байта `N`. Строки сохраняют
+все значения uint64 между реализациями JSON, включая среды Lua, числа которых
+не могут точно представить каждый uint64. Недоступный сохранённый курсор
+вызывает типизированную ошибку `cursor_expired`; подключение никогда
+не происходит молча с более новой позиции.
 
-Server-to-client terminal output uses binary WebSocket frames with this fixed
-10-byte header followed by uninterpreted terminal bytes:
+Вывод терминала от сервера к клиенту использует бинарные кадры WebSocket
+с фиксированным заголовком в 10 байт, за которым идут неинтерпретируемые
+байты терминала:
 
-| Offset | Size | Meaning |
+| Смещение | Размер | Значение |
 | --- | ---: | --- |
-| 0 | 1 | framing version, exactly `1` |
-| 1 | 1 | frame type, exactly `1` (terminal output) |
-| 2 | 8 | starting byte cursor, unsigned big-endian uint64 |
-| 10 | remaining | raw PTY output bytes |
+| 0 | 1 | Версия кадрирования, строго `1` |
+| 1 | 1 | Тип кадра, строго `1` (вывод терминала) |
+| 2 | 8 | Начальный байтовый курсор, беззнаковый uint64 с порядком байтов big-endian |
+| 10 | Остаток | Необработанные байты вывода PTY |
 
-The next cursor after consuming a frame is its starting cursor plus the raw
-payload byte length. Client-to-server binary WebSocket frames contain only raw
-PTY input bytes and have no Jusi header. Neither direction decodes UTF-8 or ANSI.
-Empty output payloads are valid framing-wise, though implementations need not
-emit them.
+Следующий курсор после чтения кадра равен начальному курсору плюс длина
+необработанной нагрузки в байтах. Бинарные кадры WebSocket от клиента к серверу
+содержат только необработанные байты ввода PTY и не имеют заголовка Jusi.
+Ни одно направление не декодирует UTF-8 или ANSI. Пустая нагрузка вывода
+допустима с точки зрения кадрирования, хотя реализации не обязаны её отправлять.
 
-Stream failures are closed JSON controls with operation `attach`, `resize`, or
-`stream` and one of `busy`, `cursor_expired`, `not_found`,
-`protocol_violation`, or `channel_closed`. They describe this attachment only;
-they do not alter kernel state. The first protocol version permits one active
-input attachment per surface, so a competing attach fails with `busy`.
+Ошибки потока — управляющие сообщения JSON с закрытой структурой, операцией
+`attach`, `resize` или `stream` и одним из значений `busy`, `cursor_expired`,
+`not_found`, `protocol_violation` или `channel_closed`. Они описывают только
+это подключение и не меняют состояние ядра. Первая версия протокола разрешает
+одно активное подключение ввода на поверхность, поэтому конкурирующий
+`attach` завершается ошибкой `busy`.

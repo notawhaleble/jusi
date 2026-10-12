@@ -1,17 +1,21 @@
-# Protocol Conformance
+# Проверка соответствия протоколу
 
-Python and Lua must load the same fixtures from `protocol/fixtures/` and reach the same accept/reject result.
+Python и Lua должны загружать одни и те же фикстуры из `protocol/fixtures/`
+и одинаково принимать или отклонять их.
 
-Initial conformance coverage validates:
+Первоначальные проверки соответствия охватывают:
 
-- identifiers and resource references
-- operation and event envelopes
-- ordered walking-skeleton events
-- structured failures with process diagnostics
-- additive unknown fields where permitted
+- Идентификаторы и ссылки на ресурсы.
+- Конверты операций и событий.
+- Упорядоченные события минимального сквозного сценария.
+- Структурированные ошибки с диагностикой процессов.
+- Дополнительные неизвестные поля там, где они разрешены.
 
-Event payload objects are closed even though additive top-level event fields remain permitted. Runtime events emitted by the supervisor are also passed through the Python validator, while the shared all-kind fixture is consumed by both Python and Lua.
+Объекты нагрузки событий имеют закрытую структуру, хотя дополнительные поля
+верхнего уровня события по-прежнему разрешены. События среды выполнения,
+выдаваемые супервизором, также проходят валидатор Python, а общая фикстура
+всех видов используется и Python, и Lua.
 
-Terminal-stream fixtures cover every JSON control, uint64 cursor and geometry
-bounds, the binary server-output header, and unchanged raw bytes in both
-directions.
+Фикстуры терминального потока охватывают все управляющие сообщения JSON,
+границы курсора uint64 и геометрии, бинарный заголовок вывода сервера
+и неизменность необработанных байтов в обоих направлениях.

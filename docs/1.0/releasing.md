@@ -1,25 +1,26 @@
-# Release procedure
+# Процедура выпуска
 
-Backend releases are installed with pip; frontend releases are Git tags consumed
-by Neovim package managers. A release uses the same version for both. This guide
-prepares and verifies artifacts; publication is a separate maintainer action.
+Бэкенд устанавливается через pip; выпуски фронтенда — теги Git, используемые
+менеджерами пакетов Neovim. Для обоих компонентов выпуск имеет одну версию.
+Это руководство описывает подготовку и проверку артефактов; публикация —
+отдельное действие сопровождающего.
 
-## Prepare the candidate
+## Подготовка кандидата
 
-1. Review [status](status.md) and the [changelog](../../CHANGELOG.md). Record
-   unresolved checks honestly. Real remote transport-loss review and independent
-   skill evaluation are currently deferred; do not mark them as completed.
-2. Choose the candidate version in `pyproject.toml`. Keep development versions
-   until selecting an actual release candidate or final release. Update the
-   package development-status classifier to match that choice.
-3. Update the changelog heading and date for the selected release. Verify
-   installation instructions, requirements, optional extras and user controls.
-4. Commit the candidate. The distribution gate clones committed source, so a
-   dirty working tree is not a release reference.
+1. Проверьте [архитектуру](architecture/overview.md) и [историю изменений](../../CHANGELOG.md).
+   Честно укажите незавершённые проверки. Проверка реальной потери удалённого
+   транспорта и независимая оценка навыков пока отложены; не отмечайте их завершёнными.
+2. Выберите версию кандидата в `pyproject.toml`. Сохраняйте версии разработки
+   до выбора настоящего кандидата в выпуск или финального выпуска.
+   Обновите классификатор статуса разработки пакета в соответствии с этим выбором.
+3. Обновите заголовок и дату выбранного выпуска в истории изменений. Проверьте
+   инструкции установки, требования, дополнительные зависимости и управление.
+4. Закоммитьте кандидата. Проверка дистрибутива клонирует закоммиченные исходники,
+   поэтому рабочая копия с незакоммиченными изменениями не является эталоном выпуска.
 
-The required source checks are listed in [CONTRIBUTING.md](../../CONTRIBUTING.md).
-Run all three suites, then build into a new directory to avoid mixing artifacts
-from different versions:
+Обязательные проверки исходников перечислены в [CONTRIBUTING.md](../../CONTRIBUTING.md).
+Запустите все три набора тестов, затем соберите пакет в новый каталог,
+чтобы не смешивать артефакты разных версий:
 
 ```sh
 python -m pip install build twine
@@ -27,56 +28,60 @@ python -m build --outdir dist/candidate
 python -m twine check dist/candidate/*
 ```
 
-Use an empty `dist/candidate` directory for each candidate; retain previous
-artifacts elsewhere when needed. The build produces an sdist and a wheel built
-from that sdist. The wheel contains Python code and skill templates, while the
-frontend is installed separately from Git.
+Для каждого кандидата используйте пустой `dist/candidate`; при необходимости
+сохраняйте предыдущие артефакты в другом месте. Сборка создаёт sdist и wheel,
+собранный из этого sdist. Wheel содержит Python-код и шаблоны навыков,
+а фронтенд устанавливается отдельно из Git.
 
-Run the [isolated distribution gate](architecture/distribution-verification.md)
-against the wheel, substituting its actual filename:
+Запустите [изолированную проверку дистрибутива](architecture/distribution-verification.md)
+для wheel, подставив его фактическое имя:
 
 ```sh
 python scripts/check-distribution.py dist/candidate/jusi-VERSION-py3-none-any.whl
 ```
 
-Check notebook import/export from the built artifact as well as the editor smoke
-checks. Review the archive contents for unintended local files and verify that
-the sdist contains the frontend, tests and maintainer documentation.
+Помимо минимальных проверок редактора проверьте импорт и экспорт блокнотов
+из собранного артефакта. Просмотрите содержимое архивов на предмет случайно
+попавших локальных файлов и убедитесь, что sdist содержит фронтенд, тесты
+и документацию для сопровождающих.
 
-## Manual review and demo
+## Ручная проверка и демонстрация
 
-Use a regular Neovim configuration for a short user-flow review:
+Используйте обычную конфигурацию Neovim для короткой проверки сценария пользователя:
 
-- Start a fresh notebook; execute `40 + 2`, then exercise completion.
-- Run `a = input('Name: ')`, submit a reply and inspect the output/status.
-- Open `%%vd`, copy a value with `zY`, and open it with Ctrl-O.
-- Park an output, execute another cell, then close the parked output.
-- Stop the target and confirm output cleanup and the off badge.
+- Запустите свежий блокнот, выполните `40 + 2`, затем проверьте автодополнение.
+- Выполните `a = input('Имя: ')`, отправьте ответ и проверьте вывод и статус.
+- Откройте `%%vd`, скопируйте значение через `zY` и откройте его через Ctrl-O.
+- Закрепите вывод, выполните другую ячейку, затем закройте закреплённый вывод.
+- Остановите целевое окружение и подтвердите очистку вывода и индикатор `off`.
 
-For a demo, record those steps in a small notebook with invented sample data.
-Show the initial installation/setup separately from the everyday start/edit/stop
-flow. Save the recording only after reviewing its legibility and visible paths.
-A local demo draft has been recorded in `dist/demo/` (MP4, GIF and asciicast);
-review it before publication. A sample notebook and walkthrough are
-available in [examples](../../examples/README.md).
+Для демонстрации запишите эти шаги в небольшом блокноте с вымышленными данными.
+Покажите начальную установку и настройку отдельно от повседневного сценария
+запуска, редактирования и остановки. Сохраняйте запись только после проверки
+читаемости и видимых путей. Локальный черновик демонстрации записан в `dist/demo/`
+в форматах MP4, GIF и asciicast; проверьте его перед публикацией.
+Пример блокнота и сценарий доступны в [examples](../../examples/README.md).
 
-## Publish the verified pair
+## Публикация проверенной пары
 
-After reviewing the candidate and deciding to publish:
+После проверки кандидата и решения о публикации:
 
-1. Create the `v<VERSION>` Git tag on the verified commit and push it to the
-   canonical repository. Use the literal package version: for example, version
-   `1.0.0rc1` corresponds to tag `v1.0.0rc1`.
-2. Verify the tag is fetchable and points to that commit. `jusi install-skills`
-   fetches this exact tag, so it must exist before the backend becomes available.
-3. Upload only the verified wheel and sdist using the project's PyPI credentials
-   or configured publishing workflow. Do not rebuild between verification and
-   upload. Publishing a version is irreversible; never reuse it for different
-   contents.
-4. Create release notes from the changelog and link the installation guide.
-5. From a fresh environment, install the published package and matching frontend
-   tag, check `jusi --version`, start/execute/stop, and run `jusi install-skills`
-   against the published reference. This checks delivery, not skill behavior.
+1. Создайте тег Git `v<VERSION>` на проверенном коммите и отправьте его
+   в основной репозиторий. Используйте буквальную версию пакета: например,
+   версии `1.0.0rc1` соответствует тег `v1.0.0rc1`.
+2. Убедитесь, что тег доступен для загрузки и указывает на этот коммит.
+   `jusi install-skills` загружает именно этот тег, поэтому он должен существовать
+   до появления бэкенда в доступе.
+3. Загрузите только проверенные wheel и sdist с учётными данными проекта PyPI
+   или через настроенный процесс публикации. Не пересобирайте пакет между
+   проверкой и загрузкой. Публикация версии необратима; никогда не используйте
+   её повторно для другого содержимого.
+4. Создайте описание выпуска из истории изменений и добавьте ссылку на установку.
+5. В свежем окружении установите опубликованный пакет и соответствующий тег
+   фронтенда, проверьте `jusi --version`, запуск, выполнение и остановку,
+   затем выполните `jusi install-skills` с опубликованной справочной копией.
+   Это проверяет доставку, а не поведение навыков.
 
-If publication is partial, report which component is available and finish the
-same verified pair. Do not move an already published tag to a different commit.
+При частичной публикации сообщите, какой компонент доступен, и завершите
+публикацию той же проверенной пары. Не перемещайте уже опубликованный тег
+на другой коммит.

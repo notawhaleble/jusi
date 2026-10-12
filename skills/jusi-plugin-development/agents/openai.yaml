@@ -1,4 +1,4 @@
 interface:
-  display_name: "Jusi Plugin Development"
-  short_description: "Build exact notebook plugins for Jusi 1.0"
-  default_prompt: "Use $jusi-plugin-development to implement a Jusi 1.0 plugin against the current runtime contract."
+  display_name: "Разработка плагинов Jusi"
+  short_description: "Создание плагинов конкретных провайдеров для Jusi 1.0"
+  default_prompt: "Используй $jusi-plugin-development для реализации плагина Jusi 1.0 по текущему контракту среды выполнения."

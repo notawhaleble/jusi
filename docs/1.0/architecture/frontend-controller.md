@@ -1,43 +1,46 @@
-# Frontend Service Controller
+# Контроллер сервиса на фронтенде
 
-## Boundary
+## Граница
 
-The Lua controller binds explicit notebook operations to the versioned service
-contract. It reads cell bodies from the notebook model at execution time,
-creates command and trace identities, and correlates execution events back to
-model cell identities.
+Контроллер Lua связывает явные операции блокнота с версионируемым контрактом
+сервиса. Он читает тела ячеек из модели при выполнении, создаёт идентификаторы
+команд и трассировок и сопоставляет события выполнения с идентификаторами
+ячеек модели.
 
-It does not render output, parse terminal escapes, infer kernel liveness, or
-perform work from buffer edit callbacks.
+Он не отрисовывает вывод, не разбирает escape-последовательности терминала,
+не делает выводов о работоспособности ядра и не выполняет работу
+из обработчиков редактирования буфера.
 
-## Resource Truth
+## Достоверные сведения о ресурсах
 
-- Kernel `off`/`on` is updated only from validated service responses or ordered
-  events.
-- Transport connection state is separate from kernel state. Losing the event
-  stream never changes an `on` kernel to `off`.
-- An invalid or retired cell is rejected locally before a command is sent.
-- Execution output is routed through the execution identity announced by
-  `execution.started`, not through a current cursor or line number.
+- `off`/`on` ядра обновляется только из проверенных ответов сервиса
+  или упорядоченных событий.
+- Состояние соединения транспорта отделено от состояния ядра.
+  Потеря потока событий никогда не меняет ядро `on` на `off`.
+- Некорректная или удалённая ячейка отклоняется локально до отправки команды.
+- Вывод маршрутизируется через идентификатор выполнения из `execution.started`,
+  а не текущий курсор или номер строки.
 
-## Inspection And Event Ordering
+## Проверка и порядок событий
 
-The controller inspects health before opening SSE and retains the last accepted
-sequence in one supervisor epoch. First contact, supervisor replacement, or an
-unavailable cursor applies the authoritative snapshot and resumes after its
-latest sequence. A cursor still inside the retained window replays from its
-current position without first applying newer snapshot state.
+Контроллер проверяет health до открытия SSE и сохраняет последний принятый
+номер последовательности в одной эпохе супервизора. Первый контакт,
+замена супервизора или недоступный курсор применяют авторитетный снимок
+и возобновляют поток после его последнего номера. Курсор внутри сохранённого
+окна воспроизводит события с текущей позиции без предварительного применения
+более нового состояния снимка.
 
-The controller ignores duplicate events and closes the stream on a gap or
-invalid envelope. It never fabricates missing state. The exact resynchronization
-rules are recorded in ADR 0008.
+Контроллер игнорирует дубликаты и закрывает поток при пропуске
+или некорректном конверте. Он никогда не выдумывает отсутствующее состояние.
+Точные правила повторной синхронизации записаны в ADR 0008.
 
-## Transport Adapter
+## Адаптер транспорта
 
-`lua/jusi/transport/http_sse.lua` implements the initial curl adapter described
-by ADR 0007. `lua/jusi/transport/sse.lua` is an incremental framing parser and
-handles arbitrary chunk boundaries, CRLF, comments, and multiline data.
+`lua/jusi/transport/http_sse.lua` реализует исходный адаптер curl из ADR 0007.
+`lua/jusi/transport/sse.lua` — инкрементальный парсер кадрирования,
+обрабатывающий произвольные границы частей, CRLF, комментарии
+и многострочные данные.
 
-The controller depends on the adapter interface rather than curl itself. Unit
-tests use an in-memory fake; the headless end-to-end test uses the real adapter,
-service, SSE stream, and Jupyter kernel.
+Контроллер зависит от интерфейса адаптера, а не самого curl. Модульные тесты
+используют имитацию в памяти; сквозной тест без интерфейса использует настоящий
+адаптер, сервис, поток SSE и ядро Jupyter.

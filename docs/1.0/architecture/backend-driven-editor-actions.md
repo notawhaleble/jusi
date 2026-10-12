@@ -1,143 +1,162 @@
-# Backend-driven editor actions
+# Действия редактора по запросу бэкенда
 
-Status: implemented in [ADR 0036](../adr/0036-application-driven-editor-actions.md),
-with fixtures. Public `JusiCopy`/`JusiOpen` commands remain withdrawn. No production
-VisiData or shell plugin is changed. The ADR specifies the accepted wire contract
-and bounds; the legacy review below records the design rationale.
+Статус: реализовано в соответствии с
+[ADR 0036](../adr/0036-application-driven-editor-actions.md), с фикстурами.
+Публичные команды `JusiCopy`/`JusiOpen` остаются исключёнными. Рабочие плагины
+VisiData и оболочки не изменены. ADR задаёт принятый контракт передачи
+и ограничения; обзор старой реализации ниже фиксирует обоснование решений.
 
-## User workflows
+## Пользовательские сценарии
 
-- In VisiData, `zY` copies the current value to Neovim's unnamed register.
-- In VisiData, Ctrl-O opens the current value in a Neovim split.
-- In a shell client, `jusivim /some/file` reads that target-side file and opens
-  its content in Neovim. Relative paths resolve where the helper is invoked,
-  including its container filesystem and current directory.
+- В VisiData `zY` копирует текущее значение в безымянный регистр Neovim.
+- В VisiData Ctrl-O открывает текущее значение в отдельном окне Neovim.
+- В клиенте оболочки `jusivim /some/file` читает файл целевого окружения
+  и открывает его содержимое в Neovim. Относительные пути разрешаются там,
+  где вызван инструмент, включая файловую систему контейнера и текущий каталог.
 
-The application captures content when the user invokes the action. The editor
-must not later query a changed cursor selection. Opening is initially a content
-snapshot in a modifiable, unlisted `nofile` scratch buffer, independent of its
-source client. Local changes never acquire an unsaved-file flag and do not block
-close or editor exit. Writeback is a separate operation.
+Приложение фиксирует содержимое при вызове действия пользователем. Редактор
+не должен позднее запрашивать изменившееся выделение под курсором.
+Открытие изначально создаёт снимок содержимого в изменяемом временном буфере
+`nofile`, не включённом в список буферов и независимом от исходного клиента.
+Локальные изменения не получают флаг несохранённого файла и не блокируют
+закрытие или выход из редактора. Запись обратно — отдельная операция.
 
-## Applicable legacy behavior
+## Применимое поведение старой реализации
 
-Read-only review of `../jusi-0.x/src/jusi/visidata_support.py` found:
+Обзор только для чтения `../jusi-0.x/src/jusi/visidata_support.py` показал:
 
-- `syscopy_value` sends a `yank_text` action with the value's string form.
-  `syscopy_cells_async` renders display values into tab-separated rows before
-  sending. Selection and serialization are application-owned.
-- `append_plugin_frontend_action` emits independently of followup/execute
-  responses, through a runtime socket with a file-journal fallback.
-- `launch_editor` sends `open_path` requests, including an optional line and
-  multiple files. This expresses opening intent rather than terminal output.
-- `launch_external_editor` has different semantics: it writes a temporary value,
-  sends an `edit_path` request, waits for its request ID's result, and reads the
-  edited file back. This is a round trip, not merely open confirmation.
+- `syscopy_value` отправляет действие `yank_text` со строковым представлением
+  значения. `syscopy_cells_async` перед отправкой преобразует отображаемые
+  значения в строки, разделённые табуляцией. За выделение и сериализацию
+  отвечает приложение.
+- `append_plugin_frontend_action` выдаёт действия независимо от ответов
+  на повторный запрос или выполнение, через сокет среды выполнения
+  с резервным файловым журналом.
+- `launch_editor` отправляет запросы `open_path`, включая необязательный номер
+  строки и несколько файлов. Это намерение открыть, а не терминальный вывод.
+- У `launch_external_editor` другая семантика: функция записывает временное
+  значение, отправляет запрос `edit_path`, ждёт результат его идентификатора
+  и читает изменённый файл обратно. Это обмен в обе стороны,
+  а не просто подтверждение открытия.
 
-`../jusi-shell/src/jusi_shell/runner.py` injects shell helpers which send paths to
-client-owned local IPC. `../jusivim/autoload/jusi/session.vim` opens those paths
-and returns edit completion on buffer hide/unload/wipe, using the modified flag.
-Its remote-filesystem restriction explains why this design did not travel well.
+`../jusi-shell/src/jusi_shell/runner.py` добавляет инструменты оболочки,
+передающие пути через локальный IPC клиента. `../jusivim/autoload/jusi/session.vim`
+открывает эти пути и возвращает завершение редактирования при скрытии,
+выгрузке или удалении буфера, используя флаг изменения. Ограничение удалённой
+файловой системы объясняет трудности переноса этой конструкции.
 
-Preserve application-originated actions, captured content, exact request IDs,
-optional location hints and a return channel. Do not carry forward shared
-filesystem paths, optimistic “copied” status before delivery, or implicit edit
-completion on buffer hiding. Register a result waiter before publishing its
-request: legacy blocking edit publishes first, leaving a possible fast-reply race.
+Сохраняйте действия от приложения, зафиксированное содержимое, точные
+идентификаторы запросов, необязательные подсказки расположения и обратный канал.
+Не переносите общие пути файловой системы, оптимистичный статус «скопировано»
+до доставки и неявное завершение редактирования при скрытии буфера.
+Регистрируйте ожидание результата до публикации запроса: старое блокирующее
+редактирование сначала публикует запрос, создавая возможную гонку быстрого ответа.
 
-## Implemented flow
+## Реализованный процесс
 
-1. Core gives each target application a client-scoped action channel at launch.
-   A small helper API is usable by Python applications and a shell CLI alike.
-   It must not depend on a running `handle()` request or use terminal escapes.
-   The private Unix socket belongs to the client in its target runtime;
-   this is target-local IPC, not a frontend-local service or remote file relay.
-2. The application snapshots text and submits a generic copy/open action.
-   Core derives client/runtime ownership from the channel, rather than trusting
-   caller-supplied arbitrary client IDs. Each action has its own ID and trace.
-3. The target service retains disk-backed content and publishes an ordered
-   availability notification addressed to the owning frontend. Payload content
-   stays out of lifecycle events and diagnostics. The frontend fetches it over
-   HTTP using the action identity.
-4. Neovim validates ownership and content, applies the existing register/buffer
-   delivery helper, then acknowledges the exact action over HTTP. Copy leaves
-   focus alone; open focuses a split below the requesting client's captured
-   window. Notebook location and `switchbuf` do not choose the destination.
-   A hidden client or a source window closed/reused during transfer fails
-   delivery instead of opening in another tab.
-   The application/helper reports success only after this acknowledgment.
+1. При запуске ядро Jusi даёт каждому целевому приложению канал действий,
+   ограниченный клиентом. Небольшой вспомогательный API доступен приложениям
+   Python и CLI оболочки. Он не должен зависеть от активного запроса `handle()`
+   или использовать escape-последовательности терминала. Закрытый Unix-сокет
+   принадлежит клиенту в его целевой среде выполнения; это IPC целевого узла,
+   а не локальный сервис фронтенда или ретранслятор удалённых файлов.
+2. Приложение делает снимок текста и отправляет общее действие копирования
+   или открытия. Ядро Jusi определяет владение клиентом и средой выполнения
+   по каналу, не доверяя произвольным идентификаторам клиентов от вызывающей
+   стороны. У каждого действия собственные идентификатор и трассировка.
+3. Целевой сервис сохраняет содержимое на диске и публикует упорядоченное
+   уведомление о доступности для владеющего фронтенда. Содержимое нагрузки
+   не включается в события жизненного цикла и диагностику. Фронтенд получает
+   его по HTTP, используя идентификатор действия.
+4. Neovim проверяет владение и содержимое, применяет существующий инструмент
+   доставки в регистр или буфер, затем подтверждает конкретное действие
+   по HTTP. Копирование сохраняет фокус; открытие переводит его в окно ниже
+   зафиксированного окна запрашивающего клиента. Расположение блокнота
+   и `switchbuf` не выбирают место назначения. Скрытый клиент или исходное
+   окно, закрытое либо использованное заново во время передачи, вызывают ошибку
+   доставки вместо открытия в другой вкладке. Приложение или инструмент
+   сообщает об успехе только после этого подтверждения.
 
-The same flow handles local and remote targets. The shell helper reads the file
-in its own execution context and sends bytes; neither the service nor Neovim
-needs access to that filesystem path. Large/binary content can extend the
-transport later without making open depend on SCP or shared storage.
+Один процесс обслуживает локальные и удалённые окружения. Инструмент оболочки
+читает файл в собственном контексте выполнения и передаёт байты; ни сервису,
+ни Neovim не нужен доступ к этому пути файловой системы. Передачу большого
+или бинарного содержимого позднее можно расширить без зависимости открытия
+от SCP или общего хранилища.
 
-## Ownership and failure requirements implemented by ADR 0036
+## Требования к владению и сбоям, реализованные в ADR 0036
 
-- Introduce an explicit editor recipient binding. A terminal attachment ID is
-  transport identity and can change on reconnect; it is not sufficient as the
-  durable editor recipient. Do not broadcast copy/open to every SSE reader.
-- Bind an action to its original recipient and source generation. A replacement
-  editor or a new client on the same cell must not inherit old actions. Report
-  an unavailable recipient visibly instead of silently queuing surprise opens.
-- Reconnect must inspect pending action metadata as well as replay notifications.
-  Within the same editor lifetime, deduplicate by action ID so replay or a lost
-  acknowledgment does not create another split or overwrite the register again.
-  Across editor loss, report uncertain delivery rather than promise exactly-once
-  application or retry an already-performed side effect blindly.
-- Client/runtime close cancels undelivered actions and releases application
-  waiters. Already delivered buffers remain independent. Control acknowledgment
-  must bypass ordinary work, including an application waiting for that result.
-- Missing files, invalid content, disconnected editors and delivery failures
-  affect the action, not an otherwise healthy client or kernel. Service shutdown
-  and channel loss must also unblock helpers. Define bounded pending counts,
-  retention, and transport waits explicitly; none is a timeout on human editing.
+- Ввести явную привязку получателя в редакторе. Идентификатор терминального
+  подключения — идентификатор транспорта, который может меняться
+  при переподключении; его недостаточно для постоянного получателя в редакторе.
+  Не рассылать копирование и открытие всем читателям SSE.
+- Привязать действие к исходному получателю и поколению источника.
+  Заменивший редактор или новый клиент той же ячейки не должны наследовать
+  старые действия. Явно сообщать о недоступном получателе вместо скрытого
+  накопления неожиданных открытий.
+- При переподключении проверять метаданные ожидающих действий наряду
+  с воспроизведением уведомлений. В пределах жизни одного редактора устранять
+  дубликаты по идентификатору действия, чтобы повтор или потерянное подтверждение
+  не создавали новое окно и не перезаписывали регистр снова. При потере
+  редактора сообщать о неопределённой доставке, а не обещать применение строго
+  один раз или слепо повторять уже выполненный побочный эффект.
+- Закрытие клиента или среды выполнения отменяет недоставленные действия
+  и освобождает ожидающие вызовы приложения. Уже доставленные буферы
+  остаются независимыми. Управляющее подтверждение должно обходить обычную
+  работу, включая приложение, ожидающее этот результат.
+- Отсутствующие файлы, некорректное содержимое, отключённые редакторы и ошибки
+  доставки затрагивают действие, а не исправный клиент или ядро. Остановка
+  сервиса и потеря канала тоже должны разблокировать инструменты.
+  Явно определить ограничения числа ожидающих запросов, срока хранения
+  и ожиданий транспорта; ни одно из них не является тайм-аутом
+  человеческого редактирования.
 
-## Separate future edit operation
+## Отдельная будущая операция редактирования
 
-Legacy provides evidence for editing a value and returning the modified text.
-If requested, give that a distinct edit session with explicit accept/cancel and
-content returned over HTTP. “Opened successfully” must not mean “editing is
-finished”; hiding a buffer must not silently commit or cancel changes. Remote
-file writeback additionally needs its target owner and conflict policy.
+Старая реализация демонстрирует редактирование значения и возврат изменённого
+текста. Если это будет запрошено, используйте отдельный сеанс редактирования
+с явным принятием или отменой и возвратом содержимого по HTTP.
+«Успешно открыто» не должно означать «редактирование завершено»; скрытие буфера
+не должно молча принимать или отменять изменения. Для записи удалённого файла
+обратно дополнительно нужны владелец в целевом окружении и политика конфликтов.
 
-## Fixture coverage before plugin migration
+## Проверки фикстурами до переноса плагинов
 
-The generic channel is proven with fixtures before touching `%%vd`: copy, open,
-helper-read file content, unavailable recipient, wrong/stale ownership, duplicate
-notification/ack, disconnect/reconnect, close while waiting, and delivery while
-ordinary plugin work is active. Keep the real plugin migration and its keybinding
-hooks for the subsequent plugin-development step.
+Общий канал проверяется фикстурами до изменения `%%vd`: копирование, открытие,
+чтение содержимого файла инструментом, недоступный получатель, неверное
+или устаревшее владение, дубликаты уведомлений и подтверждений, отключение
+и переподключение, закрытие во время ожидания и доставка во время обычной
+работы плагина. Перенос настоящего плагина и его обработчиков клавиш
+оставьте для следующего шага разработки плагина.
 
+## Проверка фикстуры разработки
 
-## Try the development fixture
+Запустите сервис с явным тестовым `PYTHONPATH` терминальной фикстуры,
+как в `tests/e2e/terminal_surface_spec.lua`, затем выполните ячейку,
+начинающуюся с `%%terminal_fixture`. Тела первоначального и повторных запросов
+становятся выделением фикстуры. В терминальном клиенте введите `action:copy`,
+`action:open` или `action:file` и нажмите Enter. Подтверждение появляется
+только после подтверждения доставки Neovim. Вариант с файлом создаёт
+и читает файл рядом с закрытым журналом целевого приложения, затем удаляет
+его; открытый буфер переживает закрытие исходного клиента.
 
-Launch the service with the terminal fixture's explicit test `PYTHONPATH` as in
-`tests/e2e/terminal_surface_spec.lua`, then execute a cell beginning with
-`%%terminal_fixture`. Initial/followup bodies become the fixture's selection.
-In the terminal client, enter `action:copy`, `action:open`, or `action:file` and
-press Enter. Confirmation appears only after Neovim acknowledges delivery.
-The file case creates and reads a file beside the target application's private
-journal, then deletes it; its open buffer survives source-client close.
+Для обработчиков рабочих приложений используйте `jusi.editor_client.copy(...)`
+или `open_text(...)`. В оболочке, наследующей окружение клиента, используйте
+`jusivim PATH`; `python -m jusi.editor_client PATH` — эквивалентный вызов модуля.
+Перезапустите сервис для загрузки реализации канала и переустановите пакет
+при изменении консольных точек входа. Новая команда копирования или открытия
+Neovim не требуется.
 
-For production application hooks, use `jusi.editor_client.copy(...)` or
-`open_text(...)`. In a shell inheriting the client's environment, use
-`jusivim PATH`; `python -m jusi.editor_client PATH` is the equivalent module form.
-Restart the service to load the channel implementation and reinstall the package
-when console entry points change. No new Neovim copy/open command is needed.
+## Большое содержимое
 
+Общего ограничения размера текста нет. Канал приложения и текущий фронтенд
+передают UTF-8 частями, используя закрытые временные промежуточные файлы
+с каждой стороны. 30-секундный срок ожидания активности продлевается
+при получении части, поэтому продолжающаяся передача не ограничена общим
+временем. Неудачные или отменённые загрузки не меняют регистры и не создают
+частично заполненные буферы вывода. Кадрирование, очистка и различие
+между буферизацией передачи и памятью назначения описаны
+в [ADR 0039](../adr/0039-user-data-is-not-a-control-frame.md).
 
-## Large content
-
-There is no total text-size ceiling. The application channel and current
-frontend transfer UTF-8 in chunks, with private temporary staging on each side.
-A 30-second inactivity lease renews on chunk fetch, so continued progress is not
-limited by total transfer duration. Failed or cancelled downloads do not modify
-registers or create partially populated output buffers. See
-[ADR 0039](../adr/0039-user-data-is-not-a-control-frame.md) for framing, cleanup and
-the distinction between transfer buffering and destination memory.
-
-
-Applications can also display two snapshots with show_diff; see the
-[show-diff guide](show-diff.md). It is display-only and shares the same recipient,
-transfer and acknowledgment lifecycle.
+Приложения также могут показывать два снимка через `show_diff`; см.
+[руководство по просмотру различий](show-diff.md). Это только показ,
+использующий тот же жизненный цикл получателя, передачи и подтверждения.

@@ -1,90 +1,98 @@
-# Plugin attention
+# Запросы внимания от плагинов
 
-Plugins use attention to announce a question, approval request, or completed
-background work. The core does not interpret prompts or answer on the user's
-behalf. The plugin's own UI remains responsible for those interactions.
+Плагины используют запросы внимания, чтобы сообщить о вопросе, необходимости
+подтверждения или завершении фоновой работы. Ядро Jusi не интерпретирует
+приглашения и не отвечает от имени пользователя. За взаимодействие отвечает
+собственный интерфейс плагина.
 
-Add `"attention"` to the plugin family's catalog `capabilities`. For a
-`terminal_interactive` client, Jusi supplies `JUSI_EDITOR_ACTION_SOCKET` to its
-terminal application's environment. Preserve that variable in subprocesses
-that need to publish attention. No `editor_actions` capability is required
-unless the application also uses copy/open/diff.
+Добавьте `"attention"` в `capabilities` каталога семейства плагинов.
+Для клиента `terminal_interactive` Jusi передаёт `JUSI_EDITOR_ACTION_SOCKET`
+в окружение терминального приложения. Сохраняйте эту переменную в дочерних
+процессах, которым нужно публиковать запросы внимания. Возможность
+`editor_actions` нужна только если приложение также использует копирование,
+открытие или просмотр различий.
 
 ```python
 from jusi.editor_client import request_attention, update_attention, clear_attention
 
 pending = request_attention(
     kind="action_required",
-    message="Approval requested",
+    message="Требуется подтверждение",
 )
-# Continue servicing the plugin UI; the helper only waits for service acceptance.
-# When the user answers in your application, or the request is withdrawn:
+# Продолжайте обслуживать интерфейс плагина; функция ждёт только принятия сервисом.
+# Когда пользователь ответит в приложении или запрос будет отозван:
 clear_attention(pending)
 
-finished = request_attention(kind="notice", message="Background work finished")
-# Optional correction without another alert:
-update_attention(finished, kind="notice", message="Results ready to inspect")
+finished = request_attention(kind="notice", message="Фоновая работа завершена")
+# Необязательное уточнение без нового сигнала:
+update_attention(finished, kind="notice", message="Результаты готовы к просмотру")
 ```
 
-Keep summaries short (up to 240 characters) and omit private prompt content,
-credentials and control sequences. IDs belong to the originating client.
-Resolve/withdraw outstanding requests when the plugin no longer needs input.
-Use a new ID for genuinely new attention; updating an existing ID does not ring
-again. A notice may already have been dismissed when an application tries to
-update it, in which case the helper raises `EditorDeliveryError`. Clearing an
-already cleared item is harmless.
+Используйте короткие сводки до 240 символов без приватного содержимого запросов,
+учётных данных и управляющих последовательностей. Идентификаторы принадлежат
+исходному клиенту. Разрешайте или отзывайте ожидающие запросы, когда плагину
+больше не нужен ввод. Для нового повода привлечь внимание используйте новый
+идентификатор; обновление существующего не вызывает повторный сигнал.
+Уведомление может быть уже снято к моменту попытки обновления; в этом случае
+функция выдаёт `EditorDeliveryError`. Повторное удаление уже удалённого
+элемента безопасно.
 
-The service accepts attention while the editor is disconnected. Closing the
-client clears its attention. These helpers don't wait for a human or for the
-plugin's ongoing worker call to return. An unavailable channel or unconfirmed
-acceptance raises `EditorDeliveryError`; do not automatically retry creation,
-since the first request may have succeeded. In this version the channel is
-provided to terminal applications; worker handlers should arrange publication
-through their application rather than import frontend code or write BEL bytes.
+Сервис принимает запросы внимания и при отключённом редакторе. Закрытие клиента
+удаляет его запросы внимания. Эти функции не ждут человека или завершения
+текущего вызова рабочего процесса плагина. Недоступный канал или неподтверждённое
+принятие вызывают `EditorDeliveryError`; не повторяйте создание автоматически,
+поскольку первый запрос мог быть успешным. В этой версии канал предоставляется
+терминальным приложениям; обработчики рабочих процессов должны организовать
+публикацию через своё приложение, а не импортировать код фронтенда
+или записывать байты BEL.
 
-## Neovim controls
+## Управление в Neovim
 
-- `:JusiAttention` visits a pending client, offering a picker if needed.
-- `:JusiAttention!` dismisses completion notices without visiting.
-- Visiting a client clears its notices, but never resolves approval/questions.
-- Notebook and client statuslines retain an attention count.
-- With Neovim's default tabline, the owning tab has an amber background for
-  questions/approvals or blue for completion notices, plus `!N`. The tabline is
-  visible while attention is pending, even for a single tab. Previous native
-  tabline visibility is restored when attention clears.
+- `:JusiAttention` переходит к ожидающему клиенту, при необходимости предлагая выбор.
+- `:JusiAttention!` снимает уведомления о завершении без перехода.
+- Переход к клиенту снимает его уведомления, но не разрешает вопросы и запросы подтверждения.
+- Строки состояния блокнота и клиента сохраняют число запросов внимания.
+- В стандартной строке вкладок Neovim вкладка владельца получает янтарный фон
+  для вопросов и подтверждений или синий для уведомлений о завершении, а также
+  `!N`. Строка вкладок видна при ожидающих запросах даже для одной вкладки.
+  После их удаления восстанавливается прежняя стандартная видимость строки.
 
-Tab highlights follow visible client buffers. When a client is hidden, its
-notebook's tabs provide the fallback. A mirrored notebook does not mark a tab
-when the client is visible elsewhere. Visiting a tab cannot clear a question or
-approval request. The indicator survives unrelated messages.
+Подсветка вкладок следует за видимыми буферами клиента. Если клиент скрыт,
+используются вкладки его блокнота. При отображении блокнота в нескольких
+вкладках вкладка не помечается, если клиент виден в другой. Переход во вкладку
+не может разрешить вопрос или запрос подтверждения. Индикатор сохраняется
+при посторонних сообщениях.
 
-Custom tablines are preserved. They can read
-`require("jusi.attention_tabline").summary(tabpage_handle)`, which returns
-`count`, `action_required`, and `notice`, and refresh on the
-`User JusiAttentionChanged` event. `JusiTabAttention` and `JusiTabNotice` are
-customizable highlight groups. Set `attention.tabline = false` to disable the
-default tabline enhancement.
+Пользовательские строки вкладок сохраняются. Они могут читать
+`require("jusi.attention_tabline").summary(tabpage_handle)`, возвращающую
+`count`, `action_required` и `notice`, и обновляться по событию
+`User JusiAttentionChanged`. `JusiTabAttention` и `JusiTabNotice` — настраиваемые
+группы подсветки. Задайте `attention.tabline = false`, чтобы отключить
+расширение стандартной строки вкладок.
 
-Messages do not steal focus. Neovim focus events suppress bells while focused;
-otherwise a portable best-effort terminal bell accompanies new attention.
-Terminal configuration determines its audible/visual effect. The default uses
-the controlling terminal on the editor host, independently of the remote PTY
-and Neovim's error-bell settings. Unknown focus uses the same best-effort bell.
+Сообщения не перехватывают фокус. События фокуса Neovim подавляют сигналы,
+когда редактор в фокусе; иначе новый запрос внимания сопровождается
+терминальным сигналом, если это возможно. Звуковой или визуальный эффект
+определяется настройкой терминала. По умолчанию используется управляющий
+терминал на хосте редактора независимо от удалённого PTY и настроек сигнала
+ошибки Neovim. При неизвестном фокусе сигнал также подаётся по возможности.
 
 ```lua
 require("jusi").setup({
   attention = {
-    bell = true, -- true (default), false, or function() ... end
-    tabline = true, -- enhance the default tabline while attention is pending
+    bell = true, -- true (по умолчанию), false или function() ... end
+    tabline = true, -- дополнять стандартную строку вкладок при ожидающих запросах
     notify = function(items, context)
-      -- Optional host-side desktop notifier. items is a coalesced list.
-      -- context.focused and context.focus_known describe Neovim's focus view.
+      -- Необязательный обработчик уведомлений рабочего стола на хосте.
+      -- items — объединённый список.
+      -- context.focused и context.focus_known описывают состояние фокуса Neovim.
     end,
   },
 })
 ```
 
-Notification hooks are optional; the in-editor message and pending indicators
-remain available. A hook must return promptly. Bell requests are coalesced and
-rate-limited. No OS notification tool or terminal-specific escape extension is
-required. See [ADR 0049](../adr/0049-client-attention.md).
+Обработчики уведомлений необязательны; сообщения в редакторе и индикаторы
+ожидания остаются доступны. Обработчик должен быстро возвращать управление.
+Запросы сигнала объединяются, а их частота ограничивается. Не требуется
+средство уведомлений ОС или расширение escape-последовательностей конкретного
+терминала. См. [ADR 0049](../adr/0049-client-attention.md).

@@ -1,50 +1,61 @@
-# Installation
+# Установка
 
-Jusi has two components: a Python backend installed with pip and a Neovim
-plugin installed from GitHub. Use matching release versions of both.
+Jusi состоит из двух компонентов: Python-бэкенда, устанавливаемого через pip,
+и плагина Neovim, устанавливаемого из Git-репозитория. Используйте одинаковые версии
+выпусков обоих компонентов.
 
-## Python backend
+## Python-бэкенд
 
-Install into your chosen Python 3.9+ environment:
+Установите его в выбранное окружение Python 3.9+:
 
 ```sh
 pip install jusi
 ```
 
-For the bundled VisiData client:
+Для встроенного клиента VisiData:
 
 ```sh
 pip install 'jusi[vd]'
 ```
 
-Make that environment's `bin` directory available on Neovim's PATH. Activating
-its virtual environment before launching Neovim is one way to do this. Check
-which backend is selected with `jusi --version`.
+Добавьте каталог `bin` этого окружения в PATH Neovim. Один из способов —
+активировать виртуальное окружение перед запуском Neovim. Проверьте выбранный
+бэкенд командой `jusi --version`.
 
-## Neovim plugin
+## Плагин Neovim
 
-The frontend requires Neovim 0.11+, curl and a POSIX shell. Install
-`notawhaleble/jusi` through your Neovim plugin manager, or use Neovim's native
-package directory:
+Фронтенду нужны Neovim 0.11+, curl и POSIX-совместимая оболочка.
+Для установки нужны SSH-доступ к репозиторию и Git. Используйте явный URL
+в менеджере плагинов или стандартный каталог пакетов Neovim:
 
 ```sh
-git clone https://github.com/notawhaleble/jusi.git \
+git clone ssh://my-org/Python/Jusi.git \
   "${XDG_DATA_HOME:-$HOME/.local/share}/nvim/site/pack/jusi/start/jusi"
 ```
 
-Restart Neovim. The plugin loads automatically; no runtimepath manipulation or
-Python-side frontend installer is needed. If you use a custom `NVIM_APPNAME` or
-package directory, adjust the destination accordingly. Disable legacy jusivim
-before loading Jusi 1.0 in the same editor.
+Перезапустите Neovim. Плагин загружается автоматически; менять runtimepath
+или устанавливать фронтенд средствами Python не требуется. Если используется
+свой `NVIM_APPNAME` или каталог пакетов, скорректируйте путь назначения.
+Отключите старый jusivim перед загрузкой Jusi 1.0 в том же редакторе.
 
-For a pinned installation, select the corresponding release tag in your plugin
-manager or Git checkout and pin the same Python version with pip. Upgrade both
-components together, after stopping active targets, then restart Neovim.
+Для менеджера lazy.nvim укажите полный URL вместо сокращённого имени GitHub:
 
-## A local virtual environment and a Docker target
+```lua
+{
+  url = "ssh://my-org/Python/Jusi.git",
+}
+```
 
-For a minimal local Python kernel, create an environment containing Jusi and
-register its interpreter as that environment's `python3` kernel:
+Для воспроизводимой установки закрепите проверенный тег выпуска или коммит
+в менеджере плагинов или рабочей копии Git. Версию бэкенда выбирайте
+в соответствии с `pyproject.toml` этой версии. Обновляйте оба компонента
+вместе, предварительно остановив активные целевые окружения,
+затем перезапустите Neovim.
+
+## Локальное виртуальное окружение и Docker
+
+Для минимального локального Python-ядра создайте окружение с Jusi
+и зарегистрируйте его интерпретатор как ядро `python3` этого окружения:
 
 ```sh
 python3 -m venv "$HOME/.venvs/jusi"
@@ -52,11 +63,11 @@ python3 -m venv "$HOME/.venvs/jusi"
 "$HOME/.venvs/jusi/bin/python" -m ipykernel install --sys-prefix --name python3
 ```
 
-The `vd` extra is optional. Install your Python libraries and Jusi plugins into
-this same environment. Explicit executable paths below let Neovim use it without
-activating the environment or changing Neovim's PATH.
+Дополнительная зависимость `vd` необязательна. Устанавливайте библиотеки Python
+и плагины Jusi в это же окружение. Явные пути к исполняемым файлам ниже позволяют
+Neovim использовать его без активации и без изменения PATH Neovim.
 
-For Docker, put this `Dockerfile` in an empty directory:
+Для Docker поместите этот `Dockerfile` в пустой каталог:
 
 ```dockerfile
 FROM python:3.12-slim
@@ -66,21 +77,24 @@ WORKDIR /work
 CMD ["jusi", "serve", "--host", "0.0.0.0", "--port", "8765"]
 ```
 
-Build it there, then run the service with its port published on host loopback:
+Соберите образ в этом каталоге и запустите сервис, опубликовав его порт
+на loopback-интерфейсе хоста:
 
 ```sh
 docker build -t jusi-kernel:1.0.5 .
 docker run --rm --name jusi-kernel -p 127.0.0.1:9000:8765 jusi-kernel:1.0.5
 ```
 
-Keep that command running while using the Docker target. The service listens
-on all interfaces inside the container so Docker can forward the port; the host
-mapping uses `127.0.0.1`. See [Docker's port publishing guide](https://docs.docker.com/engine/network/port-publishing/).
-Install kernel dependencies and plugins in the image. To access host data, add
-an appropriate bind mount, such as `--mount type=bind,src=/absolute/data,dst=/work`.
-Target-side paths and configuration refer to files inside the container.
+Оставьте эту команду работающей, пока используете целевое окружение Docker.
+В контейнере сервис слушает все интерфейсы, чтобы Docker мог перенаправлять
+порт; на хосте используется `127.0.0.1`. См.
+[руководство Docker по публикации портов](https://docs.docker.com/engine/network/port-publishing/).
+Установите зависимости ядра и плагины в образ. Для доступа к данным хоста
+добавьте подходящее монтирование, например
+`--mount type=bind,src=/absolute/data,dst=/work`.
+Пути и настройки целевого окружения относятся к файлам внутри контейнера.
 
-Add this to `init.lua` (or your plugin manager's Jusi configuration callback):
+Добавьте это в `init.lua` или функцию настройки Jusi в менеджере плагинов:
 
 ```lua
 local jusi_bin = vim.fn.expand("~/.venvs/jusi/bin/jusi")
@@ -102,23 +116,26 @@ require("jusi").setup({
 })
 ```
 
-Use `:JusiStart venved_jusi` or `:JusiStart dockered_jusi` in an open notebook.
-`targets` is a table keyed by alias, not a list; supplying it replaces the default
-alias table, so use these names instead of `:JusiStart local`. Lua reserves
-`local`: if you choose that alias, write `["local"] = { ... }`.
-Arguments are passed directly without shell expansion; use `vim.fn.expand()`
-for `~` in executable paths. The bridge subcommand is spelled `terminal-bridge`.
+В открытом блокноте используйте `:JusiStart venved_jusi` или
+`:JusiStart dockered_jusi`. `targets` — таблица с псевдонимами в качестве ключей,
+а не список; её передача заменяет таблицу псевдонимов по умолчанию, поэтому
+используйте эти имена вместо `:JusiStart local`. В Lua `local` — зарезервированное
+слово: если выбираете этот псевдоним, пишите `["local"] = { ... }`.
+Аргументы передаются напрямую, без подстановок оболочки; для `~` в путях
+к исполняемым файлам используйте `vim.fn.expand()`.
+Подкоманда моста называется `terminal-bridge`.
 
-The Docker kernel and service run inside Docker, but the terminal bridge runs
-on the Neovim host using your local venv's Jusi. Both installations and the
-frontend should use the same release. `:JusiStop` stops the selected kernel and
-its clients; for the Docker target it leaves the externally started service
-running. Stop the container separately with `docker stop jusi-kernel`.
-See [target configuration](architecture/target-start-stop.md) for more options.
+Ядро и сервис Docker работают внутри контейнера, но терминальный мост
+запускается на хосте Neovim через Jusi из локального виртуального окружения.
+Обе установки и фронтенд должны иметь одинаковую версию выпуска.
+`:JusiStop` останавливает выбранное ядро и его клиентов; для Docker сервис,
+запущенный отдельно, продолжает работать. Остановите контейнер отдельно
+командой `docker stop jusi-kernel`.
+Дополнительные параметры описаны в [настройке целевых окружений](architecture/target-start-stop.md).
 
-## First notebook
+## Первый блокнот
 
-Open `example.vipynb` containing:
+Откройте `example.vipynb` с таким содержимым:
 
 ```text
 ╭──
@@ -126,22 +143,25 @@ Open `example.vipynb` containing:
 ╰──
 ```
 
-Run `:JusiStart local` (or `:JusiStart venved_jusi` with the configuration
-above), then `:JusiExecute` with the cursor in the cell. Its output should show
-`42`. `:JusiStop` closes the kernel and owned service. You can also press Space to enter cell mode and Enter to submit the cell.
+Выполните `:JusiStart local` или `:JusiStart venved_jusi`, если используете
+конфигурацию выше, затем `:JusiExecute` с курсором внутри ячейки. Вывод должен
+показать `42`. `:JusiStop` закрывает ядро и запущенный для него сервис.
+Также можно нажать пробел для перехода в режим ячеек и Enter для отправки ячейки.
 
-The default kernel is `python3`. Additional Python dependencies belong in the
-kernel environment. Configure other executable paths, named environments and
-remote targets through [target configuration](architecture/target-start-stop.md).
-Backend configuration lives at `~/.jusi/jusi.toml` on the target.
+Ядро по умолчанию — `python3`. Дополнительные зависимости Python устанавливаются
+в окружение ядра. Другие пути к исполняемым файлам, именованные окружения
+и удалённые узлы задаются в [настройке целевых окружений](architecture/target-start-stop.md).
+Конфигурация бэкенда хранится в `~/.jusi/jusi.toml` в целевом окружении.
 
-With the `vd` extra installed, try a cell containing `%%vd` on its first body
-line and `[{'value': 'hello'}]` below it. Its terminal supports `zY` copy and
-Ctrl-O open. See [VisiData usage](architecture/bundled-vd.md).
+Если установлена дополнительная зависимость `vd`, попробуйте ячейку с `%%vd`
+в первой строке тела и `[{'value': 'привет'}]` ниже. Её терминал поддерживает
+копирование через `zY` и открытие через Ctrl-O.
+См. [использование VisiData](architecture/bundled-vd.md).
 
-Use `:JusiTrace` to inspect service, kernel and transport failures.
+Используйте `:JusiTrace` для просмотра сбоев сервиса, ядра и транспорта.
 
-## Plugin authors
+## Авторам плагинов
 
-Run `jusi install-skills` to install the plugin and family development skills
-with matching reference source. See the [skills guide](skills.md).
+Выполните `jusi install-skills`, чтобы установить навыки разработки плагинов
+и семейств с исходным кодом соответствующей версии для справки.
+См. [руководство по навыкам](skills.md).

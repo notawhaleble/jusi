@@ -1,93 +1,101 @@
-# Jusi 1.0 Performance Budgets
+# Бюджеты производительности Jusi 1.0
 
-These are initial product budgets, not claims about the 0.x implementation. Measurements must record machine, Neovim, Python, kernel, notebook size, and warm/cold conditions.
+Это исходные бюджеты продукта, а не утверждения о реализации 0.x.
+При измерениях нужно указывать машину, Neovim, Python, ядро, размер блокнота
+и условия прогретого или холодного запуска.
 
-## Reference Notebook
+## Эталонный блокнот
 
-The baseline large notebook contains:
+Базовый большой блокнот содержит:
 
-- 10,000 lines
-- 1,000 cells
-- mixed ordinary and magic-looking text
-- representative execution history text
+- 10 000 строк.
+- 1 000 ячеек.
+- Смесь обычного текста и текста, похожего на магические команды.
+- Характерный текст истории выполнений.
 
-## Frontend Budgets
+## Бюджеты фронтенда
 
-- ordinary non-structural edit callback: p95 <= 5 ms, p99 <= 10 ms
-- localized structural reparse and reconciliation: p95 <= 16 ms
-- localized projection/render update: p95 <= 8 ms
-- initial full parse of the reference notebook: p95 <= 100 ms
-- no network, backend, client, or whole-notebook work on ordinary typing
+- Обработчик обычного неструктурного изменения: p95 <= 5 мс, p99 <= 10 мс.
+- Локальный повторный структурный разбор и согласование: p95 <= 16 мс.
+- Локальное обновление представления и отрисовки: p95 <= 8 мс.
+- Начальный полный разбор эталонного блокнота: p95 <= 100 мс.
+- При обычном наборе текста нет сетевой работы, работы бэкенда, клиентов или всего блокнота.
 
-Any unavoidable full-buffer recovery must be observable in development metrics and must not become the normal edit path.
+Любое неизбежное восстановление всего буфера должно быть видно в метриках
+разработки и не должно становиться обычным путём редактирования.
 
-## Local Service Budgets
+## Бюджеты локального сервиса
 
-Excluding kernel computation and cold kernel startup:
+Без учёта вычислений ядра и холодного запуска ядра:
 
-- accepted HTTP command overhead: p95 <= 25 ms
-- backend-observed output to SSE emission: p95 <= 25 ms
-- SSE receipt to queued frontend render: p95 <= 25 ms
-- stop acknowledgement: p95 <= 50 ms, with cleanup completion reported asynchronously when needed
+- Накладные расходы принятой команды HTTP: p95 <= 25 мс.
+- От наблюдения вывода бэкендом до выдачи SSE: p95 <= 25 мс.
+- От получения SSE до постановки отрисовки фронтенда в очередь: p95 <= 25 мс.
+- Подтверждение остановки: p95 <= 50 мс; при необходимости о завершении очистки сообщается асинхронно.
 
-## Walking-Skeleton Budgets
+## Бюджеты минимального сквозного сценария
 
-- warm service start to readiness: <= 1 s
-- local Python kernel start to `on`: <= 5 s
-- `1 + 1` submission to result event on a warm kernel: <= 500 ms
-- kernel stop to authoritative `off`: <= 2 s
+- От запуска прогретого сервиса до готовности: <= 1 с.
+- От запуска локального ядра Python до `on`: <= 5 с.
+- От отправки `1 + 1` до события результата на прогретом ядре: <= 500 мс.
+- От остановки ядра до авторитетного `off`: <= 2 с.
 
-These generous initial limits detect regressions and hangs. Tightening them requires measured evidence.
+Эти начальные пределы с запасом обнаруживают регрессии и зависания.
+Для их ужесточения нужны измеренные данные.
 
-## Required Benchmarks
+## Обязательные замеры
 
-- typing inside a cell at top, middle, and bottom of the reference notebook
-- delimiter insertion/deletion and cell split/merge
-- extmark identity preservation through structural edits
-- burst output event handling
-- 1, 10, and 100 sequential executions on a warm local kernel
-- cleanup after normal stop, kernel death, client failure, and plugin-worker death
+- Набор текста в ячейке в начале, середине и конце эталонного блокнота.
+- Вставка и удаление разделителей, разделение и объединение ячеек.
+- Сохранение идентификаторов extmark при структурных изменениях.
+- Обработка всплеска событий вывода.
+- 1, 10 и 100 последовательных выполнений на прогретом локальном ядре.
+- Очистка после обычной остановки, завершения ядра, сбоя клиента и завершения рабочего процесса плагина.
 
-## Executable Frontend Benchmark
+## Исполняемый замер фронтенда
 
-The headless frontend suite runs `tests/frontend/benchmark.lua`. It constructs the 10,000-line/1,000-cell reference notebook and records machine, Neovim, Lua, and warm-sample conditions in its JSON output.
+Набор тестов фронтенда без интерфейса запускает `tests/frontend/benchmark.lua`.
+Он создаёт эталонный блокнот из 10 000 строк и 1 000 ячеек и записывает
+машину, Neovim, Lua и условия прогретых выборок в JSON-вывод.
 
-The benchmark currently enforces:
+Сейчас проверяются:
 
-- full parser p95 and initial model attachment against the 100 ms load budget
-- top, middle, and bottom body-edit p95/p99 budgets
-- split/merge structural-edit p95 budget
-- no edit-triggered full parse
-- at most 12 scanned lines and two reconciled cells for its localized split/merge workload
+- p95 полного парсера и начальное подключение модели в пределах бюджета загрузки 100 мс.
+- Бюджеты p95/p99 изменений тела в начале, середине и конце.
+- Бюджет p95 структурных изменений разделения и объединения.
+- Отсутствие полного разбора, вызванного редактированием.
+- Не более 12 просканированных строк и двух согласованных ячеек
+  для локальной нагрузки разделения и объединения.
 
-Service, event-burst, sequential-execution, and failure-cleanup benchmarks remain deferred beyond the notebook-model slice.
+Замеры сервиса, всплесков событий, последовательных выполнений и очистки
+при сбоях остаются отложенными за пределы этапа модели блокнота.
 
-## Interactive SQL Development Baseline
+## Базовый замер интерактивного SQL при разработке
 
-The central SQLite/VisiData fixture is diagnostic rather than a production
-performance promise. On the 2026-09-02 reference development machine (macOS
-arm64, Python 3.9, Neovim 0.11.4, loopback service, warm kernel, eight fresh
-clients), splitting catalog, kernel, worker, and application imports changed:
+Центральная фикстура SQLite/VisiData служит диагностике, а не обещанию
+производительности рабочей системы. На эталонной машине разработки 2026-09-02
+(macOS arm64, Python 3.9, Neovim 0.11.4, сервис на loopback, прогретое ядро,
+восемь новых клиентов) разделение импортов каталога, ядра, рабочего процесса
+и приложения изменило:
 
-- `JusiExecute` to visible VisiData value: approximately 1.54 s median to
-  0.65 s median
-- command to published client/surface: approximately 204 ms to 54 ms
-- published surface to visible value: approximately 1.33 s to 0.59 s
+- От `JusiExecute` до видимого значения VisiData: медиана примерно с 1,54 с до 0,65 с.
+- От команды до публикации клиента и поверхности: примерно с 204 мс до 54 мс.
+- От публикации поверхности до видимого значения: примерно с 1,33 с до 0,59 с.
 
-The removed cost was accidental repeated IPython import/initialization in the
-worker and terminal application. CI enforces the import boundaries instead of
-these machine-dependent elapsed times. Future SQL work should retain a
-diagnostic execute-to-first-draw benchmark and record warm/cold process and
-target conditions when changing this baseline.
+Устранённые затраты — случайные повторные импорт и инициализация IPython
+в рабочем процессе и терминальном приложении. CI проверяет границы импортов,
+а не эти зависящие от машины времена. Будущая работа с SQL должна сохранять
+диагностический замер от выполнения до первой отрисовки и записывать условия
+прогретых и холодных процессов и целевого окружения при изменении базы сравнения.
 
-## Plugin Lifecycle Profile
+## Профиль жизненного цикла плагинов
 
-The [2026-10-09 local plugin profile](performance/plugin-cells-2026-10-09.md)
-records fresh-worker/bridge/application startup, explicit close, application
-quit and whole-service exit, with a normal-service control run and executable
-development harness. These diagnostic measurements do not impose CI timing
-thresholds.
+[Локальный профиль плагинов от 2026-10-09](performance/plugin-cells-2026-10-09.md)
+фиксирует запуск новых рабочих процессов, мостов и приложений, явное закрытие,
+выход из приложения и выход из всего сервиса, с контрольным запуском обычного
+сервиса и исполняемым инструментом разработки. Эти диагностические измерения
+не вводят временные пороги CI.
 
-The [optimization follow-up](performance/plugin-cells-optimization-2026-10-09.md)
-records the implemented wakeup/import changes and controlled before/after
-measurements, while retaining the original raw baseline.
+[Отчёт об оптимизации](performance/plugin-cells-optimization-2026-10-09.md)
+фиксирует реализованные изменения пробуждения и импортов и контролируемые
+измерения до и после, сохраняя исходную необработанную базу сравнения.

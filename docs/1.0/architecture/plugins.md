@@ -1,195 +1,223 @@
-# Plugin Architecture
+# Архитектура плагинов
 
-## Preserved Product Behavior
+## Сохранённое поведение продукта
 
-The 1.0 design preserves these learned behaviors from 0.x:
+Проект 1.0 сохраняет следующие изученные особенности 0.x:
 
-- one visible magic family may resolve to multiple exact providers
-- the frontend can discover family-level creation/completion capabilities before
-  execution
-- kernel parsing can produce a validated exact-plugin handoff
-- one plugin client may support follow-up, completion, interrupt, generic editor
-  actions, or an interactive terminal
-- exact-provider presentation metadata may refine family defaults after handoff
+- Одно видимое семейство магических команд может разрешаться в несколько конкретных провайдеров.
+- Фронтенд может обнаруживать возможности создания и автодополнения
+  на уровне семейства до выполнения.
+- Разбор в ядре может создавать проверенную передачу управления конкретному плагину.
+- Один клиент плагина может поддерживать повторные запросы, автодополнение,
+  прерывание, общие действия редактора или интерактивный терминал.
+- Метаданные представления конкретного провайдера могут уточнять значения
+  семейства по умолчанию после передачи управления.
 
-The 0.x base-class hierarchy, `handler_message`, prepared clients, status files,
-attach commands, and `busy`/`follow-up` cell states are historical evidence, not
-1.0 contracts.
+Иерархия базовых классов 0.x, `handler_message`, подготовленные клиенты,
+файлы состояния, команды подключения и состояния ячеек `busy`/`follow-up` —
+исторические свидетельства, а не контракты 1.0.
 
-## Ownership
+## Владение
 
-Core owns catalog schema validation, family-claim conflict detection, resource
-identities, worker supervision, generic operations/actions, failure taxonomy,
-and cleanup. Core does not import provider modules or interpret provider payloads.
+Ядро Jusi владеет проверкой схемы каталога, обнаружением конфликтов объявлений
+семейств, идентификаторами ресурсов, надзором за рабочими процессами,
+общими операциями и действиями, классификацией ошибок и очисткой.
+Оно не импортирует модули провайдеров и не интерпретирует их нагрузки.
 
-A plugin family owns shared configuration schema, provider selection, family
-syntax/indent hints, and common capability semantics. It does not own kernel
-liveness, frontend windows, or terminal selection.
+Семейство плагинов владеет общей схемой конфигурации, выбором провайдера,
+подсказками синтаксиса и отступов и общей семантикой возможностей.
+Оно не владеет работоспособностью ядра, окнами фронтенда или выбором терминала.
 
-An exact plugin owns its configuration validation, kernel magic adapter, worker
-entry point, provider protocol, credentials, backend presentation content, and
-exact regression fixtures. It cannot widen its failure scope by assertion or
-require plugin-specific frontend code.
+Конкретный плагин владеет проверкой своей конфигурации, адаптером магических
+команд ядра, точкой входа рабочего процесса, протоколом провайдера,
+учётными данными, содержимым представления бэкенда и точными регрессионными
+фикстурами. Он не может расширять область своего сбоя простым утверждением
+или требовать специфичного кода фронтенда.
 
-The frontend owns cell parsing, generic action execution, media rendering, and
-interactive surfaces. It never chooses an exact provider by parsing a header
-when an authoritative handoff is required.
+Фронтенд владеет разбором ячеек, выполнением общих действий, отрисовкой медиа
+и интерактивными поверхностями. Он никогда не выбирает конкретного провайдера
+разбором заголовка, когда требуется авторитетная передача управления.
 
-## Lifetimes
+## Время жизни
 
 ```text
-notebook runtime generation
-  ├─ discovery process (short-lived)
-  ├─ validated catalog snapshot
-  ├─ kernel generation
-  │   └─ loaded versioned magic adapters
-  └─ zero or more plugin workers
-      └─ one or more explicitly owned clients/executions
+поколение среды выполнения блокнота
+  ├─ процесс обнаружения (короткоживущий)
+  ├─ проверенный снимок каталога
+  ├─ поколение ядра
+  │   └─ загруженные версионируемые адаптеры магических команд
+  └─ ноль или более рабочих процессов плагинов
+      └─ один или более клиентов/выполнений с явным владельцем
 ```
 
-No discovery process, catalog snapshot, imported kernel extension, worker,
-client, or capability snapshot survives full notebook restart.
+Ни процесс обнаружения, ни снимок каталога, импортированное расширение ядра,
+рабочий процесс, клиент или снимок возможностей не переживают полный
+перезапуск блокнота.
 
-Within that runtime generation, a successful handoff creates a durable client.
-SQL statements, shell commands, follow-ups, completions, and other ordinary
-operation results do not decide that client's lifetime. It ends only through
-explicit close, fatal client/worker loss, or owning-runtime teardown.
+В пределах поколения успешная передача управления создаёт долговременный
+клиент. SQL-операторы, команды оболочки, повторные запросы, автодополнение
+и другие обычные результаты операций не определяют его время жизни.
+Оно заканчивается только явным закрытием, фатальной потерей клиента
+или рабочего процесса либо очисткой владеющей среды.
 
-These resources are target-side and runtime-scoped. For a remote kernel, the
-service, discovery process, and workers run remotely with that kernel; no local
-Jusi proxy discovers or executes its plugins. A future multi-runtime service
-must retain a separate catalog and worker registry per `runtime_id`.
+Эти ресурсы размещены в целевом окружении и ограничены средой выполнения.
+Для удалённого ядра сервис, обнаружение и рабочие процессы работают
+удалённо с ним; локальный прокси Jusi не обнаруживает и не выполняет
+его плагины. Будущий сервис с несколькими средами должен сохранять
+отдельные каталог и реестр рабочих процессов для каждого `runtime_id`.
 
-## Discovery Contract
+## Контракт обнаружения
 
-The versioned Python entry-point group is `jusi.plugins.v1`. Each entry-point
-name is one exact `plugin_id` and resolves, only inside the discovery process,
-to a zero-argument callable returning one JSON-compatible catalog-entry object.
-The returned `distribution` and `plugin_version` must exactly match installed
-distribution metadata.
+Версионируемая группа точек входа Python — `jusi.plugins.v1`. Каждое имя
+точки входа — один конкретный `plugin_id`, разрешаемый только внутри
+процесса обнаружения в вызываемый объект без аргументов, возвращающий
+один JSON-совместимый объект записи каталога. Возвращённые `distribution`
+и `plugin_version` должны точно совпадать с метаданными установленного пакета.
 
-Discovery treats `kernel_extensions` and `worker_entry_point` as opaque strings;
-it does not import or resolve them. Exact providers may share a family claim
-only when magic name, capabilities, and family presentation agree. One magic
-cannot identify incompatible families.
+Обнаружение считает `kernel_extensions` и `worker_entry_point` непрозрачными
+строками; оно не импортирует и не разрешает их. Конкретные провайдеры
+могут совместно объявлять семейство только при согласии имени магической
+команды, возможностей и представления семейства. Одна магическая команда
+не может указывать на несовместимые семейства.
 
-Each attempt runs in a fresh interpreter and owned process group. The machine
-result uses a private bounded file, so provider stdout cannot corrupt it. The
-parent validates the complete catalog again and retains bounded stderr plus
-PID/exit/signal diagnostics. Any broken entry, duplicate identity, or family
-conflict prevents publication of the entire catalog; stale or partial
-capabilities are never presented as authoritative.
+Каждая попытка работает в новом интерпретаторе и принадлежащей ей группе
+процессов. Машинный результат использует закрытый ограниченный файл,
+поэтому stdout провайдера не может его повредить. Родитель повторно проверяет
+полный каталог и сохраняет ограниченный stderr и диагностику PID,
+завершения и сигнала. Любая повреждённая запись, повтор идентификатора
+или конфликт семейства предотвращают публикацию всего каталога;
+устаревшие или частичные возможности никогда не представляются авторитетными.
 
-The isolated adapter is an application port used by initial start and full
-notebook restart. Its validated catalog is owned by the resulting notebook
-runtime and is present in authoritative health/start/restart snapshots. Kernel adapter loading and exact-provider worker handoff are implemented.
+Изолированный адаптер — порт приложения, используемый начальным запуском
+и полным перезапуском блокнота. Его проверенный каталог принадлежит
+полученной среде блокнота и присутствует в авторитетных снимках health,
+запуска и перезапуска. Загрузка адаптера ядра и передача управления
+рабочему процессу конкретного провайдера реализованы.
 
-## Worker Control
+## Управление рабочим процессом
 
-The exact worker host and runtime-owned registry are now implemented behind an
-internal application boundary. Core allocates `plugin_worker_id`, selects the
-entry point from the current catalog, validates the exact family and operation
-capability, and starts a fresh child. The provider factory receives an immutable
-`WorkerContext`; its object handles one ordinary request at a time. ADR 0034 adds concurrent
-exact interruption and explicit recoverable rejection without moving ordinary
-handlers between threads.
+Хост конкретного рабочего процесса и реестр, принадлежащий среде,
+теперь реализованы за внутренней границей приложения. Ядро Jusi выделяет
+`plugin_worker_id`, выбирает точку входа из текущего каталога, проверяет
+конкретное семейство и возможность операции и запускает новый дочерний
+процесс. Фабрика провайдера получает неизменяемый `WorkerContext`;
+её объект обрабатывает один обычный запрос за раз. ADR 0034 добавляет
+параллельное точное прерывание и явное восстанавливаемое отклонение
+без перемещения обычных обработчиков между потоками.
 
-Control uses private duplicated descriptors and length-prefixed JSON. Ordinary
-plugin stdin is null and stdout is redirected into bounded stderr diagnostics,
-so output noise and ANSI bytes cannot become control frames. Worker exceptions,
-timeouts, channel loss, invalid frames, exits, and signals fence that worker.
-Isolation contains reliability failures but does not sandbox the user's
-filesystem or environment permissions.
+Управление использует закрытые дублированные дескрипторы и JSON с префиксом
+длины. Обычный stdin плагина отключён, stdout перенаправлен в ограниченную
+диагностику stderr, поэтому шум вывода и ANSI-байты не могут стать
+управляющими кадрами. Исключения, тайм-ауты, потеря канала, неверные кадры,
+завершения и сигналы отсекают рабочий процесс. Изоляция ограничивает сбои
+надёжности, но не ограничивает права пользователя на файловую систему
+или окружение.
 
-There is intentionally no HTTP or Neovim worker command yet. Kernel handoff now
-authoritatively identifies the exact plugin and family, and supervisor locking
-keeps worker I/O outside the authoritative-state lock. The remaining boundary
-is a generic client-surface resource and transport; private worker results are
-not a frontend plugin API.
+Команды рабочего процесса HTTP или Neovim пока намеренно нет.
+Передача управления ядра теперь авторитетно определяет конкретный плагин
+и семейство, а блокировки супервизора оставляют ввод-вывод рабочего процесса
+вне блокировки авторитетного состояния. Оставшаяся граница — общий ресурс
+поверхности клиента и транспорт; закрытые результаты рабочего процесса
+не являются API плагина фронтенда.
 
-## Kernel Adapter And Handoff
+## Адаптер ядра и передача управления
 
-Catalog-declared kernel modules load inside the fresh target kernel after
-Jupyter readiness. Each module exposes `jusi_kernel_adapter_v1()` and may expose
-the standard IPython `load_ipython_extension(ipython)` hook. One aggregate,
-closed attestation must exactly match catalog plugin version and family claims
-before the supervisor publishes kernel state `on`.
+Объявленные каталогом модули загружаются внутри нового целевого ядра
+после готовности Jupyter. Каждый модуль предоставляет `jusi_kernel_adapter_v1()`
+и может предоставлять стандартный обработчик IPython
+`load_ipython_extension(ipython)`. Одно совокупное подтверждение с закрытой
+структурой должно точно совпасть с версией плагина каталога и объявлениями
+семейства до публикации супервизором состояния ядра `on`.
 
-Before the IPython extension hook, an adapter may expose
-`configure_jusi_runtime_v1(configuration)`. Core supplies the freshly loaded,
-private target-side configuration snapshot from ADR 0019. This call is an
-in-process backend initialization boundary, not public protocol; its contents
-must never enter the adapter manifest, handoff metadata, presentation output,
-health, events, or diagnostics. Family code interprets its own section.
+До обработчика расширения IPython адаптер может предоставлять
+`configure_jusi_runtime_v1(configuration)`. Ядро Jusi передаёт свежий закрытый
+снимок конфигурации целевого окружения из ADR 0019. Это внутрипроцессная
+граница инициализации бэкенда, а не публичный протокол; её содержимое никогда
+не должно попадать в манифест адаптера, метаданные передачи, вывод
+представления, health, события или диагностику. Код семейства
+интерпретирует свой раздел.
 
-Execution adapters emit exact-provider control through
-`application/vnd.jusi.handoff.v1+json`. Core captures at most one record,
-removes it from renderable outputs, and validates it against the current
-runtime catalog. Its payload remains opaque and bounded by the Jupyter command
-path's 1 MiB control-record limit. Backend execution/client/worker identities
-are added only by core.
+Адаптеры выполнения выдают управление конкретному провайдеру через
+`application/vnd.jusi.handoff.v1+json`. Ядро Jusi захватывает не более одной
+записи, удаляет её из отображаемого вывода и проверяет по текущему каталогу
+среды. Нагрузка остаётся непрозрачной и ограниченной пределом 1 МиБ
+управляющей записи пути команд Jupyter. Идентификаторы выполнения,
+клиента и рабочего процесса бэкенда добавляет только ядро Jusi.
 
-Supervisor operations are serialized separately from authoritative state
-inspection. Worker startup, requests, and cleanup may occupy the operation
-lane, but never the short-lived state lock used by health and inspection.
+Операции супервизора выполняются последовательно отдельно от проверки
+авторитетного состояния. Запуск, запросы и очистка рабочего процесса
+могут занимать очередь операций, но не кратковременную блокировку
+состояния для health и проверки.
 
-## Client Surfaces
+## Поверхности клиентов
 
-Durable backend-owned clients expose generic `terminal` or `web` surfaces.
-Terminal bytes and web content remain opaque to core and are interpreted by the
-native terminal emulator or browser. Surface identity, transport, geometry,
-input capabilities, and lifecycle are shared protocol facts.
+Долговременные клиенты бэкенда предоставляют общие поверхности `terminal`
+или `web`. Байты терминала и веб-содержимое непрозрачны для ядра Jusi
+и интерпретируются стандартным эмулятором терминала или браузером.
+Идентификатор поверхности, транспорт, геометрия, возможности ввода
+и жизненный цикл — факты общего протокола.
 
-SQL/VisiData owns database state, datasets, application errors, and terminal
-content. Shell plugins own their shell/PTY behavior. Text plugins emit terminal
-bytes. Rich plugins own the content behind a web surface. The frontend only
-routes supported controls and manages native Neovim surfaces.
+SQL/VisiData владеет состоянием базы, наборами данных, ошибками приложения
+и терминальным содержимым. Плагины оболочки владеют поведением оболочки
+и PTY. Текстовые плагины выдают байты терминала. Плагины дополнительных
+медиа владеют содержимым веб-поверхности. Фронтенд только маршрутизирует
+поддерживаемое управление и управляет стандартными поверхностями Neovim.
 
-Recoverable application errors stay in plugin presentation. Fatal factory,
-worker, channel, or required-surface loss uses the core failure envelope so it
-remains observable when plugin presentation is unavailable.
+Восстанавливаемые ошибки приложения остаются в представлении плагина.
+Фатальная потеря фабрики, рабочего процесса, канала или обязательной
+поверхности использует конверт ошибки ядра Jusi, оставаясь наблюдаемой,
+когда представление плагина недоступно.
 
-## Failure And Verification
+## Сбои и проверки
 
-- discovery import/schema failure: internal `plugin_discovery/plugin_error`,
-  attributed to the exact entry point and distribution when known; kernel
-  remains `off` during restart/start
-- worker spawn/death: `plugin_worker/spawn_failed|process_exited|process_signalled`
-  with PID/exit/signal/stderr; owning client/execution fails, kernel normally stays `on`
-- handoff mismatch: `protocol/invalid_request`, scoped to the execution/client
-- kernel extension exception: `execution/execution_error`; a process crash is
-  separately `kernel/kernel_died`
+- Ошибка импорта или схемы обнаружения: внутренняя `plugin_discovery/plugin_error`,
+  с привязкой к конкретной точке входа и пакету, когда они известны;
+  ядро остаётся `off` при запуске или перезапуске.
+- Ошибка запуска или завершение рабочего процесса:
+  `plugin_worker/spawn_failed|process_exited|process_signalled` с PID,
+  завершением, сигналом и stderr; владеющий клиент или выполнение
+  завершается ошибкой, ядро обычно остаётся `on`.
+- Несовпадение передачи управления: `protocol/invalid_request`
+  в области выполнения или клиента.
+- Исключение расширения ядра: `execution/execution_error`;
+  авария процесса — отдельно `kernel/kernel_died`.
 
-Discovery tests cover a fresh process after package changes, one broken
-plugin beside one healthy plugin, atomic repair on the next attempt, timeout and
-process-group cleanup, bounded stderr, exit/signal distinction, malformed
-entries, and provider-family conflicts. Worker tests cover fresh process/import
-identity, stdout isolation, request/result correlation, handler failure,
-timeout, non-JSON and oversized results, exit/signal distinction, bounded
-stderr, catalog-only selection, capability rejection, idempotent cleanup, and
-restart teardown fencing. End-to-end exact-provider handoff and two-worker
-failure containment remain for the kernel-adapter slice.
+Тесты обнаружения охватывают новый процесс после изменения пакетов,
+один неисправный плагин рядом с исправным, атомарное исправление
+при следующей попытке, тайм-аут и очистку группы процессов, ограниченный
+stderr, различие завершения и сигнала, некорректные записи и конфликты
+провайдеров и семейств. Тесты рабочих процессов охватывают новый процесс
+и идентичность импортов, изоляцию stdout, корреляцию запросов и результатов,
+сбой обработчика, тайм-аут, результаты не-JSON и слишком большого размера,
+различие завершения и сигнала, ограниченный stderr, выбор только из каталога,
+отклонение неподдерживаемой возможности, идемпотентную очистку
+и отсечение при перезапуске. Сквозная передача конкретному провайдеру
+и локализация сбоя двух рабочих процессов остаются для этапа адаптера ядра.
 
-## Established Client Controls
+## Управление существующими клиентами
 
-See [ADR 0034](../adr/0034-concurrent-plugin-operation-interruption.md) for exact
-interrupt and failure semantics, and [ADR 0035](../adr/0035-editor-actions-transfer-content-over-http.md)
-for content-based copy/open. `src/jusi/plugin_api.py` is the current Python
-helper API. The terminal fixture exercises these contracts; it is not a
-production plugin or a migration of bundled `%%vd`.
+Точная семантика прерывания и ошибок описана
+в [ADR 0034](../adr/0034-concurrent-plugin-operation-interruption.md),
+а копирование и открытие через содержимое —
+в [ADR 0035](../adr/0035-editor-actions-transfer-content-over-http.md).
+`src/jusi/plugin_api.py` — текущий вспомогательный API Python.
+Терминальная фикстура проверяет эти контракты; она не рабочий плагин
+и не перенос встроенного `%%vd`.
 
+Копирование и открытие от приложения используют
+[ADR 0036](../adr/0036-application-driven-editor-actions.md)
+и `src/jusi/editor_client.py`. Интерактивные клиенты с `editor_actions`
+получают канал ядра Jusi при запуске терминала. Фиксируйте выделение
+до вызова блокирующей функции доставки; успех означает подтверждение
+редактором. `jusivim PATH` читает на целевом узле приложения.
+Код Lua плагина, escape-команда терминала или общая файловая система
+фронтенда не участвуют. Запись обратно и публикация прерываемой работы
+от приложения остаются отдельными контрактами.
 
-Application-originated copy/open uses [ADR 0036](../adr/0036-application-driven-editor-actions.md)
-and `src/jusi/editor_client.py`. Interactive clients advertising `editor_actions`
-receive the core-owned channel at terminal launch. Capture selection before
-calling the blocking delivery helper; success means editor acknowledgment.
-`jusivim PATH` reads at the application target. No plugin-specific Lua, terminal
-escape command, or shared frontend filesystem is involved. Writeback and
-application-originated interruptible work publication remain separate contracts.
+## Запросы внимания
 
-## Attention
-
-Terminal applications can declare the `attention` capability to publish durable
-requests for user activity or completion notices independently of busy worker
-operations. See [client attention](client-attention.md) for the Python helpers,
-frontend controls, ownership and cleanup contract.
+Терминальные приложения могут объявить возможность `attention`
+для публикации долговременных запросов действий пользователя
+или уведомлений о завершении независимо от занятых операций рабочего процесса.
+Функции Python, управление фронтенда, контракт владения и очистки описаны
+в [запросах внимания клиента](client-attention.md).

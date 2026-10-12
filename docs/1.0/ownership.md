@@ -1,82 +1,85 @@
-# Jusi 1.0 Component Ownership
+# Владение компонентами Jusi 1.0
 
-## Core Service
+## Основной сервис
 
-Owns:
+Отвечает за:
 
-- HTTP/SSE contract implementation
-- supervisor and resource identity
-- kernel lifecycle and truth
-- execution routing and event ordering
-- structured failures and trace correlation
-- idempotent cleanup
-- generic plugin discovery and isolation contracts
-- fail-closed publication of validated plugin catalog snapshots
-- notebook-runtime generations that bind catalog, kernel, and frontend notebook identities
+- Реализацию контракта HTTP/SSE.
+- Супервизор и идентификаторы ресурсов.
+- Жизненный цикл ядра и достоверные сведения о нём.
+- Маршрутизацию выполнения и порядок событий.
+- Структурированные ошибки и корреляцию трассировок.
+- Идемпотентную очистку.
+- Общие контракты обнаружения и изоляции плагинов.
+- Публикацию проверенных снимков каталога плагинов только при полном успехе проверки.
+- Поколения среды выполнения блокнота, связывающие каталог, ядро и идентификаторы блокнота фронтенда.
 
-Does not own:
+Не отвечает за:
 
-- notebook text coordinates
-- Neovim buffers, windows, extmarks, signs, or renderer layout
-- plugin-family semantics
-- ANSI interpretation
+- Координаты текста блокнота.
+- Буферы, окна, extmark, знаки Neovim и расположение элементов отрисовки.
+- Семантику семейств плагинов.
+- Интерпретацию ANSI.
 
-## Neovim Frontend
+## Фронтенд Neovim
 
-Owns:
+Отвечает за:
 
-- notebook text model and stable cell identity
-- localized parsing and reconciliation
-- extmark anchoring
-- mappings, commands, rendering, terminal surfaces, focus, and layout
-- generic terminal/web surface attachment, input, and geometry reporting
-- frontend transport connection and event-cursor persistence
+- Текстовую модель блокнота и стабильный идентификатор ячейки.
+- Локальный разбор и согласование изменений.
+- Привязки extmark.
+- Привязки клавиш, команды, отрисовку, терминальные поверхности, фокус и расположение окон.
+- Общие подключение, ввод и передачу геометрии терминальных и веб-поверхностей.
+- Подключение транспорта фронтенда и сохранение курсора событий.
 
-Does not own:
+Не отвечает за:
 
-- kernel liveness or ownership truth
-- backend process state
-- plugin-worker health
-- server cleanup decisions
+- Достоверные сведения о работоспособности ядра и владении им.
+- Состояние процессов бэкенда.
+- Работоспособность рабочих процессов плагинов.
+- Решения об очистке сервера.
 
-## Plugin Family
+## Семейство плагинов
 
-A family such as SQL, shell, or VisiData owns:
+Семейство, например SQL, shell или VisiData, отвечает за:
 
-- family configuration schema and discovery
-- shared presentation metadata
-- backend interpretation of follow-up/completion controls
-- handoff validation beyond core envelope validation
-- family-level completion/follow-up semantics
-- common worker adapter where applicable
-- family claim/conflict rules and versioned catalog data; no authority over core resource state
+- Схему конфигурации семейства и обнаружение.
+- Общие метаданные представления.
+- Интерпретацию управления повторными запросами и автодополнением на бэкенде.
+- Проверку передачи управления сверх проверки общего конверта ядром Jusi.
+- Семантику автодополнения и повторных запросов на уровне семейства.
+- Общий адаптер рабочего процесса, если применимо.
+- Правила объявления семейства и конфликтов, версионируемые данные каталога;
+  полномочий над состоянием ресурсов ядра Jusi нет.
 
-## Exact Plugin
+## Конкретный плагин
 
-An exact provider/plugin owns:
+Конкретный провайдер или плагин отвечает за:
 
-- provider-specific kernel integration
-- concrete runtime behavior
-- provider-specific config and credentials
-- backend-produced terminal bytes or web content
-- owned application sessions, transactions, datasets, and terminal/web runtimes
-- minimized provider regression fixtures
-- exact worker and kernel-adapter entry points, imported only in isolated worker/discovery or kernel processes
+- Интеграцию с ядром, специфичную для провайдера.
+- Конкретное поведение среды выполнения.
+- Конфигурацию и учётные данные провайдера.
+- Терминальные байты или веб-содержимое, создаваемые бэкендом.
+- Собственные сеансы приложений, транзакции, наборы данных и терминальные или веб-среды выполнения.
+- Минимальные регрессионные фикстуры провайдера.
+- Конкретные точки входа рабочего процесса и адаптера ядра, импортируемые
+  только в изолированных процессах обнаружения, рабочих процессах или ядре.
 
-## Shared Protocol
+## Общий протокол
 
-Owns cross-language resource, surface, transport, control, action, and failure
-shapes only. It must not encode Neovim buffer identifiers, Python object
-topology, framework request objects, SQL datasets, shell state, web application
-models, or plugin-specific payload internals.
+Отвечает только за межъязыковые структуры ресурсов, поверхностей, транспорта,
+управления, действий и ошибок. Он не должен кодировать идентификаторы буферов
+Neovim, топологию объектов Python, объекты запросов фреймворка, наборы данных
+SQL, состояние оболочки, модели веб-приложений или внутреннее содержимое
+нагрузок конкретных плагинов.
 
-## Verification Matrix
+## Матрица проверок
 
-| Change | Required verification |
-|---|---|
-| notebook model | frontend unit + performance benchmark |
-| Python domain | backend unit |
-| Jupyter/process adapter | backend integration with timeout |
-| protocol shape | schema + Python/Lua conformance + fixture |
-| user workflow | end-to-end scenario |
-| plugin worker | isolation + cleanup + exact plugin tests |
+| Изменение | Обязательные проверки |
+| --- | --- |
+| Модель блокнота | Модульные тесты фронтенда и замер производительности |
+| Предметная область Python | Модульные тесты бэкенда |
+| Адаптер Jupyter или процессов | Интеграционные тесты бэкенда с ограничением времени |
+| Структура протокола | Схема, соответствие Python/Lua и фикстура |
+| Пользовательский сценарий | Сквозной сценарий |
+| Рабочий процесс плагина | Изоляция, очистка и тесты конкретного плагина |

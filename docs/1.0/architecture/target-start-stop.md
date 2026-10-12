@@ -1,9 +1,10 @@
-# Starting and stopping notebook targets
+# Запуск и остановка целевых окружений блокнота
 
-With the frontend installed and `jusi` on PATH, the default local target needs
-only `:JusiStart local`. Use `:JusiStop` from the notebook or one of its outputs.
+Если фронтенд установлен и `jusi` доступен в PATH, для локального окружения
+по умолчанию достаточно `:JusiStart local`. Используйте `:JusiStop` из блокнота
+или одного из его окон вывода.
 
-Configure named profiles in your Neovim configuration:
+Настройте именованные профили в конфигурации Neovim:
 
 ```lua
 require("jusi").setup({
@@ -23,41 +24,47 @@ require("jusi").setup({
 })
 ```
 
-`:JusiStart dev` starts an owned local service and its kernel. `command` is
-an argv list, without shell expansion. The local service chooses an available
-port. The kernel name is a Jupyter kernelspec available at that target.
-For simple `jusi serve` commands the local terminal bridge uses the same
-executable; specify `terminal_bridge_command` explicitly for custom launchers.
-The bridge always runs beside Neovim, including for remote targets.
+`:JusiStart dev` запускает локальный сервис, принадлежащий блокноту, и его ядро.
+`command` — список argv без подстановок оболочки. Локальный сервис выбирает
+свободный порт. Имя ядра — спецификация Jupyter kernelspec, доступная в этом
+целевом окружении. Для простых команд `jusi serve` локальный терминальный мост
+использует тот же исполняемый файл; для нестандартных запусков явно укажите
+`terminal_bridge_command`. Мост всегда работает рядом с Neovim, в том числе
+для удалённых окружений.
 
-If plain cells work but plugin terminals report that `jusi` is not executable,
-the missing executable is on the Neovim host, not inside the container or
-remote target. Set the remote profile's `terminal_bridge_command` as above,
-or set it once at the top level of `setup` for all targets that inherit it.
-Installing Jusi only inside Docker is insufficient for interactive terminals.
-Stop and start the notebook after changing its bridge configuration.
+Если обычные ячейки работают, но терминалы плагинов сообщают, что `jusi` нельзя
+выполнить, нужный исполняемый файл отсутствует на хосте Neovim, а не внутри
+контейнера или удалённого окружения. Задайте `terminal_bridge_command`
+в удалённом профиле, как выше, либо один раз на верхнем уровне `setup`
+для всех наследующих его окружений. Установки Jusi только внутри Docker
+недостаточно для интерактивных терминалов. После изменения настройки моста
+остановите и снова запустите блокнот.
 
-`:JusiStart server` connects directly to the service at that URL and starts its
-kernel. The example URL can be a port-forward to a target-side service. Starting
-SSH connections, containers or remote services is not yet automated. A target
-already serving another live notebook is rejected.
+`:JusiStart server` напрямую подключается к сервису по этому URL и запускает
+его ядро. URL в примере может вести на перенаправленный порт сервиса в целевом
+окружении. Запуск SSH-соединений, контейнеров и удалённых сервисов пока
+не автоматизирован. Окружение, уже обслуживающее другой активный блокнот,
+отклоняется.
 
-`:JusiStop` closes runtime resources and output splits, preserving notebook
-text. Local targets also stop their owned service. Remote services stay alive.
-A stop issued during startup cancels the launch or cleans up once the pending
-kernel-start operation resolves. Failed cleanup is reported; retry stop after
-resolving the failure. `:JusiTrace` retains received diagnostics.
+`:JusiStop` закрывает ресурсы среды выполнения и окна вывода, сохраняя текст
+блокнота. Локальные окружения также останавливают принадлежащий им сервис.
+Удалённые сервисы продолжают работать. Остановка во время запуска отменяет
+запуск либо выполняет очистку после завершения ожидающей операции запуска ядра.
+Об ошибке очистки сообщается; устраните причину и повторите остановку.
+`:JusiTrace` сохраняет полученную диагностику.
 
-Exiting Neovim, including a forced process kill, also shuts down services it
-started and their owned work. Independently hosted services and their active
-work survive editor exit. Losing a network connection leaves kernel truth
-last-known; it does not stop the target. See the
-[lifecycle checks](lifecycle-reliability.md) for tested cases and recovery.
+Выход из Neovim, включая принудительное завершение процесса, также останавливает
+запущенные им сервисы и принадлежащую им работу. Независимо размещённые сервисы
+и их активная работа переживают выход из редактора. Потеря сетевого соединения
+оставляет последнее известное состояние ядра; она не останавливает целевое
+окружение. Проверенные случаи и восстановление описаны
+в [проверках жизненного цикла](lifecycle-reliability.md).
 
-The resolved profile stays fixed until stop; `:JusiRestart` uses that profile's
-kernel name and reloads target-side runtime configuration. `targets` replaces
-the alias table when supplied to `setup`. Optional `timeout_ms` controls local
-service readiness, not execution or input waiting.
+Выбранный профиль остаётся неизменным до остановки; `:JusiRestart` использует
+имя ядра из этого профиля и перечитывает конфигурацию среды выполнения на стороне
+целевого окружения. При передаче в `setup` параметр `targets` заменяет таблицу
+псевдонимов. Необязательный `timeout_ms` управляет ожиданием готовности локального
+сервиса, а не выполнением или ожиданием ввода.
 
-For development alongside a legacy installation, see the
-[contributor guide](../../../CONTRIBUTING.md).
+Для разработки рядом со старой установкой см.
+[руководство участника разработки](../../../CONTRIBUTING.md).

@@ -1,34 +1,35 @@
-# Interactive terminal development fixture
+# Фикстура разработки интерактивного терминала
 
-This directory is a test-only import path and distribution metadata record. It
-is not part of the Jusi package and must never be enabled by the production
-service implicitly.
+Этот каталог — путь импорта и запись метаданных дистрибутива только для тестов.
+Он не входит в пакет Jusi и никогда не должен неявно включаться рабочим сервисом.
 
-When the directory is explicitly placed on `PYTHONPATH`, fresh discovery finds
-the `terminal_fixture` exact plugin. A `%%terminal_fixture` cell then traverses
-the real kernel adapter, handoff, worker, terminal-surface request, target PTY,
-WebSocket, bridge, and Neovim terminal projection. The application reports its
-first and later terminal geometries, displays initial/followup bodies, and
-provides a simple editable input line. It is a presentation fixture, not a code
-or SQL evaluator. Enter displays the typed line, Backspace edits it, and Ctrl-C
-exits the target application.
+При явном добавлении каталога в `PYTHONPATH` новое обнаружение находит
+конкретный плагин `terminal_fixture`. Ячейка `%%terminal_fixture` проходит
+настоящий адаптер ядра, передачу управления, рабочий процесс, запрос
+терминальной поверхности, целевой PTY, WebSocket, мост и терминальное
+представление Neovim. Приложение сообщает исходную и последующие геометрии
+терминала, показывает тела первоначальной отправки и повторных запросов
+и предоставляет простую редактируемую строку ввода. Это фикстура представления,
+а не вычислитель кода или SQL. Enter показывает введённую строку,
+Backspace редактирует её, Ctrl-C завершает целевое приложение.
 
-A worker-owned temporary JSON-lines journal delivers submissions to the terminal
-application, including submissions made before it attaches. The journal is
-private to that worker and removed by its close hook. Core transport remains
-unaware of this fixture-specific communication.
+Временный журнал JSON-lines, принадлежащий рабочему процессу, доставляет
+отправки терминальному приложению, включая сделанные до его подключения.
+Журнал закрыт в пределах этого рабочего процесса и удаляется обработчиком
+закрытия. Основной транспорт не знает об этом специфичном для фикстуры обмене.
 
-For a manual run, create an untracked `/tmp/jusi-terminal.vipynb` containing:
+Для ручного запуска создайте неотслеживаемый файл `/tmp/jusi-terminal.vipynb`
+с содержимым:
 
 ```text
 ╭──
 %%terminal_fixture
-manual fixture
+ручная проверка фикстуры
 ╰──
 ```
 
-From the repository root, launch a clean Neovim with the fixture explicitly on
-the child-process import path:
+Из корня репозитория запустите Neovim без пользовательской конфигурации,
+явно добавив фикстуру в путь импорта дочерних процессов:
 
 ```sh
 PYTHONPATH="$PWD/tests/fixtures/terminal_plugin${PYTHONPATH:+:$PYTHONPATH}" \
@@ -38,11 +39,12 @@ PYTHONPATH="$PWD/tests/fixtures/terminal_plugin${PYTHONPATH:+:$PYTHONPATH}" \
   /tmp/jusi-terminal.vipynb
 ```
 
-Run `:JusiServiceStart`, `:JusiStartKernel`, place the cursor in the cell, and
-run `:JusiExecute`. The interactive split should report its initial geometry;
-typing there should appear immediately through the target PTY. Change the active
-cell payload and use `:JusiSubmit` to send a followup: the same terminal shows a
-numbered followup and its body, while the notebook captures history. Successful
-followups produce no frontend notification. Return to the notebook and run
-`:JusiClose`, then `:JusiServiceStop`. Explicit close must remove the
-terminal while the kernel remains on until service stop.
+Выполните `:JusiServiceStart`, `:JusiStartKernel`, поместите курсор в ячейку
+и выполните `:JusiExecute`. Интерактивное окно должно сообщить исходную
+геометрию; ввод должен немедленно отображаться через целевой PTY.
+Измените содержимое активной ячейки и используйте `:JusiSubmit` для повторного
+запроса: тот же терминал покажет пронумерованный запрос и его тело,
+а блокнот сохранит историю. Успешные повторные запросы не вызывают уведомления
+фронтенда. Вернитесь в блокнот и выполните `:JusiClose`, затем
+`:JusiServiceStop`. Явное закрытие должно удалить терминал, оставляя ядро
+включённым до остановки сервиса.

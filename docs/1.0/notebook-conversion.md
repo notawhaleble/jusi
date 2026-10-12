@@ -1,38 +1,41 @@
-# Jupyter notebook conversion
+# Преобразование блокнотов Jupyter
 
-Convert cell sources without starting Neovim, a service, or a kernel:
+Преобразуйте исходный текст ячеек без запуска Neovim, сервиса или ядра:
 
 ```sh
 jusi import-ipynb analysis.ipynb
-# writes analysis.vipynb
+# Создаёт analysis.vipynb
 jusi export-ipynb analysis.vipynb -o exported.ipynb
 ```
 
-Omit `-o` to use the input filename with the opposite extension. Existing output
-files are refused; add `--force` to replace one. Input and output must be different
-files. Conversion validates the whole input before publishing the result.
+Если не указывать `-o`, используется имя входного файла с другим расширением.
+Существующие выходные файлы не перезаписываются; добавьте `--force` для замены.
+Входной и выходной файлы должны различаться. Перед сохранением результата
+преобразование проверяет весь входной файл.
 
-Import accepts Jupyter nbformat 4 notebooks. Code, Markdown and raw sources are imported in order into ordinary native cells.
-Their original cell types are not retained. Markdown/raw content has no execution
-protection: submitting it sends its literal source to the kernel like any other
-cell, and may produce an error.
-Outputs, execution counts, attachments and metadata are not imported.
+Импорт принимает блокноты Jupyter в формате nbformat 4. Исходный текст ячеек
+кода, Markdown и raw импортируется по порядку в обычные ячейки Jusi.
+Исходные типы ячеек не сохраняются. Markdown/raw не защищены от выполнения:
+при отправке их буквальный текст передаётся ядру, как и у любой другой ячейки,
+и может вызвать ошибку. Вывод, счётчики выполнений, вложения и метаданные
+не импортируются.
 
-Export includes each native cell's active body, in order. Followup history and
-text outside cells are excluded. The result is an nbformat 4.5 notebook with
-empty outputs, null execution counts and no kernel metadata. Magic headers are
-preserved literally; conversion does not translate Jusi plugins into Jupyter
-extensions.
+При экспорте включается активное тело каждой ячейки Jusi по порядку. История
+запросов и текст вне ячеек исключаются. Результат — блокнот nbformat 4.5
+с пустым выводом, значениями null в счётчиках выполнений и без метаданных ядра.
+Заголовки магических команд сохраняются буквально; преобразование не превращает
+плагины Jusi в расширения Jupyter.
 
-Unicode, whitespace, empty cells and trailing source newlines are preserved.
-CRLF line endings become LF. A source containing an exact full-line native
-delimiter (`╭──`, `╰──`, `╞══`, `├┄┄`) cannot be represented and causes import to
-fail with a cell and line number. Indented delimiters are ordinary source.
-Malformed native boundaries cause export to fail instead of exporting a partial
-notebook. An empty file exports as an empty notebook; nonempty files without
-native cells are rejected.
+Unicode, пробельные символы, пустые ячейки и завершающие переводы строк исходного
+текста сохраняются. Окончания строк CRLF заменяются на LF. Исходный текст,
+содержащий отдельную строку, точно совпадающую с разделителем Jusi
+(`╭──`, `╰──`, `╞══`, `├┄┄`), нельзя представить в этом формате: импорт
+завершается ошибкой с номером ячейки и строки. Разделители с отступом считаются
+обычным текстом. Некорректные границы ячеек приводят к ошибке экспорта,
+а не к частичному результату. Пустой файл экспортируется как пустой блокнот;
+непустые файлы без ячеек Jusi отклоняются.
 
-This is source conversion, not a lossless notebook archive. Jupyter nbformat 3
-and legacy Jusi `##` notebooks are not supported. See the
-[native format](notebook-format.md) and the
-[Jupyter format specification](https://nbformat.readthedocs.io/en/latest/format_description.html).
+Это преобразование исходного текста, а не архивирование блокнота без потерь.
+Jupyter nbformat 3 и старые блокноты Jusi с разделителями `##` не поддерживаются.
+См. [формат Jusi](notebook-format.md) и
+[спецификацию формата Jupyter](https://nbformat.readthedocs.io/en/latest/format_description.html).

@@ -1,282 +1,334 @@
-# Jusi 1.0 State And Resource Model
+# Модель состояний и ресурсов Jusi 1.0
 
-## Resources
+## Ресурсы
 
-### Local Service Process
+### Локальный процесс сервиса
 
-An optional frontend-owned Python service process for one local notebook target.
+Необязательный процесс Python-сервиса, принадлежащий фронтенду одного
+локального целевого окружения блокнота.
 
-- identity: `service_process_id`, distinct from the service's `supervisor_id`
-- lifetime: explicit service start/stop, owning notebook-buffer destruction, or
-  owning editor exit (including SIGKILL, observed through owner-pipe EOF)
-- diagnostics: PID, bounded stderr, exit code/signal, and readiness failure
-- transport disconnect and kernel stop do not by themselves destroy this process
+- Идентификатор: `service_process_id`, отличный от `supervisor_id` сервиса.
+- Время жизни: явные запуск и остановка сервиса, уничтожение владеющего буфера
+  блокнота или выход владеющего редактора, включая SIGKILL, обнаруживаемый
+  через EOF канала владельца.
+- Диагностика: PID, ограниченный stderr, код завершения или сигнал, ошибка готовности.
+- Отключение транспорта и остановка ядра сами по себе не уничтожают процесс.
 
-Externally configured and remote service URLs have no frontend-owned service
-process resource and are never terminated by local cleanup.
+У внешних и удалённых URL сервиса нет ресурса процесса сервиса, принадлежащего
+фронтенду; локальная очистка никогда не завершает такие сервисы.
 
-There is no mandatory local service process for a remote target. In that case
-Neovim's HTTP/SSE transport connects directly, possibly through an SSH tunnel or
-port forward, to the service running beside the target kernel.
+Для удалённого окружения обязательного локального процесса сервиса нет.
+В этом случае транспорт HTTP/SSE Neovim подключается напрямую, возможно
+через туннель SSH или перенаправление порта, к сервису рядом с целевым ядром.
 
-### Supervisor
+### Супервизор
 
-The authoritative service instance managing kernels and their child resources.
+Авторитетный экземпляр сервиса, управляющий ядрами и их дочерними ресурсами.
 
-- identity: `supervisor_id`
-- lifetime: service process or durable remote supervisor epoch
-- owns: kernel generations, executions, clients, plugin workers, event sequence
+- Идентификатор: `supervisor_id`.
+- Время жизни: процесс сервиса или эпоха долговременного удалённого супервизора.
+- Владеет: поколениями ядра, выполнениями, клиентами, рабочими процессами
+  плагинов, последовательностью событий.
 
-A restarted non-durable supervisor receives a new identity and event epoch.
-The supervisor is target-side. Its plugin catalogs and workers are scoped to a
-notebook runtime generation, not to a Neovim instance or OS login session.
+Перезапущенный супервизор без долговременного хранения получает новый
+идентификатор и эпоху событий. Супервизор работает в целевом окружении.
+Его каталоги и рабочие процессы плагинов ограничены поколением среды
+выполнения блокнота, а не экземпляром Neovim или сеансом входа в ОС.
 
-### Plugin Discovery
+### Обнаружение плагинов
 
-One short-lived process that imports versioned plugin catalog providers and then exits.
+Один короткоживущий процесс, импортирующий версионируемые провайдеры
+каталога плагинов и затем завершающийся.
 
-- identity: `discovery_id`, unique to one catalog attempt
-- lifetime: one bounded discovery operation; it never becomes a plugin worker
-- output: either one complete validated data-only catalog or one typed failure
-- process boundary: the supervisor does not import provider packages
+- Идентификатор: `discovery_id`, уникальный для одной попытки получения каталога.
+- Время жизни: одна ограниченная по времени операция обнаружения;
+  она никогда не становится рабочим процессом плагина.
+- Результат: один полный проверенный каталог только с данными
+  или одна типизированная ошибка.
+- Граница процессов: супервизор не импортирует пакеты провайдеров.
 
-Every attempt uses a fresh interpreter and process group. A successful notebook
-runtime owns the resulting immutable catalog snapshot, not the discovery
-process. A failed entry prevents publication of a partial authoritative catalog.
+Каждая попытка использует новый интерпретатор и группу процессов.
+Успешная среда выполнения блокнота владеет итоговым неизменяемым снимком
+каталога, а не процессом обнаружения. Ошибка записи предотвращает публикацию
+частичного авторитетного каталога.
 
-### Notebook Runtime
+### Среда выполнения блокнота
 
-One authoritative runtime generation binding a frontend notebook model, one
-validated plugin catalog snapshot, and one kernel generation.
+Одно авторитетное поколение среды, связывающее модель блокнота фронтенда,
+один проверенный снимок каталога плагинов и одно поколение ядра.
 
-- identity: `runtime_id`
-- owns correlations to: `notebook_id`, `discovery_id`, `kernel_id`
-- catalog and public palette aliases: immutable for this generation and discarded on replacement
-- lifetime: successful start until replacement; it may remain inspectable with
-  an `off` kernel after stop or observed kernel death
+- Идентификатор: `runtime_id`.
+- Владеет связями с: `notebook_id`, `discovery_id`, `kernel_id`.
+- Каталог и публичные псевдонимы палитры неизменны для этого поколения
+  и удаляются при замене.
+- Время жизни: от успешного запуска до замены; после остановки или
+  обнаруженного завершения ядра может оставаться доступной для проверки
+  с ядром в состоянии `off`.
 
-The health snapshot publishes the runtime and kernel together and validates
-their notebook/kernel ownership. A live kernel without an authoritative runtime
-is a protocol violation.
+Снимок health публикует среду и ядро вместе и проверяет их принадлежность
+блокноту и ядру. Работающее ядро без авторитетной среды выполнения —
+нарушение протокола.
 
-### Kernel
+### Ядро
 
-One concrete kernel generation.
+Одно конкретное поколение ядра.
 
-- identity: `kernel_id`
-- association: optional notebook/model reference
-- state: `off` or `on`
-- owner: one supervisor
+- Идентификатор: `kernel_id`.
+- Связь: необязательная ссылка на блокнот или модель.
+- Состояние: `off` или `on`.
+- Владелец: один супервизор.
 
-`checking` is an exceptional remote-facing view while supervisor reachability and ownership are being verified. It is not a kernel-process lifecycle phase and is never used by the local supervisor as a stored intermediate state.
+`checking` — исключительное представление для удалённого окружения,
+пока проверяются доступность супервизора и владение. Это не фаза жизненного
+цикла процесса ядра; локальный супервизор никогда не хранит её
+как промежуточное состояние.
 
-Transitions:
+Переходы:
 
-- no current generation / `off` -> `on`: successful start operation and readiness observation
-- `on` -> `off`: successful stop, observed death, ownership loss resolved as absent, or cleanup
-- `off` -> `off`: idempotent stop
+- Нет текущего поколения / `off` -> `on`: успешная операция запуска
+  и наблюдение готовности.
+- `on` -> `off`: успешная остановка, обнаруженное завершение, разрешённая
+  как отсутствие потеря владения или очистка.
+- `off` -> `off`: идемпотентная остановка.
 
-There is no kernel reconnect transition.
+Перехода переподключения ядра нет.
+
+### Операция
+
+Попытка изменить или проверить ресурсы. Выполнение и повторные запросы
+не имеют срока завершения по умолчанию; подключение и управление
+жизненным циклом остаются ограниченными по времени.
 
-### Operation
-
-An attempt to change or inspect resources. Execution and followup work have no default deadline; connection and lifecycle controls remain bounded.
-
-- identity: `operation_id`
-- trace: `trace_id`
-- kind: `start_kernel`, `stop_kernel`, `restart_notebook`, `execute`, `interrupt`, `cleanup`, `inspect`, or transport-specific operations
-- outcome: `pending`, `running`, `succeeded`, `failed`, or `cancelled`
-
-Operation outcome is not copied into kernel state. A failed stop can leave an observed kernel `on`; an unexpected process exit leaves it `off` even though no stop operation succeeded.
-
-### Execution
-
-One request evaluated by one kernel generation.
-
-- identity: `execution_id`
-- owns correlation to one `kernel_id`, model `cell_id`, and optional `client_id`
-- outcome: `pending`, `running`, `succeeded`, `failed`, `interrupted`, or `cancelled`
-
-Execution outcome is local to that execution. It is not a notebook or kernel health state.
-
-At most one kernel-owned execution is active in the initial serialized service.
-Its identity is included in authoritative health inspection so reconnect does
-not lose the ability to interrupt it. Interrupt names both its `execution_id`
-and `kernel_id`; a stale identity is rejected rather than redirected. Successful
-interrupt changes the execution outcome to `interrupted` while kernel state
-remains `on`.
-
-### Kernel Input Request
-
-A single reply opportunity owned by one running execution, as specified in
-[ADR 0023](adr/0023-kernel-input-is-an-execution-reply.md).
-
-- identity: `input_request_id`, distinct for every prompt
-- ownership: exact `execution_id`, `kernel_id`, `notebook_id`, and `cell_id`
-- metadata: literal prompt and Jupyter password flag
-- lifetime: prompt publication until reply acceptance or owning execution end
-- inspection: optional `pending_input` health field, null when absent
-
-Input waiting is not a kernel state, new execution, or plugin-client followup.
-The concurrent `submit_input` operation carries the exact request identity and
-literal reply; ordered events and inspection never include the reply value.
-Stop/restart cancel their execution's input wait before serialized teardown.
-`JusiClose` interrupts the exact active execution before retiring its
-projection. Opener retirement invokes the same complete cell-close lifecycle. Accepted input is echoed locally, separately from kernel results;
-acceptance alone does not mean the execution has completed.
-
-### Client
-
-A backend-visible output or interaction resource associated with an execution or plugin worker.
-
-- identity: `client_id`
-- capabilities: declared presentation and interaction requirements
-- lifetime: durable within its owning notebook runtime and independent from
-  individual operation results or frontend buffer/window lifetime
-
-A successful exact-plugin handoff creates the client. It remains a valid target
-for its declared sequence of operations until explicit user close, demonstrated
-fatal client/worker loss, or owning-runtime cleanup. Ordinary SQL statements,
-shell commands, follow-ups, completions, action results, and recoverable plugin
-errors do not implicitly close it.
-
-A Neovim terminal buffer is a frontend projection of a client, not the client identity.
-
-The initial frontend presents at most one current execution artifact per model
-cell. This is a user interaction abstraction over either bounded execution
-output or a plugin client, not a backend resource. Native window close only
-hides its projection. `JusiClose`, runtime cleanup, demonstrated fatal loss, or
-explicit replacement by a new execution ends the artifact through the cleanup
-path appropriate to its underlying resources.
-
-### Client Surface
-
-A generic frontend projection requested by one durable backend client.
-
-- identity: `surface_id`, owned by one `client_id`
-- kind: `terminal` or `web`
-- transport: explicit and target-safe; never inferred from plugin identity
-- capabilities: generic input, resize, signal, focus, or browser controls
-- content: backend-produced and opaque to core; interpreted by the terminal
-  emulator or browser
-- lifetime: explicitly closed or retired with its owning client/runtime
-
-A client may produce recoverable application errors on its own surface. Loss of
-a required surface is instead a typed core `client` failure because plugin
-presentation may no longer be available.
-
-### Plugin Worker
-
-An isolated plugin-owned runtime when plugin behavior needs a separate process or failure boundary.
-
-- identity: `plugin_worker_id`
-- owner: one `client_id` and originating `execution_id` within one
-  `runtime_id`, exact `plugin_id`, and `family_id`
-- selection: the import reference comes only from the current immutable catalog;
-  clients never submit an arbitrary worker entry point
-- lifetime: explicitly fenced and stopped; never silently promoted to kernel or
-  supervisor lifetime
-
-Established-client work runs independently from the kernel lane and other
-clients; admission rejects overlapping operations on the same client (ADR 0047).
-The worker control path serializes ordinary `execute`, `followup`,
-`complete`, and `editor_action` requests. ADR 0034 adds an independent exact
-interrupt lane and recoverable operation rejections. Health exposes active
-established-client operation IDs; these are not new client or kernel states. Application payloads and results are
-opaque JSON-compatible objects; core validates identity and declared capability.
-ADR 0027 gives the generic editor `complete` result an explicit source-range
-contract, while followup application results remain opaque.
-“Opaque” means core does not interpret plugin-specific fields; it is unrelated
-to client lifetime. The worker remains owned by its durable client across
-ordinary operation results.
-`JusiFollowup` now exposes the bounded `followup` worker operation for an existing
-capability-declaring client (ADR 0026). It uses a fresh operation identity while
-preserving client, worker, and originating execution identity. Kernel stdin
-replies remain a separate operation. Terminal interaction uses its independent
-PTY stream; concurrent plugin interrupt remains deferred.
-
-Plugin interruption is distinct from client close. A successful plugin-specific
-interrupt hook cancels active plugin work while retaining the durable client;
-the generic concurrent worker-control path remains part of the client-operation
-milestone.
-
-Full restart cleans every worker before stopping the old kernel or publishing a
-replacement runtime. Incomplete worker cleanup aborts replacement with the old
-kernel still authoritative. Kernel stop attempts worker cleanup first but still
-turns a successfully stopped kernel `off`, reporting any remaining worker
-cleanup failure explicitly.
-
-### Frontend Transport
-
-One HTTP/SSE connectivity epoch between a frontend and supervisor.
-
-- identity: `transport_id`
-- loss or renewal does not change kernel state
-- resumption uses event cursor/replay or authoritative resource inspection
-- every stream epoch begins with inspection of supervisor identity, kernel snapshot, and retained event window
-- supervisor replacement or an unavailable cursor replaces stale frontend resource state from that snapshot; a replayable cursor consumes missing events in order
-
-### Notebook And Cell
-
-Frontend model resources.
-
-- `notebook_id`: frontend model identity
-- `cell_id`: stable model identity, anchored to text with extmarks
-
-Backend resources may reference these identifiers for correlation, but do not own their coordinates or presentation state.
-
-### Local Cell Editing Worker
-
-A frontend-owned headless Neovim process, distinct from backend plugin workers.
-It owns isolated scratch buffers for language-rule evaluation and communicates
-only with its owning notebook frontend over local RPC. It can exist before
-service connection and survives transport disconnect. Notebook detach, model
-replacement or buffer destruction terminates it. It has no kernel-control or
-backend-resource authority. See [ADR 0030](adr/0030-cell-local-syntax-and-indentation.md).
-
-## Start Semantics
-
-- Start is accepted only when no owned live kernel generation exists, unless an idempotency key identifies the same in-flight request.
-- The operation may be `running` while the visible kernel remains `off`.
-- Start performs fresh plugin discovery before spawning a kernel and publishes no runtime if discovery or startup fails.
-- After Jupyter readiness, every catalog-declared kernel adapter is imported in
-  the fresh kernel and must attest matching exact plugin version and family
-  claims before readiness is authoritative.
-- Readiness changes the kernel to `on` and emits the authoritative event.
-- Startup failure leaves the kernel `off` and returns a structured failure.
-
-## Stop Semantics
-
-- Stop targets a concrete `kernel_id` or explicitly requests cleanup of the current owned generation.
-- Repeating stop is successful and reports the resource as already absent/off.
-- Stop response distinguishes `stopped`, `already_absent`, and `failed` resource results.
-- Observed kernel death changes state to `off` even if cleanup of secondary resources continues.
-
-## Restart Semantics
-
-`restart_notebook` is a composite product operation, not a kernel state and not an in-place kernel-process restart.
-
-- It fences and removes the current kernel generation and all owned executions, clients, plugin workers, channels, and runtime bindings.
-- It preserves current buffer text and undo history but rebuilds the frontend notebook model and extmarks from that text.
-- It reloads configuration and target resolution from canonical sources.
-- It rediscovers plugins and rebuilds capabilities and kernel-extension configuration without surviving import/discovery caches.
-- It creates a new kernel process and `kernel_id`.
-- It publishes a fresh authoritative plugin/capability snapshot for the new generation.
-- Teardown failure prevents a silent second kernel from being started.
-- Failure after successful teardown leaves the kernel `off` and does not restore stale runtime state.
-
-Protocol v1 now exposes `restart_notebook`, targeting the current `runtime_id`,
-`kernel_id`, and `notebook_id` while carrying a frontend-allocated
-`next_notebook_id`. The response publishes the replacement runtime, discovery,
-catalog, and kernel identities. A failure after teardown includes
-`details.teardown_completed=true` so the frontend retires the old model and
-runtime projections even though replacement startup did not succeed.
-
-## Remote Checking
-
-The frontend may show `checking` only while asking a remote supervisor:
-
-1. whether the supervisor is reachable
-2. whether it authoritatively owns the referenced kernel generation
-
-The result must resolve to `on`, `off`, or a transport-level failure that leaves kernel truth unknown to that frontend. It must not resolve to `failed` or `disconnected` kernel states.
+- Идентификатор: `operation_id`.
+- Трассировка: `trace_id`.
+- Вид: `start_kernel`, `stop_kernel`, `restart_notebook`, `execute`,
+  `interrupt`, `cleanup`, `inspect` или операции конкретного транспорта.
+- Результат: `pending`, `running`, `succeeded`, `failed` или `cancelled`.
+
+Результат операции не копируется в состояние ядра. Неудачная остановка может
+оставить наблюдаемое ядро `on`; неожиданное завершение процесса оставляет
+его `off`, хотя ни одна операция остановки не завершилась успешно.
+
+### Выполнение
+
+Один запрос, вычисляемый одним поколением ядра.
+
+- Идентификатор: `execution_id`.
+- Владеет связью с одним `kernel_id`, `cell_id` модели и необязательным `client_id`.
+- Результат: `pending`, `running`, `succeeded`, `failed`, `interrupted` или `cancelled`.
+
+Результат локален для этого выполнения. Это не состояние работоспособности
+блокнота или ядра.
+
+В исходном последовательном сервисе активно не более одного выполнения,
+принадлежащего ядру. Его идентификатор включён в авторитетную проверку health,
+чтобы переподключение не лишало возможности прерывания. Прерывание указывает
+и `execution_id`, и `kernel_id`; устаревший идентификатор отклоняется,
+а не перенаправляется. Успешное прерывание меняет результат выполнения
+на `interrupted`, при этом ядро остаётся `on`.
+
+### Запрос ввода ядра
+
+Одна возможность ответа, принадлежащая одному работающему выполнению,
+как определено в [ADR 0023](adr/0023-kernel-input-is-an-execution-reply.md).
+
+- Идентификатор: `input_request_id`, отдельный для каждого приглашения.
+- Владение: точные `execution_id`, `kernel_id`, `notebook_id` и `cell_id`.
+- Метаданные: буквальное приглашение и флаг пароля Jupyter.
+- Время жизни: от публикации приглашения до принятия ответа
+  или завершения владеющего выполнения.
+- Проверка: необязательное поле health `pending_input`, null при отсутствии.
+
+Ожидание ввода — не состояние ядра, не новое выполнение и не повторный запрос
+к клиенту плагина. Параллельная операция `submit_input` передаёт точный
+идентификатор запроса и буквальный ответ; упорядоченные события и проверка
+никогда не включают значение ответа. Остановка и перезапуск отменяют ожидание
+ввода своего выполнения до последовательной очистки. `JusiClose` прерывает
+точное активное выполнение перед удалением его представления. Удаление
+открывающей границы вызывает тот же полный жизненный цикл закрытия ячейки.
+Принятый ввод отображается локально отдельно от результатов ядра;
+само принятие не означает завершения выполнения.
+
+### Клиент
+
+Видимый бэкенду ресурс вывода или взаимодействия, связанный с выполнением
+или рабочим процессом плагина.
+
+- Идентификатор: `client_id`.
+- Возможности: объявленные требования представления и взаимодействия.
+- Время жизни: долговременное в пределах владеющей среды блокнота,
+  независимое от результатов отдельных операций и времени жизни
+  буфера или окна фронтенда.
+
+Успешная передача управления конкретному плагину создаёт клиент. Он остаётся
+допустимой целью объявленной последовательности операций до явного закрытия
+пользователем, доказанной фатальной потери клиента или рабочего процесса
+либо очистки владеющей среды. Обычные SQL-операторы, команды оболочки,
+повторные запросы, автодополнения, результаты действий и восстанавливаемые
+ошибки плагина не закрывают его неявно.
+
+Терминальный буфер Neovim — представление клиента на фронтенде,
+а не идентификатор клиента.
+
+Исходный фронтенд показывает не более одного текущего артефакта выполнения
+на ячейку модели. Это пользовательская абстракция над ограниченным выводом
+выполнения или клиентом плагина, а не ресурс бэкенда. Стандартное закрытие окна
+только скрывает представление. `JusiClose`, очистка среды, доказанная фатальная
+потеря или явная замена новым выполнением завершают артефакт через путь
+очистки, соответствующий его ресурсам.
+
+### Поверхность клиента
+
+Общее представление фронтенда, запрошенное одним долговременным клиентом бэкенда.
+
+- Идентификатор: `surface_id`, принадлежит одному `client_id`.
+- Вид: `terminal` или `web`.
+- Транспорт: явный и безопасный для целевого окружения;
+  никогда не выводится из идентификатора плагина.
+- Возможности: общие управление вводом, размером, сигналами, фокусом или браузером.
+- Содержимое: производится бэкендом и непрозрачно для ядра Jusi;
+  интерпретируется эмулятором терминала или браузером.
+- Время жизни: явно закрывается или удаляется с владеющим клиентом или средой.
+
+Клиент может показывать восстанавливаемые ошибки приложения на своей
+поверхности. Потеря обязательной поверхности, напротив, является типизированной
+ошибкой ядра Jusi в слое `client`, поскольку представление плагина
+может стать недоступным.
+
+### Рабочий процесс плагина
+
+Изолированная среда плагина, когда его поведению нужен отдельный процесс
+или граница сбоя.
+
+- Идентификатор: `plugin_worker_id`.
+- Владелец: один `client_id` и исходный `execution_id` внутри одного
+  `runtime_id`, конкретных `plugin_id` и `family_id`.
+- Выбор: ссылка импорта берётся только из текущего неизменяемого каталога;
+  клиенты никогда не передают произвольную точку входа рабочего процесса.
+- Время жизни: явно отсекается и останавливается; никогда молча
+  не продлевается до времени жизни ядра или супервизора.
+
+Работа существующих клиентов идёт независимо от очереди ядра и других клиентов;
+приём отклоняет перекрывающиеся операции одного клиента (ADR 0047).
+Управляющий путь рабочего процесса последовательно обрабатывает обычные
+запросы `execute`, `followup`, `complete` и `editor_action`. ADR 0034 добавляет
+независимый путь точного прерывания и восстанавливаемые отклонения операций.
+Health показывает идентификаторы активных операций существующих клиентов;
+это не новые состояния клиента или ядра. Нагрузки и результаты приложения —
+непрозрачные JSON-совместимые объекты; ядро Jusi проверяет идентификаторы
+и объявленную возможность. ADR 0027 задаёт явный контракт диапазона исходного
+текста общему результату редактора `complete`, а результаты приложения
+для повторных запросов остаются непрозрачными. «Непрозрачный» означает,
+что ядро Jusi не интерпретирует поля плагина; это не связано со временем
+жизни клиента. Рабочий процесс остаётся во владении долговременного клиента
+при обычных результатах операций.
+
+`JusiFollowup` предоставляет ограниченную операцию `followup` рабочего процесса
+для существующего клиента с объявленной возможностью (ADR 0026).
+Используется новый идентификатор операции с сохранением идентификаторов
+клиента, рабочего процесса и исходного выполнения. Ответы stdin ядра
+остаются отдельной операцией. Терминальное взаимодействие использует свой
+независимый поток PTY; параллельное прерывание плагина остаётся отложенным.
+
+Прерывание плагина отличается от закрытия клиента. Успешный обработчик
+прерывания плагина отменяет активную работу, сохраняя долговременный клиент;
+общий параллельный путь управления рабочим процессом остаётся частью этапа
+операций клиента.
+
+Полный перезапуск очищает каждый рабочий процесс до остановки старого ядра
+или публикации новой среды. Неполная очистка прерывает замену,
+и старое ядро остаётся авторитетным. Остановка ядра сначала пытается очистить
+рабочие процессы, но успешно остановленное ядро всё равно переводится в `off`,
+а оставшиеся ошибки очистки явно сообщаются.
+
+### Транспорт фронтенда
+
+Одна эпоха соединения HTTP/SSE между фронтендом и супервизором.
+
+- Идентификатор: `transport_id`.
+- Потеря или обновление не меняет состояние ядра.
+- Восстановление использует курсор и воспроизведение событий
+  или авторитетную проверку ресурсов.
+- Каждая эпоха потока начинается с проверки идентификатора супервизора,
+  снимка ядра и окна сохранённых событий.
+- Замена супервизора или недоступный курсор заменяет устаревшее состояние
+  ресурсов фронтенда из снимка; доступный курсор воспроизводит пропущенные
+  события по порядку.
+
+### Блокнот и ячейка
+
+Ресурсы модели фронтенда.
+
+- `notebook_id`: идентификатор модели фронтенда.
+- `cell_id`: стабильный идентификатор модели, привязанный к тексту через extmark.
+
+Ресурсы бэкенда могут ссылаться на эти идентификаторы для корреляции,
+но не владеют их координатами или состоянием представления.
+
+### Локальный рабочий процесс редактирования ячеек
+
+Процесс Neovim без интерфейса, принадлежащий фронтенду и отличный от рабочих
+процессов плагинов бэкенда. Он владеет изолированными временными буферами
+для вычисления языковых правил и общается только со своим фронтендом блокнота
+через локальный RPC. Он может существовать до подключения сервиса и переживает
+отключение транспорта. Отсоединение блокнота, замена модели или уничтожение
+буфера завершают его. У него нет полномочий управления ядром или ресурсами
+бэкенда. См. [ADR 0030](adr/0030-cell-local-syntax-and-indentation.md).
+
+## Семантика запуска
+
+- Запуск принимается только при отсутствии принадлежащего среде работающего
+  поколения ядра, если ключ идемпотентности не указывает на тот же текущий запрос.
+- Операция может быть `running`, пока видимое ядро остаётся `off`.
+- Запуск выполняет новое обнаружение плагинов перед созданием ядра
+  и не публикует среду при ошибке обнаружения или запуска.
+- После готовности Jupyter каждый объявленный каталогом адаптер импортируется
+  в новом ядре и должен подтвердить совпадение конкретной версии плагина
+  и объявлений семейства, прежде чем готовность станет авторитетной.
+- Готовность переводит ядро в `on` и выдаёт авторитетное событие.
+- Ошибка запуска оставляет ядро `off` и возвращает структурированную ошибку.
+
+## Семантика остановки
+
+- Остановка адресована конкретному `kernel_id` или явно запрашивает
+  очистку текущего принадлежащего среде поколения.
+- Повторная остановка успешна и сообщает, что ресурс уже отсутствует или выключен.
+- Ответ различает результаты ресурсов `stopped`, `already_absent` и `failed`.
+- Наблюдаемое завершение ядра меняет состояние на `off`, даже если очистка
+  вторичных ресурсов продолжается.
+
+## Семантика перезапуска
+
+`restart_notebook` — составная операция продукта, а не состояние ядра
+и не перезапуск процесса ядра на месте.
+
+- Отсекает и удаляет текущее поколение ядра и все принадлежащие выполнения,
+  клиенты, рабочие процессы плагинов, каналы и привязки среды выполнения.
+- Сохраняет текущий текст буфера и историю отмены, но заново строит
+  модель блокнота фронтенда и extmark из текста.
+- Перечитывает конфигурацию и разрешение целевого окружения из канонических источников.
+- Заново обнаруживает плагины и строит возможности и конфигурацию расширений
+  ядра без сохранившихся кешей импорта и обнаружения.
+- Создаёт новый процесс ядра и `kernel_id`.
+- Публикует новый авторитетный снимок плагинов и возможностей для нового поколения.
+- Ошибка очистки предотвращает молчаливый запуск второго ядра.
+- Ошибка после успешной очистки оставляет ядро `off`
+  и не восстанавливает устаревшее состояние среды.
+
+Протокол v1 предоставляет `restart_notebook`, адресованный текущим `runtime_id`,
+`kernel_id` и `notebook_id` и передающий выделенный фронтендом `next_notebook_id`.
+Ответ публикует идентификаторы новой среды, обнаружения, каталога и ядра.
+Ошибка после очистки включает `details.teardown_completed=true`,
+чтобы фронтенд удалял старую модель и представления среды,
+даже если запуск замены не удался.
+
+## Проверка удалённого окружения
+
+Фронтенд может показывать `checking` только во время запроса удалённому супервизору:
+
+1. Доступен ли супервизор?
+2. Владеет ли он авторитетно указанным поколением ядра?
+
+Результат должен разрешиться в `on`, `off` или ошибку уровня транспорта,
+оставляющую состояние ядра неизвестным этому фронтенду. Он не должен
+разрешаться в состояния ядра `failed` или `disconnected`.

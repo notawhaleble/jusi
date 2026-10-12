@@ -1,68 +1,89 @@
-# Jusi 1.0 Architecture Overview
+# Обзор архитектуры Jusi 1.0
 
-## Shape
+## Структура
 
 ```text
-local target:
-  Neovim -> local Jusi service/supervisor -> local kernel/workers
+локальное окружение:
+  Neovim -> локальный сервис/супервизор Jusi -> локальное ядро/рабочие процессы
 
-remote target:
-  Neovim -> HTTP/SSE -> remote Jusi service/supervisor -> remote kernel/workers
+удалённое окружение:
+  Neovim -> HTTP/SSE -> удалённый сервис/супервизор Jusi -> удалённое ядро/рабочие процессы
 ```
 
-Optional per-client plugin workers and interactive streams remain subordinate,
-isolated resources. They do not redefine kernel control.
+Необязательные рабочие процессы плагинов отдельных клиентов и интерактивные
+потоки остаются подчинёнными изолированными ресурсами. Они не переопределяют
+управление ядром.
 
-The service runs at the kernel target. The local launcher is a convenience for
-the local-target case, not a mandatory proxy tier or editor-wide daemon. ADR
-0012 defines target placement and rejects a frontend-local gateway for remote
-kernels.
+Сервис работает в целевом окружении ядра. Локальный запуск — удобство
+для локального варианта, а не обязательный уровень прокси или общий демон
+редактора. ADR 0012 определяет размещение и исключает шлюз на стороне
+фронтенда для удалённых ядер.
 
-## Control Plane
+## Контур управления
 
-The Python service exposes resource-oriented HTTP commands and inspection. Commands create traceable operations. The supervisor owns resource truth and emits ordered events.
+Python-сервис предоставляет команды HTTP и проверку, ориентированные
+на ресурсы. Команды создают отслеживаемые операции. Супервизор владеет
+достоверными сведениями о ресурсах и выдаёт упорядоченные события.
 
-SSE is the baseline event stream because the primary direction is backend-to-frontend, ordering matters, and command traffic already has HTTP. WebSockets are not the default merely because some future client may be interactive.
+SSE — базовый поток событий, потому что основное направление — от бэкенда
+к фронтенду, порядок важен, а команды уже используют HTTP. WebSocket
+не становится вариантом по умолчанию только потому, что будущий клиент
+может быть интерактивным.
 
-## Presentation Plane
+## Контур представления
 
-Output events declare media type and interaction capabilities.
+События вывода объявляют тип медиа и возможности взаимодействия.
 
-- textual/ANSI output is fed intact to Neovim's terminal renderer
-- rich media uses a renderer selected for its media type
-- interactive terminal clients receive a dedicated PTY or stream adapter
+- Текстовый/ANSI-вывод целиком передаётся отрисовке терминала Neovim.
+- Дополнительные медиа используют отрисовку, выбранную по типу.
+- Интерактивные терминальные клиенты получают отдельный адаптер PTY или потока.
 
-Presentation does not alter kernel ownership or state.
+Представление не меняет владение ядром или его состояние.
 
-## Notebook Model
+## Модель блокнота
 
-The Lua model parses visible plain text into stable cells. Extmarks preserve anchors as text moves. Localized edits update only the affected parse and projection regions. Backend event correlation uses model cell IDs, never line numbers.
+Модель Lua разбирает видимый обычный текст в стабильные ячейки. Extmark
+сохраняет привязки при перемещении текста. Локальные изменения обновляют
+только затронутые области разбора и представления. Сопоставление событий
+бэкенда использует идентификаторы ячеек модели, а не номера строк.
 
-The implemented parser, linked reconciliation model, and edit paths are specified in [frontend-notebook-model.md](frontend-notebook-model.md). The service binding and its separation from rendering are specified in [frontend-controller.md](frontend-controller.md).
+Реализованные парсер, связанная модель согласования и пути редактирования
+описаны в [модели блокнота фронтенда](frontend-notebook-model.md).
+Связь с сервисом и отделение от отрисовки —
+в [контроллере фронтенда](frontend-controller.md).
 
-The initial cell-attached native terminal projection is specified in [frontend-presentation.md](frontend-presentation.md).
+Исходное стандартное терминальное представление, привязанное к ячейке,
+описано в [представлении вывода](frontend-presentation.md).
 
-The explicit buffer session and first user commands are specified in [frontend-runtime.md](frontend-runtime.md).
+Явный сеанс буфера и первые пользовательские команды описаны
+в [среде выполнения фронтенда](frontend-runtime.md).
 
-## Failure Boundaries
+## Границы сбоев
 
-The supervisor treats kernel, execution, client, plugin worker, service, protocol, and frontend transport as separate failure layers. Events and failures retain the originating layer and trace.
+Супервизор рассматривает ядро, выполнение, клиент, рабочий процесс плагина,
+сервис, протокол и транспорт фронтенда как отдельные слои ошибок.
+События и ошибки сохраняют исходный слой и трассировку.
 
-Kernel process capture and caused execution-failure chronology are specified in [observability.md](observability.md).
+Захват данных процесса ядра и хронология вызванных ошибок выполнения
+описаны в [наблюдаемости](observability.md).
 
-Fresh-process discovery, exact-plugin workers, and the retired 0.x handler topology are specified in [plugins.md](plugins.md) and ADR 0010.
+Обнаружение в новых процессах, рабочие процессы конкретных плагинов
+и исключённая топология обработчиков 0.x описаны
+в [архитектуре плагинов](plugins.md) и ADR 0010.
 
-## Implemented Walking-Skeleton Boundary
+## Реализованные границы минимального сквозного сценария
 
-The active production slice contains only:
+Активный рабочий этап содержит только:
 
-- service readiness
-- one local managed Python kernel generation
-- start, inspect, execute, stop HTTP commands
-- ordered SSE events with cursor
-- plain `text/plain` result event
-- structured failure and process diagnostics sufficient for startup/death
-- Python and headless-Neovim black-box real-kernel tests
-- replaceable Lua HTTP/SSE adapter and resource controller
+- Готовность сервиса.
+- Одно поколение локального управляемого ядра Python.
+- Команды HTTP запуска, проверки, выполнения и остановки.
+- Упорядоченные события SSE с курсором.
+- Событие результата обычного `text/plain`.
+- Структурированные ошибки и диагностику процессов, достаточные для запуска и завершения.
+- Тесты настоящего ядра по принципу чёрного ящика на Python и Neovim без интерфейса.
+- Заменяемый адаптер HTTP/SSE Lua и контроллер ресурсов.
 
-It excludes user commands and rendering, plugins, remote checking, authoritative stream resynchronization, PTYs, completion, and rich media.
+Он исключает пользовательские команды и отрисовку, плагины, удалённую
+проверку, авторитетную повторную синхронизацию потока, PTY, автодополнение
+и дополнительные медиа.

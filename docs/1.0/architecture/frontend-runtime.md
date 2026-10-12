@@ -1,23 +1,23 @@
-# Neovim Runtime And Command Surface
+# Среда выполнения Neovim и набор команд
 
-## Explicit Lifecycle
+## Явный жизненный цикл
 
-The initial Neovim runtime keeps one local frontend session per attached
-notebook buffer. A session combines the notebook model, frontend transport,
-controller, and presentation manager without merging their ownership.
+Исходная среда Neovim хранит один локальный сеанс фронтенда на каждый
+подключённый буфер блокнота. Сеанс объединяет модель блокнота, транспорт
+фронтенда, контроллер и менеджер представления без объединения их владения.
 
-`:JusiConnect [base_url]` attaches the current buffer and opens its event stream.
-It does not start a kernel. `:JusiDisconnect` closes only frontend transport; it
-preserves the notebook model, cell identities, and output projections and does
-not claim that the supervisor or kernel stopped. A later `:JusiConnect` on the
-same buffer inspects and resumes through ADR 0008.
+`:JusiConnect [base_url]` подключает текущий буфер и открывает поток событий.
+Ядро не запускается. `:JusiDisconnect` закрывает только транспорт фронтенда,
+сохраняя модель блокнота, идентификаторы ячеек и представления вывода,
+и не утверждает, что супервизор или ядро остановлены. Последующий
+`:JusiConnect` в том же буфере проверяет и восстанавливает сеанс по ADR 0008.
 
-Wiping the notebook buffer destroys its frontend model and projections. For an
-external service that editor-local cleanup does not stop a kernel. If the buffer
-explicitly launched and owns a local service process, destroying the owner also
-performs best-effort cleanup of that process and its kernel.
+Удаление буфера блокнота уничтожает его модель фронтенда и представления.
+Для внешнего сервиса такая локальная очистка редактора не останавливает ядро.
+Если буфер явно запустил локальный процесс сервиса и владеет им,
+уничтожение владельца также по возможности очищает процесс и его ядро.
 
-The first commands are:
+Первые команды:
 
 - `:JusiConnect [base_url]`
 - `:JusiServiceStart`
@@ -31,53 +31,56 @@ The first commands are:
 - `:JusiStopKernel`
 - `:JusiDisconnect`
 
-Execution resolves the current model cell through extmark-anchored ranges and
-reads its active body at command time. It does not scan the notebook or run from
-an edit callback. Its output or client artifact appears without taking focus.
-Native window close hides that artifact, `JusiToggleFocus` reopens or navigates
-between it and its source cell, and `JusiClose` performs complete artifact
-cleanup. ADR 0020 defines this uniform interaction without merging the distinct
-internal output and client lifetimes.
+Выполнение определяет текущую ячейку модели через диапазоны с привязкой extmark
+и читает активное тело при вызове команды. Оно не сканирует блокнот
+и не запускается из обработчика изменений. Вывод или артефакт клиента
+появляется без перехвата фокуса. Стандартное закрытие окна скрывает артефакт,
+`JusiToggleFocus` открывает его заново или переключается между ним и исходной
+ячейкой, `JusiClose` полностью очищает артефакт. ADR 0020 определяет единое
+взаимодействие без объединения разных внутренних сроков жизни вывода и клиента.
 
-## Initial Configuration
+## Исходная конфигурация
 
-`require("jusi").setup()` accepts:
+`require("jusi").setup()` принимает:
 
-- `base_url` (default `http://127.0.0.1:8765`)
-- `kernel_name` (default `python3`)
-- `output_height` (default `12`)
-- `service_command` (default `{ "jusi", "serve" }`)
-- `service_timeout_ms` (default `8000`)
+- `base_url` (по умолчанию `http://127.0.0.1:8765`).
+- `kernel_name` (по умолчанию `python3`).
+- `output_height` (по умолчанию `12`).
+- `service_command` (по умолчанию `{ "jusi", "serve" }`).
+- `service_timeout_ms` (по умолчанию `8000`).
 
-The repository-root `plugin/jusi.lua` calls `setup()` with defaults so ordinary
-Neovim plugin managers expose commands immediately. Calling `setup()` in user
-configuration updates defaults without duplicating commands.
+`plugin/jusi.lua` в корне репозитория вызывает `setup()` со значениями
+по умолчанию, чтобы обычные менеджеры плагинов Neovim сразу предоставляли
+команды. Вызов `setup()` из пользовательской конфигурации обновляет значения
+без дублирования команд.
 
-## Owned Local Service
+## Принадлежащий фронтенду локальный сервис
 
-The user may start a service in a regular terminal and connect to its URL, or use
-`:JusiServiceStart` for an explicitly owned notebook-local process. The launcher
-uses an ephemeral loopback port, validates readiness JSON, retains the final
-16 KiB of stderr, and reports spawn/readiness/exit/cleanup failures with a
-distinct `service_process_id`.
+Пользователь может запустить сервис в обычном терминале и подключиться
+к его URL либо использовать `:JusiServiceStart` для явно принадлежащего
+блокноту локального процесса. Запуск использует временный loopback-порт,
+проверяет JSON готовности, сохраняет последние 16 КиБ stderr и сообщает
+о сбоях запуска, готовности, завершения и очистки с отдельным
+`service_process_id`.
 
-For the managed-local path, `:JusiServiceStart` performs connection after
-readiness; `:JusiConnect` is not a prerequisite. For a remote or independently
-managed target, Neovim uses `:JusiConnect` and launches no local proxy.
+Для управляемого локального варианта `:JusiServiceStart` выполняет подключение
+после готовности; предварительный `:JusiConnect` не требуется.
+Для удалённого или независимо управляемого окружения Neovim использует
+`:JusiConnect` и не запускает локальный прокси.
 
-Owned services are scoped per notebook buffer, not per Neovim process or OS
-login session. Different buffers and different Neovim instances may therefore
-own distinct local services. The current supervisor admits at most one active
-kernel generation; kernels across restart are sequential, not concurrent.
+Сервисы ограничены буфером блокнота, а не процессом Neovim или сеансом ОС.
+Поэтому разные буферы и экземпляры Neovim могут владеть отдельными локальными
+сервисами. Текущий супервизор допускает не более одного активного поколения
+ядра; ядра при перезапуске последовательны, а не параллельны.
 
-`:JusiServiceStop` first stops an authoritatively `on` kernel, then disconnects
-transport and terminates the owned service. A kernel-stop failure prevents the
-service from being silently killed. Wiping the owning notebook buffer performs
-best-effort owned-process cleanup; external URLs are never terminated.
+`:JusiServiceStop` сначала останавливает авторитетно `on` ядро,
+затем отключает транспорт и завершает принадлежащий ему сервис.
+Ошибка остановки ядра предотвращает молчаливое завершение сервиса.
+Удаление владеющего буфера по возможности очищает принадлежащие процессы;
+внешние URL никогда не завершаются.
 
-After confirmed service stop, its frontend session and runtime projections are
-retired while buffer text and undo history remain. A later
-`:JusiServiceStart` on the same buffer creates a fresh service, supervisor,
-transport, notebook model, and eventual kernel generation. Repeating start
-while a session or launch is already active is rejected without spawning a
-second process.
+После подтверждённой остановки сервиса его сеанс фронтенда и представления
+среды удаляются, а текст буфера и история отмены остаются. Последующий
+`:JusiServiceStart` в том же буфере создаёт новые сервис, супервизор,
+транспорт, модель блокнота и затем поколение ядра. Повторный запуск
+при уже активном сеансе или запуске отклоняется без создания второго процесса.

@@ -1,40 +1,45 @@
-# End-to-End Tests
+# Сквозные тесты
 
-The first black-box test does not require Neovim:
+Первый тест по принципу чёрного ящика не требует Neovim:
 
-1. start the service on an ephemeral loopback port
-2. subscribe to SSE and retain the cursor
-3. start a real Python kernel
-4. execute `1 + 1`
-5. observe the ordered result event containing `2`
-6. stop the kernel
-7. repeat stop and verify idempotent no-op reporting
+1. Запустить сервис на временном loopback-порту.
+2. Подписаться на SSE и сохранить курсор.
+3. Запустить настоящее ядро Python.
+4. Выполнить `1 + 1`.
+5. Наблюдать упорядоченное событие результата с `2`.
+6. Остановить ядро.
+7. Повторить остановку и проверить идемпотентное сообщение об отсутствии изменений.
 
-The test must assert event order, trace correlation, distinct resource identities, terminal `on`/`off` kernel state, and cleanup of every process it created.
+Тест должен проверять порядок событий, корреляцию трассировок, различие
+идентификаторов ресурсов, итоговое состояние ядра `on`/`off` и очистку
+каждого созданного им процесса.
 
-The real-kernel text reliability scenario additionally verifies that stdout is
-observable over SSE before the execute HTTP request completes, ANSI stdout,
-stderr, results, and tracebacks retain their media contract, an ordinary Python
-exception does not kill the kernel, and a generated large markdown-like text
-surrogate is accepted before a subsequent execution. The surrogate is not the
-unrecovered Incident 0001 input and must not be described as its reproduction.
-It also verifies that a 40 KiB Unicode/ANSI stream is divided into UTF-8-safe,
-16 KiB-or-smaller events whose ordered concatenation is exact.
+Сценарий надёжности текста с настоящим ядром дополнительно проверяет,
+что stdout наблюдается через SSE до завершения HTTP-запроса выполнения;
+stdout с ANSI, stderr, результаты и трассировки сохраняют свой медиаконтракт;
+обычное исключение Python не завершает ядро; сгенерированный большой
+текстовый заменитель, похожий на Markdown, принимается перед последующим
+выполнением. Этот заменитель не является невосстановленным входным текстом
+инцидента 0001 и не должен описываться как его воспроизведение.
+Также проверяется, что поток Unicode/ANSI размером 40 КиБ делится
+на безопасные для UTF-8 события не более 16 КиБ, упорядоченное объединение
+которых точно восстанавливает исходный поток.
 
-`terminal_surface_spec.lua` explicitly enables the test-only exact plugin under
-`tests/fixtures/terminal_plugin`. It proves the complete native Neovim path,
-including first-draw geometry, opaque input/output, explicit client close, and
-kernel survival. The fixture is never discovered by an ordinary service unless
-that directory is deliberately placed on `PYTHONPATH`.
+`terminal_surface_spec.lua` явно включает конкретный тестовый плагин
+из `tests/fixtures/terminal_plugin`. Он проверяет полный стандартный путь
+Neovim, включая геометрию первой отрисовки, непрозрачный ввод и вывод,
+явное закрытие клиента и сохранение работающего ядра. Обычный сервис
+не обнаруживает фикстуру, если её каталог намеренно не добавлен в `PYTHONPATH`.
 
-`sqlite_visidata_spec.lua` similarly opts into the test-only SQLite provider,
-passes an explicit target-side TOML file, executes `%%sql main` against a real
-temporary read-only SQLite database, observes the dataset in a real VisiData
-terminal, explicitly closes that client, and verifies the kernel remains on.
+`sqlite_visidata_spec.lua` аналогично явно включает тестовый провайдер SQLite,
+передаёт явный TOML-файл целевого окружения, выполняет `%%sql main`
+на настоящей временной базе SQLite только для чтения, наблюдает данные
+в настоящем терминале VisiData, явно закрывает клиент и проверяет,
+что ядро остаётся в состоянии `on`.
 
-The complementary headless-Neovim test exercises the Lua notebook model,
-HTTP/SSE transport, and controller against that real service and kernel without
-requiring the interactive UI:
+Дополняющий тест Neovim без интерфейса проверяет модель блокнота Lua,
+транспорт HTTP/SSE и контроллер с этим настоящим сервисом и ядром
+без необходимости интерактивного интерфейса:
 
 ```sh
 nvim --headless -u tests/frontend/minimal_init.lua -l tests/e2e/run.lua

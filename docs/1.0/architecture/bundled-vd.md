@@ -1,64 +1,73 @@
-# Bundled VisiData
+# Встроенная интеграция с VisiData
 
-Install `jusi[vd]` in the target service environment. The provider is bundled with
-Jusi; VisiData 3 is an optional dependency. Restart the notebook runtime after
-installing/updating so discovery and the kernel load the current adapter.
+Установите `jusi[vd]` в окружение целевого сервиса. Провайдер входит в Jusi;
+VisiData 3 — необязательная зависимость. После установки или обновления
+перезапустите среду выполнения блокнота, чтобы обнаружение плагинов и ядро
+загрузили актуальный адаптер.
 
-A cell evaluates one expression in the current Python kernel namespace:
+Ячейка вычисляет одно выражение в текущем пространстве имён ядра Python:
 
 ```python
 %%vd
-[{'name': 'Alice', 'score': 10}, {'name': 'Боб', 'score': 20}]
+[{'name': 'Алиса', 'score': 10}, {'name': 'Боб', 'score': 20}]
 ```
 
-For a pandas table, first create it in a plain Python cell, then use:
+Для таблицы pandas сначала создайте её в обычной ячейке Python, затем используйте:
 
 ```python
 %%vd
 df
 ```
 
-Use `JusiToggleFocus` to enter the terminal. Normal VisiData navigation and data
-inspection work there. `zY` copies the displayed cell to Neovim's unnamed/yank
-registers. Ctrl-O opens the current value as text in a new Neovim split. Selection
-clipboard commands send tab/newline-separated display values. The application
-reports success only after editor delivery is acknowledged. `JusiClose` closes
-the source client and terminal; a delivered export buffer survives and can be
-edited locally as a disposable scratch snapshot without blocking native close
-or editor exit. It is not a file or a writeback session.
+Используйте `JusiToggleFocus` для перехода в терминал. В нём работают обычные
+навигация и просмотр данных VisiData. `zY` копирует отображаемую ячейку
+в безымянный регистр и регистр копирования Neovim. Ctrl-O открывает текущее
+значение как текст в новом окне Neovim. Команды копирования выделения передают
+отображаемые значения, разделённые табуляцией и переводами строк. Приложение
+сообщает об успехе только после подтверждения доставки редактором.
+`JusiClose` закрывает исходный клиент и терминал; доставленный буфер экспорта
+сохраняется и может редактироваться локально как временный снимок,
+не блокируя стандартное закрытие или выход из редактора. Это не файл
+и не сеанс записи изменений обратно.
 
-Each execution creates a fresh snapshot/client. No-op legacy followups are not
-advertised. This provider does not add notebook-level completion or interruption
-of arbitrary work started inside VisiData. Ctrl-O opens a snapshot; it does not
-edit the kernel value or write data back to its source.
+Каждое выполнение создаёт новый снимок и клиент. Старые повторные запросы,
+которые ничего не делали, не объявляются. Этот провайдер не добавляет
+автодополнение на уровне блокнота или прерывание произвольной работы,
+запущенной внутри VisiData. Ctrl-O открывает снимок; значение в ядре
+не меняется, и данные не записываются обратно в источник.
 
-Supported snapshots include standard Python containers/scalars, dates, Decimal,
-bytes, NumPy data convertible to supported Python values, and pandas
-DataFrame/Series tables. Table columns and index values are retained, including
-duplicate column labels. pandas time values retain precision as text; complete
-pandas dtype/object metadata and live object identity are not reconstructed.
-Custom classes and cyclic values require explicit conversion by the caller.
-Snapshots and copy/open have no total byte ceiling. Snapshots move through
-private target-side artifacts; copy/open streams content to Neovim in chunks.
-The data still needs memory in VisiData and the destination buffer/register.
-Structural depth validation remains. See [ADR 0039](../adr/0039-user-data-is-not-a-control-frame.md).
+Поддерживаются снимки стандартных контейнеров и скалярных значений Python,
+дат, Decimal, bytes, данных NumPy, преобразуемых в поддерживаемые значения
+Python, и таблиц pandas DataFrame/Series. Столбцы и значения индексов сохраняются,
+включая повторяющиеся названия столбцов. Значения времени pandas сохраняют
+точность в виде текста; полные метаданные dtype/object pandas и идентичность
+живых объектов не восстанавливаются. Пользовательские классы и циклические
+значения требуют явного преобразования вызывающей стороной. Снимки,
+копирование и открытие не имеют общего ограничения размера в байтах.
+Снимки передаются через закрытые артефакты целевого окружения; содержимое
+копирования и открытия передаётся в Neovim частями. Данные всё равно требуют
+памяти в VisiData и целевом буфере или регистре. Проверка глубины структуры
+сохраняется. См. [ADR 0039](../adr/0039-user-data-is-not-a-control-frame.md).
 
-User VisiData configuration and plugins load in the target application process.
-The integration installs its copy/open hooks afterward. No VisiData code is
-imported in the service, discovery provider, worker or kernel adapter.
+Пользовательская конфигурация и плагины VisiData загружаются в процессе
+приложения целевого окружения. Затем интеграция устанавливает обработчики
+копирования и открытия. Код VisiData не импортируется в сервисе, провайдере
+обнаружения, рабочем процессе или адаптере ядра.
 
-Use the target account's `~/.visidatarc`, VisiData's platform `config.py`, or an
-explicit `VD_CONFIG` path in the service environment. For example,
-`options.disp_menu = False` hides the menu in newly created applications.
+Используйте `~/.visidatarc` учётной записи целевого окружения, платформенный
+`config.py` VisiData или явный путь `VD_CONFIG` в окружении сервиса.
+Например, `options.disp_menu = False` скрывает меню во вновь создаваемых
+приложениях.
 
-Other VisiData-based plugins can share this startup through
+Другие плагины на базе VisiData могут использовать этот запуск через
 `jusi.visidata_support.initialize_visidata(open_name="selection.txt")`.
-Call it once in the terminal application before constructing sheets, then
-register application commands and call the returned `vd.run(*sheets)`.
-It handles locale, directories, config/plugins and Jusi copy/open integration;
-sheet content and session behavior remain the plugin's responsibility.
-See [ADR 0046](../adr/0046-shared-visidata-application-startup.md).
+Вызовите его один раз в терминальном приложении перед созданием листов,
+затем зарегистрируйте команды приложения и вызовите возвращённый
+`vd.run(*sheets)`. Функция настраивает локаль, каталоги, конфигурацию и плагины,
+а также интеграцию копирования и открытия Jusi; содержимое листов и поведение
+сеанса остаются ответственностью плагина.
+См. [ADR 0046](../adr/0046-shared-visidata-application-startup.md).
 
-See [ADR 0037](../adr/0037-bundled-visidata-provider.md),
-[ADR 0036](../adr/0036-application-driven-editor-actions.md), and
-[Incident 0014](../incidents/0014-embedded-visidata-startup-and-editor-actions.md).
+См. [ADR 0037](../adr/0037-bundled-visidata-provider.md),
+[ADR 0036](../adr/0036-application-driven-editor-actions.md)
+и [инцидент 0014](../incidents/0014-embedded-visidata-startup-and-editor-actions.md).

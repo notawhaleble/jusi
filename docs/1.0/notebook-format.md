@@ -1,41 +1,44 @@
-# Jusi 1.0 Notebook Format
+# Формат блокнотов Jusi 1.0
 
-## Status
+## Статус
 
-This is the accepted initial native 1.0 text format. It intentionally differs from the legacy `##` format used by `jusivim` 0.x.
+Это принятый исходный текстовый формат Jusi 1.0. Он намеренно отличается
+от старого формата `##`, используемого в `jusivim` 0.x.
 
-The canonical filename extension remains `.vipynb`. Jusi 1.0 assigns these
-buffers the Neovim filetype `jusi`; it does not reuse the behavioral meaning of
-the legacy `jusinb` filetype.
+Стандартное расширение файлов остаётся `.vipynb`. Jusi 1.0 назначает этим
+буферам тип файла Neovim `jusi`; поведение старого типа `jusinb` не используется.
 
-The shared extension does not imply grammar compatibility. If a buffer has
-exact legacy `##` delimiters and no native structural lines, Jusi 1.0 identifies
-it as a 0.x notebook and refuses to attach or start a service. Explicit
-conversion behavior is still deferred. A `##` line inside a notebook containing
-native structure is ordinary cell or surrounding text, not a legacy delimiter.
+Общее расширение не означает совместимости синтаксиса. Если буфер содержит
+точные старые разделители `##` и не содержит структурных строк нового формата,
+Jusi 1.0 определяет его как блокнот 0.x и отказывается подключаться к нему
+или запускать сервис. Явное преобразование пока отложено. Строка `##` в блокноте
+со структурой нового формата считается обычным текстом ячейки или текстом
+вне ячеек, а не старым разделителем.
 
-## Cell Boundaries
+## Границы ячеек
 
-Cells use symmetric, symbol-only boundary lines:
+Ячейки используют симметричные строки границ, состоящие только из символов:
 
 ```text
 ╭──
-print("hello")
+print("привет")
 ╰──
 ```
 
-- `╭──` opens a cell.
-- `╰──` closes a cell.
-- Boundary lines are structural and are excluded from execution.
-- A boundary is recognized only when the complete line matches exactly at column zero.
-- Cells cannot nest.
-- An empty cell is valid.
+- `╭──` открывает ячейку.
+- `╰──` закрывает ячейку.
+- Строки границ являются структурными и исключаются из выполнения.
+- Граница распознаётся только при точном совпадении всей строки с нулевого столбца.
+- Ячейки нельзя вкладывать друг в друга.
+- Пустая ячейка допустима.
 
-The start boundary anchors the cell's runtime model identity through an extmark. The closing boundary validates its range. Extmarks do not define cell semantics and are not persisted as notebook structure.
+Открывающая граница закрепляет идентификатор ячейки в модели среды выполнения
+через extmark. Закрывающая граница подтверждает её диапазон. Extmark не задаёт
+семантику ячейки и не сохраняется как часть структуры блокнота.
 
-## History Region
+## Область истории
 
-History is an optional suffix inside the cell box:
+История — необязательная завершающая область внутри рамки ячейки:
 
 ```text
 ╭──
@@ -54,64 +57,73 @@ from orders;
 ╰──
 ```
 
-- `╞══` begins the history region and ends the active body.
-- `├┄┄` separates history entries.
-- `╰──` ends the final history entry and the cell.
-- Entries are stored newest first.
-- Magic history stores the submitted body without the active `%%...` header.
-- The history region and all structural lines are excluded from execution.
+- `╞══` начинает область истории и завершает активное тело.
+- `├┄┄` разделяет записи истории.
+- `╰──` завершает последнюю запись истории и ячейку.
+- Записи хранятся от новых к старым.
+- История магических команд хранит отправленное тело без активного заголовка `%%...`.
+- Область истории и все структурные строки исключаются из выполнения.
 
-The entry ranges in the example are:
+Диапазоны записей в этом примере:
 
 ```text
-first entry  = after ╞══ until the first ├┄┄
-second entry = after the first ├┄┄ until the next ├┄┄
-last entry   = after the last ├┄┄ until ╰──
+первая запись = после ╞══ до первого ├┄┄
+вторая запись = после первого ├┄┄ до следующего ├┄┄
+последняя запись = после последнего ├┄┄ до ╰──
 ```
 
-Capture, folding and restoration are implemented under [ADR 0031](adr/0031-foldable-followup-history.md).
+Сохранение, сворачивание и восстановление реализованы в соответствии
+с [ADR 0031](adr/0031-foldable-followup-history.md).
 
-Neovim may add readable virtual text such as a history count or replace a folded history suffix with a summary. That presentation is not stored in delimiter lines.
+Neovim может добавлять читаемый виртуальный текст, например число записей
+истории, или заменять свёрнутую область истории краткой сводкой.
+Это представление не сохраняется в строках разделителей.
 
-## Structural Recovery
+## Восстановление структуры
 
-Every opening boundary is also a parser recovery point. Given:
+Каждая открывающая граница также служит точкой восстановления парсера.
+Для текста:
 
 ```text
 ╭──
-unclosed cell
+незакрытая ячейка
 
 ╭──
-valid next cell
+следующая корректная ячейка
 ╰──
 ```
 
-the second `╭──` diagnoses the previous cell as unclosed and begins a new cell. The parser must not consume the rest of the notebook while searching for a distant close.
+вторая строка `╭──` отмечает предыдущую ячейку как незакрытую и начинает новую.
+Парсер не должен поглощать остаток блокнота в поиске далёкой закрывающей границы.
 
-Initial malformed cases include:
+Исходный набор некорректных случаев:
 
-- `╰──` without a matching opener: orphan close
-- `╭──` before the current cell closes: unclosed previous cell, then recovery
-- `╞══` outside a cell or repeated inside one cell: invalid history boundary
-- `├┄┄` before `╞══`: invalid history separator
-- end of file inside a cell: unclosed cell
+- `╰──` без соответствующего начала: закрывающая граница без открывающей
+- `╭──` до закрытия текущей ячейки: незакрытая предыдущая ячейка, затем восстановление
+- `╞══` вне ячейки или повторно в одной ячейке: некорректная граница истории
+- `├┄┄` до `╞══`: некорректный разделитель истории
+- конец файла внутри ячейки: незакрытая ячейка
 
-Diagnostics and execution blocking remain local to affected cells or text regions. Malformed notebook structure does not change kernel state or poison unrelated cells.
+Диагностика и блокировка выполнения затрагивают только соответствующие ячейки
+или области текста. Некорректная структура блокнота не меняет состояние ядра
+и не нарушает работу остальных ячеек.
 
-## Incremental Model
+## Инкрементальная модель
 
-Text is the durable, reconstructable authority for structure. The in-memory notebook model is the operational authority while editing.
+Текст — сохраняемый источник истины для восстановления структуры. Во время
+редактирования рабочим источником истины служит модель блокнота в памяти.
 
-- ordinary body edits update only the owning cell
-- structural edits reconcile only the bounded region around changed boundaries
-- extmarks move existing cell anchors when earlier text changes
-- projections update only changed cells
-- full-buffer parsing is for initial load or exceptional recovery, not ordinary typing
+- Обычные изменения тела обновляют только соответствующую ячейку.
+- Структурные изменения согласуются только в ограниченной области вокруг изменённых границ.
+- Extmark перемещает существующие привязки ячеек при изменении предшествующего текста.
+- Представления обновляются только для изменённых ячеек.
+- Разбор всего буфера используется при начальной загрузке или исключительном восстановлении, а не при обычном наборе текста.
 
-## Open Format Decisions
+## Открытые вопросы формата
 
-- representation of a literal body line exactly equal to one of the reserved structural lines
-- whether blank text outside cells is allowed or diagnosed
-- explicit conversion behavior from legacy `##` notebooks
+- Представление буквальной строки тела, точно совпадающей с одной из зарезервированных структурных строк.
+- Допустимость пустого текста вне ячеек или необходимость диагностики.
+- Явное поведение преобразования старых блокнотов с `##`.
 
-Source-only Jupyter import/export is described in [notebook conversion](notebook-conversion.md).
+Импорт и экспорт только исходного текста Jupyter описаны
+в [преобразовании блокнотов](notebook-conversion.md).

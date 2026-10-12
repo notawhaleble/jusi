@@ -1,37 +1,42 @@
-# Jusi 1.0 Failure Taxonomy
+# Классификация сбоев Jusi 1.0
 
-## Goals
+## Цели
 
-A failure must answer:
+Запись о сбое должна отвечать на вопросы:
 
-- where did it originate?
-- during which operation?
-- what typed reason occurred?
-- which resource and user scope were affected?
-- which trace contains the surrounding chronology?
-- did a process exit, receive a signal, or write useful stderr?
-- can the caller retry safely?
+- Где он возник?
+- Во время какой операции?
+- Какая типизированная причина возникла?
+- Какой ресурс и какая область пользователя затронуты?
+- Какая трассировка содержит окружающую последовательность событий?
+- Завершился ли процесс, получил ли сигнал, записал ли полезный stderr?
+- Может ли вызывающая сторона безопасно повторить операцию?
 
-## Origin Layers
+## Слои происхождения
 
-- `protocol`: invalid or incompatible wire data
-- `frontend_transport`: HTTP/SSE reachability, cursor, or stream failure
-- `frontend_model`: local notebook structure, cell identity, or controller precondition failure; this layer is currently local-only and is not emitted by the backend SSE stream
-- `frontend_presentation`: local renderer selection or output-surface failure; this layer is currently local-only and is not emitted by the backend SSE stream
-- `frontend_service`: local service spawn, readiness, exit, or owned-process cleanup failure; this layer is local-only and is not emitted by backend SSE
-- `service`: request routing, persistence, configuration, or internal service failure
-- `supervisor`: ownership, orchestration, cleanup, and child supervision
-- `kernel`: kernel process, readiness, channels, or kernel protocol
-- `execution`: code execution, input, interrupt, or output handling
-- `client`: output/interaction resource failure
-- `plugin_discovery`: isolated catalog discovery, provider import, or catalog assembly failure
-- `plugin_worker`: isolated plugin runtime or plugin control failure
+- `protocol`: некорректные или несовместимые данные передачи.
+- `frontend_transport`: сбой доступности HTTP/SSE, курсора или потока.
+- `frontend_model`: сбой локальной структуры блокнота, идентификатора ячейки
+  или предусловия контроллера; сейчас этот слой только локальный
+  и не выдаётся через поток SSE бэкенда.
+- `frontend_presentation`: сбой локального выбора отрисовки или поверхности
+  вывода; сейчас этот слой только локальный и не выдаётся через SSE бэкенда.
+- `frontend_service`: сбой запуска, готовности, завершения локального сервиса
+  или очистки принадлежащего фронтенду процесса; слой только локальный
+  и не выдаётся через SSE бэкенда.
+- `service`: сбой маршрутизации запросов, хранения, конфигурации или внутренний сбой сервиса.
+- `supervisor`: владение, оркестрация, очистка и надзор за дочерними процессами.
+- `kernel`: процесс ядра, готовность, каналы или протокол ядра.
+- `execution`: выполнение кода, ввод, прерывание или обработка вывода.
+- `client`: сбой ресурса вывода или взаимодействия.
+- `plugin_discovery`: сбой изолированного обнаружения каталога, импорта провайдера или сборки каталога.
+- `plugin_worker`: сбой изолированной среды выполнения плагина или управления плагином.
 
-The reporting layer must retain the originating layer rather than replacing it with its own.
+Сообщающий слой должен сохранять исходный слой, а не заменять его собственным.
 
-## Typed Reasons
+## Типизированные причины
 
-Initial stable reason codes:
+Исходные стабильные коды причин:
 
 - `invalid_request`
 - `unsupported`
@@ -54,11 +59,13 @@ Initial stable reason codes:
 - `capacity_exceeded`
 - `internal_error`
 
-New codes require protocol fixtures and documented retry/scope semantics. User code exceptions use `execution_error`; they are not kernel failures.
+Новые коды требуют фикстур протокола и описанной семантики повторения и области
+воздействия. Исключения пользовательского кода используют `execution_error`;
+они не являются сбоями ядра.
 
-## Failure Record
+## Запись о сбое
 
-Required fields:
+Обязательные поля:
 
 ```json
 {
@@ -67,7 +74,7 @@ Required fields:
   "layer": "kernel",
   "operation": "start_kernel",
   "reason": "readiness_failed",
-  "message": "Kernel exited before becoming ready",
+  "message": "Ядро завершилось до достижения готовности",
   "retryable": true,
   "scope": "kernel",
   "resource": {"kind": "kernel", "id": "krn_..."},
@@ -75,19 +82,19 @@ Required fields:
 }
 ```
 
-Optional diagnostic fields:
+Необязательные диагностические поля:
 
 - `process.pid`
 - `process.exit_code`
 - `process.signal`
 - `process.stderr_excerpt`
 - `process.stderr_truncated`
-- `details`: bounded, non-secret structured data
+- `details`: ограниченные структурированные данные без секретов
 - `caused_by_failure_id`
 
-## Scope
+## Область воздействия
 
-Allowed initial scopes:
+Допустимые исходные области:
 
 - `request`
 - `transport`
@@ -99,28 +106,48 @@ Allowed initial scopes:
 - `kernel`
 - `supervisor`
 
-Scope describes demonstrated impact, not guessed severity. Propagating to a wider scope requires a recorded causal link.
+Область описывает доказанное воздействие, а не предполагаемую серьёзность.
+Распространение на более широкую область требует записанной причинной связи.
 
-`plugin_discovery` has its own protocol layer, scope, and resource kind. Start
-and full-restart failures retain that origin and never counterfeit a
-`plugin_worker` identity. Restart failures explicitly report whether teardown
-completed so the frontend can retire only the identities that actually ended.
+`plugin_discovery` имеет собственные слой протокола, область и вид ресурса.
+Сбои запуска и полного перезапуска сохраняют это происхождение и не подделывают
+идентификатор `plugin_worker`. Ошибки перезапуска явно сообщают, завершена ли
+очистка, чтобы фронтенд удалял только действительно завершённые идентификаторы.
 
-## Containment Examples
+## Примеры локализации сбоев
 
-- Python exception from executed code: `execution / execution_error / execution`.
-- Plugin process exits unexpectedly: `plugin_worker / process_exited / plugin_worker`; owning client may close, kernel stays `on`.
-- Recoverable SQL, shell, or other application error: rendered by the healthy plugin on its chosen surface; it is not reclassified as core infrastructure failure.
-- Fatal plugin factory/worker/control failure: `plugin_worker / spawn_failed|plugin_error|process_exited|process_signalled|channel_closed|protocol_violation / client|plugin_worker`; the client is retired through a typed event and the kernel remains `on` absent separate kernel-failure evidence.
-- Required terminal/web surface is lost: `client / channel_closed|unreachable / client`; plugin presentation may be unavailable, so the core failure event remains authoritative.
-- Kernel adapter import or attestation mismatch during start: `kernel / readiness_failed|protocol_violation|conflict / kernel`; kernel remains `off` with module identities and bounded diagnostics.
-- Execution handoff not present in the authoritative runtime catalog: `protocol / invalid_request / execution`; the owning execution fails and the kernel remains `on`.
-- SSE connection drops: `frontend_transport / channel_closed / transport`; kernel state is unchanged.
-- Kernel process exits during execution: kernel failure scoped to `kernel`, with a caused execution failure scoped to `execution`; kernel becomes `off`.
-- Stop cannot terminate one child: `supervisor / cleanup_incomplete`, with per-resource cleanup results.
+- Исключение Python в выполняемом коде: `execution / execution_error / execution`.
+- Неожиданное завершение процесса плагина: `plugin_worker / process_exited / plugin_worker`;
+  владеющий клиент может закрыться, ядро остаётся `on`.
+- Восстанавливаемая ошибка SQL, оболочки или другого приложения отображается
+  исправным плагином на выбранной поверхности; она не переклассифицируется
+  в сбой основной инфраструктуры.
+- Фатальный сбой фабрики, рабочего процесса или управления плагином:
+  `plugin_worker / spawn_failed|plugin_error|process_exited|process_signalled|channel_closed|protocol_violation / client|plugin_worker`;
+  клиент удаляется через типизированное событие, ядро остаётся `on`,
+  если нет отдельного доказательства сбоя ядра.
+- Потеря обязательной терминальной или веб-поверхности:
+  `client / channel_closed|unreachable / client`; представление плагина может
+  быть недоступно, поэтому событие ошибки ядра Jusi остаётся авторитетным.
+- Ошибка импорта или несовпадение подтверждения адаптера ядра при запуске:
+  `kernel / readiness_failed|protocol_violation|conflict / kernel`;
+  ядро остаётся `off`, указываются модули и ограниченная диагностика.
+- Передача управления выполнением, отсутствующая в авторитетном каталоге среды:
+  `protocol / invalid_request / execution`; выполнение завершается ошибкой,
+  ядро остаётся `on`.
+- Обрыв SSE: `frontend_transport / channel_closed / transport`;
+  состояние ядра не меняется.
+- Завершение процесса ядра во время выполнения: сбой ядра в области `kernel`
+  и вызванный им сбой выполнения в области `execution`; ядро переходит в `off`.
+- Остановка не может завершить один дочерний процесс:
+  `supervisor / cleanup_incomplete`, с результатами очистки каждого ресурса.
 
-## Redaction
+## Исключение чувствительных данных
 
-Diagnostics must not include credentials, complete environment mappings, arbitrary cell bodies, or unbounded output. Stderr excerpts are bounded and marked when truncated. Trace correlation must not depend on logging sensitive payloads.
+Диагностика не должна включать учётные данные, полные наборы переменных
+окружения, произвольные тела ячеек или неограниченный вывод. Фрагменты stderr
+ограничены и помечаются при усечении. Корреляция трассировок не должна зависеть
+от записи чувствительных нагрузок в журнал.
 
-Execution diagnostics currently record only UTF-8 code byte count and line count. They do not retain the submitted body.
+Сейчас диагностика выполнения записывает только размер кода в байтах UTF-8
+и число строк. Отправленное тело не сохраняется.

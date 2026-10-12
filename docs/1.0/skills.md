@@ -1,85 +1,95 @@
-# Plugin-development skills
+# Навыки для разработки плагинов
 
-Jusi ships two authoring skills:
+Jusi поставляется с двумя навыками для разработки:
 
-- `jusi-plugin-development`: exact-provider plugins, workers, terminal clients,
-  followups, completions, interruption and editor actions.
-- `jusi-plugin-family-development`: shared magic semantics, alias resolution,
-  provider registration and coexistence.
+- `jusi-plugin-development`: плагины конкретных провайдеров, рабочие процессы,
+  терминальные клиенты, повторные запросы, автодополнение, прерывание и действия редактора.
+- `jusi-plugin-family-development`: общая семантика магических команд,
+  разрешение псевдонимов, регистрация провайдеров и их совместная работа.
 
-Install Jusi in your development environment, make Git available, then run:
+Установите Jusi в окружение разработки, обеспечьте доступность Git
+и SSH-доступ к репозиторию и выполните:
 
 ```sh
 jusi install-skills
 ```
 
-The command installs both skills into `$CODEX_HOME/skills`, or `~/.codex/skills`
-when `CODEX_HOME` is unset. It downloads the matching `v<installed-version>` tag
-from the Jusi GitHub repository and keeps a reference checkout in the adjacent
-`jusi-references` directory. The skills' `references/source.md` records its
-absolute path, package version and Git commit. You do not need an existing core
-checkout. The Python package supplies the skill templates; the reference gives
-the agent the corresponding API, contracts, fixtures and examples.
+Команда устанавливает оба навыка в `$CODEX_HOME/skills` или `~/.codex/skills`,
+если `CODEX_HOME` не задан. Она загружает соответствующий тег
+`v<installed-version>` из репозитория `ssh://my-org/Python/Jusi.git` и сохраняет справочную
+копию исходного кода в соседнем каталоге `jusi-references`.
+В `references/source.md` навыков записываются её абсолютный путь, версия пакета
+и коммит Git. Уже имеющаяся рабочая копия ядра Jusi не требуется. Python-пакет
+предоставляет шаблоны навыков; справочная копия даёт агенту соответствующие API,
+контракты, фикстуры и примеры.
 
-Start a new agent session in your plugin project so it discovers the installed
-skills. For example:
+Начните новый сеанс агента в проекте плагина, чтобы он обнаружил установленные
+навыки. Например:
 
 ```text
-Use $jusi-plugin-development to build a %%todo plugin in this project.
+Используй $jusi-plugin-development, чтобы создать плагин %%todo в этом проекте.
 ```
 
-Supply the behavior you want for that plugin. The skill treats the core checkout
-as read-only reference and keeps implementation and tests in your project.
-Core changes require their own task scope. The reference is separate from the
-skills directory so its own source templates do not become duplicate skills.
+Опишите желаемое поведение плагина. Навык использует копию ядра Jusi только
+для чтения и справки, а реализацию и тесты размещает в вашем проекте.
+Изменения ядра требуют отдельной постановки задачи. Справочная копия хранится
+отдельно от каталога навыков, чтобы её исходные шаблоны не обнаруживались
+как дублирующиеся навыки.
 
-To use another compatible skills directory:
+Чтобы использовать другой совместимый каталог навыков:
 
 ```sh
 jusi install-skills --directory /path/to/agent/skills
 ```
 
-## Updates and customizations
+## Обновления и пользовательские изменения
 
-After upgrading Jusi, rerun `jusi install-skills`. Unmodified managed skills are
-replaced together and point to a matching versioned checkout. Old references
-remain available. Repeating the command for the same release reuses the verified
-checkout without fetching it again, including offline.
+После обновления Jusi снова выполните `jusi install-skills`. Неизменённые
+управляемые навыки заменяются вместе и указывают на копию исходного кода
+соответствующей версии. Старые справочные копии остаются доступны. Повторный
+запуск команды для того же выпуска использует проверенную копию без повторной
+загрузки, в том числе без доступа к сети.
 
-The installer checks content hashes before replacement. Existing unmanaged
-skills, edited files, extra files and symlinks are not overwritten. Preserve your
-customization elsewhere or move the conflicting directory outside the skills
-search path before reinstalling. Alternatively choose a new destination. There
-is no silent force-replacement mode.
+Перед заменой установщик проверяет хеши содержимого. Существующие неуправляемые
+навыки, изменённые файлы, дополнительные файлы и символические ссылки
+не перезаписываются. Сохраните свои изменения в другом месте или перенесите
+конфликтующий каталог за пределы путей поиска навыков перед переустановкой.
+Можно также выбрать новый каталог назначения. Режима принудительной замены
+без предупреждения нет.
 
-Do not edit or pull inside a managed reference checkout. If you need to change
-core, use a separate working checkout. A modified reference is reported as a
-conflict; preserve or move it aside before reinstalling.
+Не редактируйте управляемую справочную копию и не выполняйте в ней pull.
+Если нужно менять ядро Jusi, используйте отдельную рабочую копию. Изменённая
+справочная копия считается конфликтом; сохраните её или переместите в другое
+место перед переустановкой.
 
-An interrupted installation can leave `.jusi-install.lock` and a
-`.jusi-stage-*` directory in the destination. Stop any running installer first.
-Inspect the staging directory for `.previous` skill backups and restore or
-preserve them before removing the stale lock and retrying. Replacement errors trigger rollback. If rollback itself fails, backups and the
-lock remain for manual recovery.
+Прерванная установка может оставить `.jusi-install.lock` и каталог
+`.jusi-stage-*` в месте назначения. Сначала остановите все работающие
+установщики. Проверьте наличие резервных копий навыков `.previous`
+в промежуточном каталоге и восстановите или сохраните их, прежде чем удалять
+устаревший файл блокировки и повторять установку. Ошибки замены вызывают откат.
+Если откат тоже не удался, резервные копии и блокировка остаются для ручного
+восстановления.
 
-## Local source and maintainer verification
+## Локальные исходники и проверка сопровождающим
 
-For offline installation from an available repository, or development builds:
+Для установки без сети из доступного репозитория или для сборок разработки:
 
 ```sh
 jusi install-skills --source /path/to/jusi --directory /tmp/jusi-agent/skills
 ```
 
-This clones the specified repository's committed HEAD, not its uncommitted
-files. Its project version must match the installed backend. Both source choices
-record the exact commit and verify cached contents on reuse.
+Команда клонирует закоммиченный HEAD указанного репозитория, а не незакоммиченные
+файлы. Версия проекта должна совпадать с установленным бэкендом. Оба варианта
+источника записывают точный коммит и проверяют содержимое кеша при повторном
+использовании.
 
-`tests/backend/integration/test_skill_installation.py` covers release-tag fetch,
-offline reuse, upgrades, user edits, version mismatch, replacement rollback and
-concurrent edits during a fetch. The [distribution gate](architecture/distribution-verification.md)
-also installs the packaged skills into an isolated directory and verifies repeat
-installation and edit protection using the wheel's CLI.
+`tests/backend/integration/test_skill_installation.py` проверяет загрузку тега
+выпуска, повторное использование без сети, обновления, пользовательские правки,
+несовпадение версий, откат замены и параллельные изменения во время загрузки.
+[Проверка дистрибутива](architecture/distribution-verification.md) также
+устанавливает упакованные навыки в изолированный каталог и проверяет повторную
+установку и защиту изменений через CLI из wheel.
 
-These checks validate distribution and installation. Independent skill behavior
-is tested by developing a separate plugin with the installed skill; successful
-installation alone does not establish plugin quality.
+Эти проверки подтверждают корректность распространения и установки. Поведение
+навыка отдельно проверяется разработкой самостоятельного плагина с установленным
+навыком; успешная установка сама по себе не подтверждает качество плагина.

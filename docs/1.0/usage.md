@@ -1,71 +1,78 @@
-# Using Jusi
+# Работа с Jusi
 
-Start with the [installation guide](installation.md) for setup and a first notebook.
+Начните с [руководства по установке](installation.md): в нём описаны настройка
+и первый блокнот.
 
-Optional [useful commands](useful-commands.md) include `:JShell` for opening a
-shell in the current file or netrw directory.
+Среди необязательных [полезных команд](useful-commands.md) есть `:JShell`,
+открывающая оболочку в каталоге текущего файла или netrw.
 
-## Jupyter Conversion
+## Преобразование Jupyter
 
-Use `jusi import-ipynb notebook.ipynb` to create `notebook.vipynb`, or
-`jusi export-ipynb notebook.vipynb -o exported.ipynb` for the reverse direction.
-Import includes code, Markdown and raw sources as ordinary native cells. Export
-creates code cells; outputs and followup history are excluded.
-See [conversion details](notebook-conversion.md).
+Используйте `jusi import-ipynb notebook.ipynb` для создания `notebook.vipynb`
+или `jusi export-ipynb notebook.vipynb -o exported.ipynb` для обратного
+преобразования. При импорте исходный текст ячеек кода, Markdown и raw помещается
+в обычные ячейки Jusi. Экспорт создаёт ячейки кода; вывод и история запросов
+исключаются. См. [подробности преобразования](notebook-conversion.md).
 
-## Cell Editing
+## Редактирование ячеек
 
-Opening a `.vipynb` notebook enables Python syntax and four-space indentation
-without connecting to a service. Each cell has isolated language context;
-unclosed strings/comments and indentation cannot spill into neighboring cells.
-Highlighting stays active during Insert mode and covers whole cells visible in
-any notebook window.
+Открытие блокнота `.vipynb` включает синтаксис Python и отступы в четыре пробела
+без подключения к сервису. У каждой ячейки отдельный языковой контекст:
+незакрытые строки, комментарии и отступы не влияют на соседние ячейки.
+Подсветка работает в режиме вставки и охватывает целиком ячейки, видимые
+в любом окне блокнота.
 
-At kernel start/restart, discovered family `presentation` profiles select
-syntax and indentation for recognized magics. An exact provider can declare
-`provider_presentation` overrides, applied after its cell executes. Editing the
-magic or alias resets that attribution. Profiles name installed Neovim
-`syntax/<name>.vim` and `indent/<name>.vim` files independently; missing profiles
-warn once. One local headless Neovim editing worker is owned by each open
-notebook; editing does not call the backend. See [ADR 0030](adr/0030-cell-local-syntax-and-indentation.md).
+При запуске или перезапуске ядра обнаруженные профили `presentation` семейств
+выбирают синтаксис и отступы для распознанных магических команд. Конкретный
+провайдер может объявить переопределения `provider_presentation`, которые
+применяются после выполнения его ячейки. Изменение магической команды
+или псевдонима сбрасывает эту привязку. Профили независимо указывают установленные
+файлы Neovim `syntax/<name>.vim` и `indent/<name>.vim`; об отсутствующих профилях
+выдаётся однократное предупреждение. Каждый открытый блокнот владеет одним
+локальным рабочим процессом Neovim без интерфейса для редактирования;
+редактирование не обращается к бэкенду. См. [ADR 0030](adr/0030-cell-local-syntax-and-indentation.md).
 
-## Navigation And Cell Mode
+## Навигация и режим ячеек
 
-Press Space in Normal mode to toggle cell mode. Its borders display as
-`╔══` / `╚══` in the existing status colors; Insert mode restores the rounded
-borders and native editing/completion, and Esc
-returns to cell-mode controls.
+Нажмите пробел в обычном режиме, чтобы переключить режим ячеек. Границы
+отображаются как `╔══` / `╚══` с прежними цветами статуса; режим вставки
+возвращает скруглённые границы и стандартное редактирование с автодополнением,
+а Esc возвращает управление режимом ячеек.
 
-| Cell-mode key | Action |
+| Клавиша в режиме ячеек | Действие |
 | --- | --- |
-| `j`, `k` | Next / previous cell or expanded history entry; counts work |
-| Enter | Execute, send pending input, send a followup, or restore history by context |
-| `H` | Toggle history |
-| Ctrl-P / Ctrl-N | Restore older / newer history |
-| `C` | Clear payload and edit, keeping magic header and history |
-| `X` | Delete cell and close its resources |
-| `Y` / `P` | Copy cell / paste below with a fresh identity |
-| S | Toggle output parking (`~` beside the status symbol) |
-| B | Create an empty cell below and enter Insert |
-| `Q` / `{id}Q` | Close current / numbered output and its resources |
-| `{id}G` | Jump to the numbered output's source cell |
+| `j`, `k` | Следующая / предыдущая ячейка или раскрытая запись истории; поддерживается числовой префикс |
+| Enter | Выполнить ячейку, отправить ожидаемый ввод или повторный запрос, восстановить историю — в зависимости от контекста |
+| `H` | Свернуть / раскрыть историю |
+| Ctrl-P / Ctrl-N | Восстановить более старую / новую запись истории |
+| `C` | Очистить содержимое и перейти к редактированию, сохранив заголовок магической команды и историю |
+| `X` | Удалить ячейку и закрыть её ресурсы |
+| `Y` / `P` | Копировать ячейку / вставить ниже с новым идентификатором |
+| S | Закрепить / открепить вывод (`~` рядом с символом статуса) |
+| B | Создать пустую ячейку ниже и перейти в режим вставки |
+| `Q` / `{id}Q` | Закрыть текущий вывод / вывод с указанным номером и его ресурсы |
+| `{id}G` | Перейти к исходной ячейке вывода с указанным номером |
 
-`:JusiNextCell` and `:JusiPreviousCell` skip history and work in either mode.
-`:JusiCellNewAbove` / `:JusiCellNewBelow` create an empty cell and enter Insert.
-`:JusiCellEdit`, `:JusiCellDelete`, `:JusiCellCopy`, `:JusiCellPasteBelow`,
-`:JusiCellModeToggle`, and `:JusiSubmit` expose the same actions explicitly.
-A new accepted execution closes completed outputs on its kernel. Busy cells and
-followup clients remain. Use `:JusiPark` on an output or its source cell to toggle
-retention across later executions; explicit close or re-executing that cell
-still replaces its artifact.
+`:JusiNextCell` и `:JusiPreviousCell` пропускают историю и работают в обоих
+режимах. `:JusiCellNewAbove` / `:JusiCellNewBelow` создают пустую ячейку
+и включают режим вставки. `:JusiCellEdit`, `:JusiCellDelete`, `:JusiCellCopy`,
+`:JusiCellPasteBelow`, `:JusiCellModeToggle` и `:JusiSubmit` явно вызывают
+те же действия. Новое принятое выполнение закрывает завершённый вывод на своём
+ядре. Занятые ячейки и клиенты с поддержкой повторных запросов сохраняются.
+Используйте `:JusiPark` в выводе или его исходной ячейке для сохранения вывода
+при последующих выполнениях; явное закрытие или повторное выполнение самой
+ячейки всё равно заменяет её артефакт.
 
-The original `JusiExecute`, `JusiInput`, and `JusiFollowup` commands remain
-available when you want a specific submission variant.
+Исходные команды `JusiExecute`, `JusiInput` и `JusiFollowup` остаются доступны,
+если нужен конкретный вариант отправки.
 
-## Palette and Focus
+<a id="palette-and-focus"></a>
 
-Use `:J <Tab>` from any buffer to select a loaded notebook. Completion then
-offers its discovered magics and configured aliases:
+## Палитра и фокус
+
+Используйте `:J <Tab>` из любого буфера для выбора загруженного блокнота.
+После этого автодополнение предлагает обнаруженные магические команды
+и настроенные псевдонимы:
 
 ```vim
 :J notebook
@@ -74,100 +81,116 @@ offers its discovered magics and configured aliases:
 :J! notebook sql main
 ```
 
-Plain `J notebook` creates a new empty cell. A magic request reuses its matching
-cell or creates one; `J!` also submits it using the same contextual behavior as
-Enter in cell mode. A visual selection supplies the body, preserving existing
-cell history. New cells enter Insert mode. Notebook labels use filenames without
-the extension; duplicate names use paths, and completion escapes spaces.
+Обычная команда `J notebook` создаёт новую пустую ячейку. Запрос магической
+команды использует подходящую существующую ячейку или создаёт новую;
+`J!` также отправляет её с тем же контекстным поведением, что и Enter
+в режиме ячеек. Визуальное выделение задаёт тело, сохраняя существующую историю
+ячейки. Новые ячейки открываются в режиме вставки. Названия блокнотов — имена
+файлов без расширения; для одинаковых имён используются пути, а автодополнение
+экранирует пробелы.
 
-The notebook opens in a left split when it is absent from the current tab.
-Completion reads cached startup metadata: aliases come from target-side
-`[magic.alias]` configuration tables and refresh on restart. Offline notebooks
-support plain cell creation; magic completion becomes available after startup.
+Если блокнота нет в текущей вкладке, он открывается в окне слева.
+Автодополнение читает кеш метаданных запуска: псевдонимы берутся из таблиц
+`[magic.alias]` конфигурации целевого окружения и обновляются при перезапуске.
+Без подключения можно создавать обычные ячейки; автодополнение магических
+команд становится доступно после запуска.
 
-Press **Ctrl-\ twice** to toggle between a cell and its output, including from
-Insert mode or a terminal client. Entering an interactive client starts terminal
-input; returning to the notebook uses Normal mode. Existing bindings take
-precedence. From an unrelated buffer, the chord focuses the first visible
-notebook in the current tab, or the first visible notebook across other tabs.
-It also works for offline notebooks. To use another key, map it to `:JusiToggleFocus` (or call
-`require('jusi.focus').toggle()` to also enter terminal input automatically).
+Нажмите **Ctrl-\ дважды**, чтобы переключаться между ячейкой и её выводом,
+в том числе из режима вставки или терминального клиента. Переход в интерактивный
+клиент включает терминальный ввод; возврат в блокнот использует обычный режим.
+Существующие привязки клавиш имеют приоритет. Из постороннего буфера сочетание
+переводит фокус в первый видимый блокнот текущей вкладки либо в первый видимый
+блокнот других вкладок. Оно работает и без подключения. Для другой клавиши
+создайте привязку к `:JusiToggleFocus` или вызову
+`require('jusi.focus').toggle()`, который также автоматически включает
+терминальный ввод.
 
-## Statuslines and Backslash Keys
+## Строки состояния и клавиши с обратной косой чертой
 
-Notebook statuslines show kernel `on`/`off`, target alias, modified text and cell
-mode. Before inspection the kernel is unknown; disconnected transport is shown
-separately, with cached kernel state marked **last known**.
+Строка состояния блокнота показывает состояние ядра `on`/`off`, псевдоним
+целевого окружения, признак изменения текста и режим ячеек. До проверки
+состояние ядра неизвестно; отключение транспорта отображается отдельно,
+а сохранённое состояние ядра помечается как **last known** («последнее известное»).
 
-Each output/client statusline shows a numeric ID. Use `12G` in cell mode to jump
-to output 12's cell, or `12Q` to close it from any current cell. These keys also
-work in output buffers in Normal mode. Outside cell mode use `12\g` and `12\q`.
-`:JusiGotoClient 12` and `:JusiCloseClient 12` work from any buffer. IDs survive
-hiding a window, are never reused in a Neovim session, and retire with the output.
-Closing an old ID cannot close its replacement.
+В строке состояния каждого вывода или клиента есть числовой идентификатор.
+Используйте `12G` в режиме ячеек для перехода к ячейке вывода 12 или `12Q`
+для закрытия этого вывода из любой текущей ячейки. Эти клавиши также работают
+в буферах вывода в обычном режиме. Вне режима ячеек используйте `12\g`
+и `12\q`. `:JusiGotoClient 12` и `:JusiCloseClient 12` работают из любого буфера.
+Идентификаторы сохраняются при скрытии окна, не используются повторно в сеансе
+Neovim и удаляются вместе с выводом. Закрытие по старому идентификатору
+не может закрыть заменивший его вывод.
 
-Notebook Normal-mode shortcuts use a literal backslash, independent of mapleader:
+Сочетания обычного режима в блокноте используют буквальную обратную косую черту,
+независимо от mapleader:
 
-| Key | Action |
+| Клавиша | Действие |
 | --- | --- |
-| `\Q` | Clean up this notebook's current-tab outputs and extra notebook views |
-| `\a` / `\b` | New cell above / below |
-| `\c` / `\x` | Edit / delete cell |
-| `\y` / `\p` | Copy cell / paste below |
-| `\j` | Submit by context, including input, followup and history |
-| `\h` | Toggle history |
-| `\s` | Toggle output parking |
-| `\ii` / `\00` | Interrupt / restart |
-| `\q` / `{id}\q` | Close current / numbered output |
-| `{id}\g` | Jump to numbered output's cell |
+| `\Q` | Закрыть вывод этого блокнота в текущей вкладке и дополнительные окна блокнота |
+| `\a` / `\b` | Новая ячейка выше / ниже |
+| `\c` / `\x` | Редактировать / удалить ячейку |
+| `\y` / `\p` | Копировать ячейку / вставить ниже |
+| `\j` | Отправить по контексту, включая ввод, повторный запрос и историю |
+| `\h` | Свернуть / раскрыть историю |
+| `\s` | Закрепить / открепить вывод |
+| `\ii` / `\00` | Прервать / перезапустить |
+| `\q` / `{id}\q` | Закрыть текущий вывод / вывод с указанным номером |
+| `{id}\g` | Перейти к ячейке вывода с указанным номером |
 
-`\Q` (or `:JusiCloseTab`) closes this notebook's outputs in the current tab and
-removes its notebook windows while another notebook view remains. The last
-notebook view is retained. Clients also visible in another tab are preserved;
-only their current-tab windows close. Hidden clients and unrelated project
-windows are left alone. It works in both notebook modes and output Normal mode;
-the kernel keeps running. Cleanup failure retains the notebook view for retry.
+`\Q` или `:JusiCloseTab` закрывает вывод этого блокнота в текущей вкладке
+и удаляет его окна, пока остаётся другое окно блокнота. Последнее окно блокнота
+сохраняется. Клиенты, видимые также в другой вкладке, сохраняются; закрываются
+только их окна текущей вкладки. Скрытые клиенты и посторонние окна проекта
+не затрагиваются. Команда работает в обоих режимах блокнота и в обычном режиме
+вывода; ядро продолжает работать. При ошибке очистки окно блокнота сохраняется
+для повторной попытки.
 
-Existing custom mappings take precedence. Ordinary `G` keeps its native behavior
-outside cell mode; uncounted `G` in cell mode also goes to the last line.
-In Insert mode, `Ctrl-Y` submits the current cell by context and clears its body
-after a successful response, preserving the magic header and history. It keeps
-Insert mode active for the next command. Failed submissions and text edited
-while the request was pending are preserved;
-when the completion popup is visible it retains native completion acceptance.
+Существующие пользовательские привязки имеют приоритет. Обычная `G` сохраняет
+стандартное поведение вне режима ячеек; `G` без числового префикса в режиме
+ячеек тоже переходит к последней строке. В режиме вставки `Ctrl-Y` отправляет
+текущую ячейку по контексту и очищает её тело после успешного ответа, сохраняя
+заголовок магической команды и историю. Режим вставки остаётся активным
+для следующей команды. При неудачной отправке и при изменении текста во время
+ожидания запроса содержимое сохраняется; если открыто меню автодополнения,
+клавиша сохраняет стандартное подтверждение дополнения.
 
-## Cell History
+## История ячейки
 
-Followup-capable plugins keep submitted bodies in the cell's history suffix,
-newest first. Initial handoff and subsequent followups are captured; exact
-repeats move to the front. Magic headers are omitted. Ordinary kernel execution
-and kernel input replies do not add history.
+Плагины с поддержкой повторных запросов сохраняют отправленные тела в области
+истории в конце ячейки, от новых к старым. Записываются первоначальная передача
+управления плагину и последующие запросы; точные повторы перемещаются в начало.
+Заголовки магических команд не включаются. Обычное выполнение ядра и ответы
+на запросы ввода не добавляют историю.
 
-History starts folded as `history: N entries`, without a delimiter prefix or
-dot fill, using the muted `JusiHistoryFold` foreground, with the cell closer visible. Expanded history keeps its `╞══` delimiter.
-Use native `zo`, `zc`, or `za`, or `:JusiHistoryToggle` from anywhere in the cell.
-Each window keeps its own fold state. Open history is editable notebook text
-with isolated syntax and indentation for each entry.
+Изначально история свёрнута как `history: N entries` («история: N записей»),
+без префикса разделителя и заполнения точками, с приглушённым цветом текста
+`JusiHistoryFold`; закрывающая граница ячейки видна. Раскрытая история сохраняет
+разделитель `╞══`. Используйте стандартные `zo`, `zc`, `za` или
+`:JusiHistoryToggle` из любого места ячейки. Каждое окно сохраняет собственное
+состояние сворачивания. Открытая история — редактируемый текст блокнота
+с отдельным синтаксисом и отступами для каждой записи.
 
-Place the cursor on an entry and use `:JusiHistoryApply` to restore it into the
-active body without executing. The current magic header/alias and stored history
-remain; one undo restores the previous body. Both commands work offline. Cell-mode `H` and Normal-mode `\h` toggle history;
-Enter in cell mode restores the selected history entry.
+Поставьте курсор на запись и вызовите `:JusiHistoryApply`, чтобы восстановить
+её в активное тело без выполнения. Текущие заголовок магической команды,
+псевдоним и сохранённая история остаются; одна отмена возвращает прежнее тело.
+Обе команды работают без подключения. `H` в режиме ячеек и `\h` в обычном
+режиме сворачивают или раскрывают историю; Enter в режиме ячеек восстанавливает
+выбранную запись истории.
 
-## Explicit Lifecycle Controls
+## Явное управление жизненным циклом
 
-Start the service in a regular terminal:
+Запустите сервис в обычном терминале:
 
 ```sh
 jusi serve
 ```
 
-This uses target-side `~/.jusi/jusi.toml` when present. Use
-`jusi serve --config /path/to/jusi.toml` for an explicit path; Neovim
-does not read or upload backend configuration.
+Если существует `~/.jusi/jusi.toml` в целевом окружении, используется этот файл.
+Для явного пути укажите `jusi serve --config /path/to/jusi.toml`; Neovim
+не читает и не загружает конфигурацию бэкенда.
 
-With the Neovim plugin installed, open a `.vipynb` buffer containing 1.0
-cell delimiters and use:
+Установив плагин Neovim, откройте буфер `.vipynb` с разделителями ячеек 1.0
+и используйте:
 
 ```vim
 :JusiConnect
@@ -184,101 +207,111 @@ cell delimiters and use:
 :JusiDisconnect
 ```
 
-Cell status appears after the opener through Neovim extmarks: green `✓`
-for done, red `✗` for error, orange `!` for interrupted, and blue `>` for a live
-followup client. Running work uses purple `*`, including while kernel input is
-pending. Both delimiters share the status color. Never-executed cells have yellow
-delimiters and no status symbol.
-Both RGB and 256-color terminal palettes are defined; `termguicolors` is optional.
-The buffer text and sign/status columns are untouched. These marks show the last
-observed work outcome; editing a cell does not erase it.
+Статус ячейки появляется после открывающей границы через extmark Neovim:
+зелёная `✓` — завершено, красный `✗` — ошибка, оранжевый `!` — прервано,
+синий `>` — активный клиент с поддержкой повторных запросов. Работа в процессе
+показывается фиолетовой `*`, в том числе во время ожидания ввода ядра.
+Обе границы имеют цвет статуса. У ни разу не выполнявшихся ячеек жёлтые границы
+без символа статуса. Определены палитры RGB и 256 цветов терминала;
+`termguicolors` необязателен. Текст буфера и столбцы знаков и статуса
+не изменяются. Метки показывают последний наблюдавшийся результат работы;
+редактирование ячейки его не стирает.
 
-For kernel input, execute a cell containing `input('lalala: ')`. Its output
-split shows the prompt without taking focus. Replace the same cell body with
-`ololo` and run `:JusiInput`; the original execution receives that literal text
-and resumes. `JusiInput` requires a pending request for that cell. It preserves
-whitespace and joins body lines with newlines; it does not evaluate the reply.
-Accepted replies echo literally on the prompt line, followed by a newline,
-including for assignment forms such as `a = input('lalala: ')`. Bare `input(...)`
-can also produce a genuine Python expression result on the following line.
-The command has no default mapping and is separate from plugin followups.
-Kernel execution and input waits have no automatic time limit. End them with
-`JusiInterrupt`, `JusiClose`, kernel stop, or restart; retiring the owning cell
-also closes its active work.
+Для ввода ядра выполните ячейку с `input('lalala: ')`. В окне вывода появится
+приглашение без перехвата фокуса. Замените тело той же ячейки на `ololo`
+и выполните `:JusiInput`; исходное выполнение получит этот буквальный текст
+и продолжится. `JusiInput` требует ожидающего запроса для этой ячейки.
+Команда сохраняет пробельные символы и соединяет строки тела переводами строк;
+ответ не вычисляется как выражение. Принятые ответы буквально отображаются
+в строке приглашения с последующим переводом строки, в том числе при
+присваивании, например `a = input('lalala: ')`. Отдельное `input(...)`
+также может вывести настоящий результат выражения Python в следующей строке.
+У команды нет привязки по умолчанию; она отделена от повторных запросов
+к плагинам. Выполнение ядра и ожидание ввода не имеют автоматического ограничения
+времени. Завершите их через `JusiInterrupt`, `JusiClose`, остановку ядра
+или перезапуск; удаление владеющей ячейки также закрывает её активную работу.
 
-For an existing plugin client that declares `followup`, edit its source cell
-and run `:JusiFollowup`. It sends the literal body (including an empty body) to
-the same worker and keeps its output surface. Successful delivery updates the client without a status notification. It has no default mapping and does not start a new kernel
-execution. Plugins interpret the body and update their own presentation.
+Для существующего клиента плагина с возможностью `followup` измените исходную
+ячейку и выполните `:JusiFollowup`. Команда отправляет буквальное тело,
+в том числе пустое, тому же рабочему процессу и сохраняет его поверхность вывода.
+Успешная доставка обновляет клиент без уведомления о статусе. У команды нет
+привязки по умолчанию, и она не запускает новое выполнение ядра.
+Плагины интерпретируют тело и обновляют собственное представление.
 
-Press Tab in Insert mode inside a connected notebook cell to invoke Vim's native
-completion menu. Navigation, acceptance, cancellation, and `completeopt` keep
-their usual Vim behavior; Jusi installs no mappings for them. Tab itself also
-keeps native behavior while a menu is already visible. `<Plug>(JusiComplete)`
-and `:JusiComplete` remain available for explicit Insert-mode invocation.
+Нажмите Tab в режиме вставки внутри ячейки подключённого блокнота для вызова
+стандартного меню автодополнения Vim. Навигация, подтверждение, отмена
+и `completeopt` сохраняют обычное поведение Vim; Jusi не задаёт привязки для них.
+Tab тоже сохраняет стандартное поведение, пока меню уже открыто.
+`<Plug>(JusiComplete)` и `:JusiComplete` доступны для явного вызова
+в режиме вставки.
 
-Same-line edits preview directly through Vim. A replacement reaching into earlier
-lines is finalized on acceptance; cancelling leaves the original text intact.
-Text after the cursor remains untouched.
+Изменения в пределах одной строки предварительно отображаются средствами Vim.
+Замена, затрагивающая предыдущие строки, завершается при подтверждении;
+отмена сохраняет исходный текст. Текст после курсора не меняется.
 
-Regular cells complete using their kernel scope. Plugin cells need an existing
-client with the `complete` capability; empty prefixes are supported. Plugin
-authors should use the [completion payload and range contract](adr/0027-completions-use-explicit-source-ranges.md).
+Обычные ячейки дополняются в контексте своего ядра. Ячейкам плагинов нужен
+существующий клиент с возможностью `complete`; пустые префиксы поддерживаются.
+Авторам плагинов следует использовать
+[контракт данных и диапазонов автодополнения](adr/0027-completions-use-explicit-source-ranges.md).
 
-Connecting and disconnecting affect only the frontend transport. Disconnect
-preserves the current notebook model and output surfaces for later transport
-resumption. Neither command implicitly starts or stops a kernel.
+Подключение и отключение затрагивают только транспорт фронтенда. Отключение
+сохраняет текущую модель блокнота и поверхности вывода для последующего
+восстановления транспорта. Ни одна из команд не запускает и не останавливает
+ядро неявно.
 
-Execution reveals the cell's ordinary output or plugin client without taking
-focus. `:JusiToggleFocus` moves between that artifact and its source cell and
-reopens a buffer hidden with native `:close`. `:JusiClose` completely removes
-the cell artifact, including backend client teardown when required, without
-stopping the kernel. Closing an active cell interrupts its execution as part of
-that cleanup. Damaging or removing a cell's opener performs the same full close
-automatically; damage to its closer preserves identity. Merging A with B by
-removing their adjoining borders keeps A and closes B. Undo restores the second
-cell's text with a fresh identity and no old output.
+Выполнение показывает обычный вывод ячейки или клиент плагина без перехвата
+фокуса. `:JusiToggleFocus` переключается между этим артефактом и его исходной
+ячейкой и открывает буфер, скрытый стандартной командой `:close`.
+`:JusiClose` полностью удаляет артефакт ячейки, при необходимости завершая
+клиент бэкенда, без остановки ядра. Закрытие активной ячейки прерывает её
+выполнение в рамках очистки. Повреждение или удаление открывающей границы ячейки
+автоматически выполняет такое же полное закрытие; повреждение закрывающей
+границы сохраняет идентификатор. Объединение A и B удалением смежных границ
+сохраняет A и закрывает B. Отмена восстанавливает текст второй ячейки
+с новым идентификатором и без старого вывода.
 
-For a single-command lifecycle, use `:JusiStart local` with `jusi` on PATH,
-then `:JusiStop`. Named local and remote profiles and a launch command for
-local and remote use are documented in the
-[target start/stop guide](architecture/target-start-stop.md).
+Для управления одной командой используйте `:JusiStart local`, если `jusi`
+доступен в PATH, затем `:JusiStop`. Именованные локальные и удалённые профили,
+а также команда запуска для локального и удалённого использования описаны
+в [руководстве по запуску и остановке](architecture/target-start-stop.md).
 
-Alternatively, when `jusi` is on `PATH`, `:JusiServiceStart` explicitly launches
-and connects a notebook-local service; `:JusiServiceStop` stops its kernel and
-owned service. Configure another executable through
+Другой вариант: если `jusi` доступен в `PATH`, `:JusiServiceStart` явно запускает
+и подключает сервис отдельного блокнота; `:JusiServiceStop` останавливает его
+ядро и запущенный сервис. Другой исполняемый файл задаётся через
 `require("jusi").setup({ service_command = { ... } })`.
 
-After an error, use `:JusiTrace` to inspect the latest failure, or
-`:JusiTrace trace_...` for a specific trace (tab completion is available).
-The read-only split includes available resource identities, configuration path,
-process exit status, and stderr. Close it with native `:close`.
-The last 50 received failures are kept for this Neovim session, including failed
-service startups; they are not a persistent or complete backend log.
-
+После ошибки используйте `:JusiTrace` для просмотра последнего сбоя
+или `:JusiTrace trace_...` для конкретной трассировки; доступно автодополнение
+по Tab. В окне только для чтения показываются доступные идентификаторы ресурсов,
+путь конфигурации, код завершения процесса и stderr. Закройте его стандартной
+командой `:close`. Для этого сеанса Neovim сохраняются последние 50 полученных
+сбоев, включая неудачные запуски сервиса; это не постоянный и не полный журнал
+бэкенда.
 
 ## VisiData
 
-The bundled `%%vd` plugin evaluates a Python expression and opens a snapshot in
-VisiData. Install with `pip install 'jusi[vd]'`, then restart the notebook runtime.
-Inside the terminal, `zY` copies to Neovim and Ctrl-O opens the current value in a
-split. See the [usage guide](architecture/bundled-vd.md) for examples,
-supported values and snapshot behavior.
+Встроенный плагин `%%vd` вычисляет выражение Python и открывает снимок данных
+в VisiData. Установите его через `pip install 'jusi[vd]'`, затем перезапустите
+среду выполнения блокнота. В терминале `zY` копирует в Neovim, а Ctrl-O
+открывает текущее значение в отдельном окне. Примеры, поддерживаемые значения
+и поведение снимков описаны в [руководстве](architecture/bundled-vd.md).
 
+## Просмотр различий по запросу плагина
 
-## Plugin-driven diff display
+Приложения могут вызывать `jusi.editor_client.show_diff(before, after, ...)`
+для показа снимков только для чтения в новой вкладке стандартного diff Neovim.
+Используется тот же канал передачи с поддержкой удалённых окружений,
+что и для копирования и открытия; подтверждается только факт показа.
+См. [руководство по просмотру различий](architecture/show-diff.md).
 
-Applications can call `jusi.editor_client.show_diff(before, after, ...)` to
-display read-only snapshots in a new native Neovim diff tab. This uses the same
-remote-capable transfer channel as copy/open and acknowledges display only.
-See the [show-diff guide](architecture/show-diff.md).
+## Клиенты, требующие внимания
 
-## Clients needing attention
-
-Plugins can publish a short question/approval indicator or completion notice.
-The notebook/client statusline shows `attention:N`. `:JusiAttention` visits the
-client (or offers a picker); `:JusiAttention!` dismisses notices only. Visiting
-never approves an action. The default tabline keeps the owning tab amber for
-questions/approvals or blue for notices, with a pending count, until resolved.
-New items notify without stealing focus; an unfocused
-terminal gets a configurable best-effort bell. See [attention settings](architecture/client-attention.md).
+Плагины могут публиковать краткий индикатор вопроса или запроса подтверждения
+либо уведомление о завершении. Строка состояния блокнота или клиента показывает
+`attention:N`. `:JusiAttention` переходит к клиенту или предлагает выбор;
+`:JusiAttention!` снимает только уведомления. Переход никогда не подтверждает
+действие. Стандартная строка вкладок до разрешения запроса выделяет вкладку
+владельца янтарным цветом для вопросов и подтверждений или синим для уведомлений
+и показывает число ожидающих элементов. Новые элементы уведомляют без перехвата
+фокуса; терминал без фокуса получает настраиваемый звуковой сигнал, если
+это возможно. См. [настройки внимания](architecture/client-attention.md).

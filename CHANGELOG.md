@@ -1,101 +1,116 @@
-# Changelog
+# История изменений
 
 ## 1.0.5 — 2026-10-10
 
-- Add client-owned attention requests and completion notices, with statusline
-  counts, tab indicators, `:JusiAttention`, and optional notification hooks.
-- Add `:JusiCloseTab` / `\Q` to clean up the current notebook’s visible
-  artifacts in the current tab while preserving its last view and running kernel.
-- Wake owned readers when transports close and reduce startup imports, improving
-  plugin launch, close, and service shutdown latency.
-- Keep application-driven editor opens anchored to the requesting client window
-  throughout transfer and retries; fail delivery if that window is unavailable.
+- Добавлены запросы внимания и уведомления о завершении, принадлежащие клиенту:
+  счётчики в строке состояния, индикаторы вкладок, `:JusiAttention`
+  и необязательные обработчики уведомлений.
+- Добавлены `:JusiCloseTab` / `\Q` для очистки видимых артефактов текущего
+  блокнота в текущей вкладке с сохранением его последнего окна и работающего ядра.
+- Ожидающие читатели пробуждаются при закрытии транспорта; сокращены импорты
+  при запуске, что уменьшает задержки запуска и закрытия плагинов и остановки сервиса.
+- Открытие в редакторе по запросу приложения остаётся привязанным к окну
+  запрашивающего клиента на протяжении передачи и повторных попыток;
+  если окно недоступно, доставка завершается ошибкой.
 
 ## 1.0.4 — 2026-10-05
 
-- Restore the notebook statusline when switching notebooks in the same window.
-- Report missing local terminal-bridge executables with actionable configuration
-  guidance, and clean up failed terminal launches without leaving empty splits.
-- Open application snapshots beside the requesting client in the current tab,
-  including when a notebook is mirrored across tabs.
-- Document local venv and Docker target setup, including explicit host-side
-  terminal-bridge paths, and add the optional JShell command recipe.
+- Строка состояния блокнота восстанавливается при переключении блокнотов
+  в одном окне.
+- При отсутствии локального исполняемого файла терминального моста выдаются
+  конкретные рекомендации по настройке; неудачные запуски терминалов
+  очищаются без оставшихся пустых окон.
+- Снимки приложений открываются рядом с запрашивающим клиентом в текущей
+  вкладке, в том числе при отображении блокнота в нескольких вкладках.
+- Документированы настройка локального виртуального окружения и Docker,
+  включая явные пути терминального моста на хосте, и необязательная команда JShell.
 
 ## 1.0.3 — 2026-09-26
 
-- Repair followup-history folds after local edits, including a stale range or
-  missing native fold, while keeping ordinary body typing on its local path.
-- Resync cell-mode visuals with the current editor mode when toggled, so the
-  badge and borders agree with active Normal-mode mappings.
-- Scan aliased or repeated Python library paths only once during plugin
-  discovery, preventing false duplicate-plugin conflicts while preserving
-  conflicts between distinct installations.
+- Исправлено восстановление свёрнутой истории повторных запросов после
+  локальных изменений, включая устаревший диапазон или отсутствующее стандартное
+  сворачивание; обычный набор текста тела по-прежнему обрабатывается локально.
+- Визуальное представление режима ячеек при переключении синхронизируется
+  с текущим режимом редактора, чтобы индикатор и границы соответствовали
+  активным привязкам обычного режима.
+- Пути библиотек Python, указанные через псевдонимы или повторённые, сканируются
+  только один раз при обнаружении плагинов. Это предотвращает ложные конфликты
+  дубликатов и сохраняет обнаружение конфликтов между разными установками.
 
 ## 1.0.2 — 2026-09-17
 
-- Run established plugin-client operations outside the serialized kernel lane,
-  allowing Python execution and work on other clients to continue while a
-  plugin is busy. Same-client overlap remains a recoverable conflict.
-- Add Insert-mode `Ctrl-Y` submission that clears only the successfully
-  submitted cell body while preserving magic headers, history and newer edits.
-- Share complete VisiData startup and editor integration through the optional
-  `jusi.visidata_support` helper, including normal user configuration loading.
-- Open editor-action snapshots as disposable scratch buffers so local edits do
-  not create false unsaved-file prompts or block editor exit.
-- Keep interactive terminal views following new output unless the user scrolls
-  away, and open palette-selected notebooks as full-height left columns.
+- Операции существующих клиентов плагинов выполняются вне последовательной
+  очереди ядра, позволяя выполнять Python и работать с другими клиентами,
+  пока плагин занят. Перекрывающиеся операции одного клиента по-прежнему
+  вызывают восстанавливаемый конфликт.
+- Добавлена отправка через `Ctrl-Y` в режиме вставки: очищается только тело
+  успешно отправленной ячейки, сохраняются заголовки магических команд,
+  история и более новые изменения.
+- Полный запуск VisiData и интеграция с редактором вынесены в необязательную
+  функцию `jusi.visidata_support`, включая обычную загрузку конфигурации пользователя.
+- Снимки действий редактора открываются как временные буферы, чтобы локальные
+  изменения не вызывали ложных запросов о несохранённых файлах и не блокировали
+  выход из редактора.
+- Интерактивные терминалы следуют за новым выводом, пока пользователь
+  не прокрутит его; выбранные в палитре блокноты открываются в левых окнах
+  на всю высоту.
 
 ## 1.0.1 — 2026-09-16
 
-- Poll the owned kernel process directly when checking liveness. This prevents an
-  inherited running asyncio loop in Jupyter's synchronous wrapper from falsely
-  reporting a healthy kernel as dead and triggering runtime cleanup.
-- Add the recorded Jusi 1.0 demo to the GitHub README.
+- При проверке активности напрямую опрашивается принадлежащий Jusi процесс
+  ядра. Это предотвращает ложное определение исправного ядра как завершённого
+  и очистку среды выполнения из-за унаследованного работающего цикла asyncio
+  в синхронной обёртке Jupyter.
+- В README на GitHub добавлена записанная демонстрация Jusi 1.0.
 
 ## 1.0.0 — 2026-09-15
 
-First stable release of the Neovim-native Jusi rewrite. Includes the features and
-compatibility changes listed under rc1 and the corrected PyPI description from
-rc2. Runtime behavior is unchanged from the verified candidates.
+Первый стабильный выпуск Jusi, переписанного для Neovim. Включает возможности
+и изменения совместимости, перечисленные в rc1, и исправленное описание PyPI
+из rc2. Поведение среды выполнения не изменилось относительно проверенных
+кандидатов.
 
-## 1.0.0rc2 — Release candidate
+## 1.0.0rc2 — Кандидат в выпуск
 
-Prepared 2026-09-15 for TestPyPI review.
+Подготовлен 2026-09-15 для проверки на TestPyPI.
 
-- Use a dedicated PyPI description with an absolute GitHub project link, avoiding
-  relative documentation links that do not resolve on package-index pages.
-- Include the PyPI description in the source archive. Runtime behavior is unchanged
-  from the verified rc1 candidate.
+- Используется отдельное описание PyPI с абсолютной ссылкой на проект GitHub,
+  чтобы избежать относительных ссылок на документацию, не работающих
+  на страницах индекса пакетов.
+- Описание PyPI включено в архив исходников. Поведение среды выполнения
+  не изменилось относительно проверенного кандидата rc1.
 
-## 1.0.0rc1 — Release candidate (TestPyPI)
+## 1.0.0rc1 — Кандидат в выпуск (TestPyPI)
 
-Prepared 2026-09-15.
+Подготовлен 2026-09-15.
 
-Jusi 1.0 introduces a Neovim-native frontend and a target-side Python service.
+Jusi 1.0 вводит фронтенд для Neovim и Python-сервис на стороне целевого окружения.
 
-- Plain-text cells with stable identities, cell-local syntax and indentation,
-  kernel/plugin completion, status marks and keyboard cell mode.
-- Contextual execution, kernel input and plugin followups; foldable followup
-  history and explicit output parking.
-- Local and remote target aliases through `JusiStart` / `JusiStop`, with resource
-  cleanup and diagnostics for process and transport failures.
-- Terminal clients and bundled `%%vd`, including copy to a register and open in
-  a buffer. Plugins can also request display-only diffs.
-- Source-only Jupyter notebook import/export. Markdown and raw sources import
-  as ordinary cells; outputs and original cell types are not retained.
-- Separately installed Python and Neovim components, plus packaged plugin and
-  plugin-family authoring skills with matching reference source.
+- Текстовые ячейки со стабильными идентификаторами, отдельным синтаксисом
+  и отступами, автодополнением ядра и плагинов, отметками статуса
+  и клавиатурным режимом ячеек.
+- Контекстное выполнение, ввод ядра и повторные запросы к плагинам;
+  сворачиваемая история запросов и явное закрепление вывода.
+- Псевдонимы локальных и удалённых окружений через `JusiStart` / `JusiStop`
+  с очисткой ресурсов и диагностикой сбоев процессов и транспорта.
+- Терминальные клиенты и встроенный `%%vd`, включая копирование в регистр
+  и открытие в буфере. Плагины также могут запрашивать просмотр различий.
+- Импорт и экспорт только исходного текста блокнотов Jupyter. Markdown и raw
+  импортируются как обычные ячейки; вывод и исходные типы ячеек не сохраняются.
+- Отдельно устанавливаемые компоненты Python и Neovim, а также упакованные
+  навыки разработки плагинов и семейств с соответствующими справочными исходниками.
 
-### Compatibility
+### Совместимость
 
-Requires Python 3.9+ and Neovim 0.11+. Vim is no longer supported. The `.vipynb`
-extension remains, but 1.0 uses new delimiters and does not load legacy `##`
-notebooks. Legacy notebook migration is not provided. Runtime plugins must use
-the 1.0 contracts; legacy providers are not automatically compatible.
+Требуются Python 3.9+ и Neovim 0.11+. Vim больше не поддерживается.
+Расширение `.vipynb` сохраняется, но 1.0 использует новые разделители
+и не загружает старые блокноты с `##`. Перенос старых блокнотов не предусмотрен.
+Плагины среды выполнения должны использовать контракты 1.0;
+старые провайдеры не совместимы автоматически.
 
-### Scope
+### Область реализации
 
-Rich/web output presentation is deferred. Diff display has no accept/reject or
-writeback workflow. Independent authoring-skill evaluation and real remote
-transport-loss review remain deferred; local simulated transport-loss tests
-are covered by the release checks.
+Представление rich/web-вывода отложено. Просмотр различий не включает принятие,
+отклонение или запись изменений обратно. Независимая оценка навыков разработки
+и проверка реальной потери удалённого транспорта остаются отложенными;
+локальные тесты с имитацией потери транспорта включены в проверки выпуска.

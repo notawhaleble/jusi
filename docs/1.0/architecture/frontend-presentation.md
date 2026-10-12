@@ -1,89 +1,93 @@
-# Frontend Output Presentation
+# Представление вывода на фронтенде
 
-## Boundary
+## Граница
 
-Presentation is a projection of execution output, never the owner of execution,
-client, cell, or kernel truth. It receives an already correlated model cell ID
-and output record from the controller.
+Представление — проекция вывода выполнения, а не владелец достоверных сведений
+о выполнении, клиенте, ячейке или ядре. Оно получает от контроллера уже
+сопоставленный идентификатор ячейки модели и запись вывода.
 
-Renderer choice depends on `media_type` and interaction needs. It does not
-depend on whether output came from ordinary code, an error, or a plugin.
+Выбор отрисовки зависит от `media_type` и потребностей взаимодействия.
+Он не зависит от того, пришёл ли вывод от обычного кода, ошибки или плагина.
 
-## Initial Text Renderer
+## Исходная отрисовка текста
 
-Every `text/*` record is sent unchanged to the channel returned by
-`nvim_open_term()`. Jusi does not remove, interpret, or recreate ANSI sequences.
-This surface is non-interactive: it has no process, PTY, stdin, resize protocol,
-or kernel-control responsibility.
+Каждая запись `text/*` без изменений отправляется в канал, возвращённый
+`nvim_open_term()`. Jusi не удаляет, не интерпретирует и не воссоздаёт
+последовательности ANSI. Эта поверхность неинтерактивна: у неё нет процесса,
+PTY, stdin, протокола изменения размера или ответственности за управление ядром.
 
-The initial manager retains at most one output terminal per cell. A new
-execution replaces and closes only that cell's previous terminal. Other cell
-surfaces remain intact. Completed output stays available until replacement or
-explicit frontend cleanup.
+Исходный менеджер сохраняет не более одного терминала вывода на ячейку.
+Новое выполнение заменяет и закрывает только предыдущий терминал этой ячейки.
+Поверхности других ячеек остаются нетронутыми. Завершённый вывод доступен
+до замены или явной очистки фронтенда.
 
-The first output reveals its terminal buffer in a split without changing the
-current window. Native window close only hides the buffer. `JusiToggleFocus`
-focuses or reopens it and returns from a projection to its source cell;
-`JusiClose` deletes it. These window operations do not alter renderer ownership.
+Первый вывод показывает терминальный буфер в отдельном окне, не меняя
+текущего окна. Стандартное закрытие окна только скрывает буфер.
+`JusiToggleFocus` переводит в него фокус или открывает его заново и возвращает
+из представления к исходной ячейке; `JusiClose` удаляет его.
+Эти операции с окнами не меняют владение отрисовкой.
 
-## Deferred Media
+## Отложенные медиаформаты
 
-No renderer is yet registered for non-text media. Such output produces a local,
-cell-scoped `frontend_presentation/unsupported` failure without changing kernel
-or transport state. Rich renderers will be added by media type rather than by
-cell or plugin identity.
+Для нетекстовых медиа отрисовка пока не зарегистрирована. Такой вывод вызывает
+локальную ошибку `frontend_presentation/unsupported` в области ячейки
+без изменения состояния ядра или транспорта. Дополнительные способы
+отрисовки будут добавляться по типу медиа, а не идентификатору ячейки или плагина.
 
-## Durable Plugin Client Surfaces
+## Поверхности долговременных клиентов плагинов
 
-Execution-output projection is distinct from a durable plugin client surface.
-Backend plugins expose generic terminal or web surface resources; they do not
-send provider-specific presentation models to Lua.
+Представление вывода выполнения отличается от поверхности долговременного
+клиента плагина. Плагины бэкенда предоставляют общие ресурсы терминальных
+или веб-поверхностей, а не передают в Lua модели представления провайдера.
 
-- A render-only terminal surface sends bytes to `nvim_open_term()`.
-- An interactive terminal surface additionally binds a dedicated target-side
-  PTY/byte stream, input, and geometry updates.
-- A web surface opens backend-owned content in a supported WebBuffer/browser.
+- Терминальная поверхность только для показа отправляет байты в `nvim_open_term()`.
+- Интерактивная терминальная поверхность дополнительно привязывает отдельный
+  целевой PTY или поток байтов, ввод и обновление геометрии.
+- Веб-поверхность открывает принадлежащее бэкенду содержимое
+  в поддерживаемом WebBuffer или браузере.
 
-The frontend owns buffer/window placement, focus, current geometry, input
-routing, and explicit close. The backend owns application state and rendered
-content. Fatal surface/client failures arrive through generic core failure
-events; recoverable application errors remain content on the plugin surface.
+Фронтенд владеет размещением буферов и окон, фокусом, текущей геометрией,
+маршрутизацией ввода и явным закрытием. Бэкенд владеет состоянием приложения
+и отображаемым содержимым. Фатальные сбои поверхности или клиента приходят
+через общие события ошибок ядра Jusi; восстанавливаемые ошибки приложения
+остаются содержимым поверхности плагина.
 
-ADR 0020 exposes the same cell artifact interaction for ordinary output and
-plugin clients. The abstraction does not merge their internals: closing bounded
-output deletes a frontend terminal, while closing a plugin artifact uses the
-backend client operation and authoritative surface events. Executing a cell
-explicitly replaces its current artifact, preventing stale clients from
-accumulating behind one cell.
+ADR 0020 предоставляет одинаковое взаимодействие с артефактом ячейки
+для обычного вывода и клиентов плагинов. Абстракция не объединяет внутреннее
+устройство: закрытие ограниченного вывода удаляет терминал фронтенда,
+а закрытие артефакта плагина использует операцию клиента бэкенда
+и авторитетные события поверхности. Выполнение ячейки явно заменяет её
+текущий артефакт, не позволяя старым клиентам накапливаться за одной ячейкой.
 
-The terminal surface projection is now implemented. `surface.created` opens a
-native Neovim terminal split at its real geometry and starts the configured
-repository bridge as a terminal job. The bridge command receives only the
-configured target service URL and core `surface_id`; it never receives a
-plugin-provided command, environment, or payload. Target bytes therefore flow
-through Neovim's terminal emulator, while plugin application state and the PTY
-remain at the target service.
+Представление терминальной поверхности теперь реализовано. `surface.created`
+открывает стандартное терминальное окно Neovim с фактической геометрией
+и запускает настроенный мост репозитория как терминальное задание.
+Команда моста получает только настроенный URL целевого сервиса и `surface_id`
+ядра Jusi; она никогда не получает команду, окружение или нагрузку плагина.
+Поэтому целевые байты проходят через эмулятор терминала Neovim,
+а состояние приложения плагина и PTY остаются на целевом сервисе.
 
-The bridge places its own Neovim-terminal stdin in raw mode and restores the
-previous mode when it exits. This is a byte-transport requirement, not a focus
-policy: automatic surface creation continues to leave focus in the notebook,
-while a user may explicitly enter or focus the client terminal.
+Мост переводит собственный stdin терминала Neovim в необработанный режим
+и восстанавливает прежний режим при выходе. Это требование передачи байтов,
+а не политика фокуса: автоматическое создание поверхности оставляет фокус
+в блокноте, пользователь может явно войти в терминал клиента
+или перевести в него фокус.
 
-Commands invoked from a projection resolve its stored model cell identity and,
-for client-specific operations, its exact client identity. Its terminal cursor
-is application-owned geometry and must never be interpreted as a notebook-text
-row. Commands invoked from the notebook instead resolve through the model cell
-under the notebook cursor.
+Команды из представления разрешают сохранённый идентификатор ячейки модели,
+а для операций клиента — точный идентификатор клиента. Терминальный курсор —
+геометрия приложения; его нельзя интерпретировать как строку текста блокнота.
+Команды из блокнота разрешают ячейку через модель под курсором блокнота.
 
-`terminal_bridge_command` defaults to `{ "jusi", "terminal-bridge" }`. When a
-local `service_command` ends in `serve`, setup derives the bridge command from
-the same executable unless explicitly overridden. Remote service placement
-does not change the bridge executable's local ownership.
+`terminal_bridge_command` по умолчанию — `{ "jusi", "terminal-bridge" }`.
+Когда локальный `service_command` заканчивается на `serve`, настройка выводит
+команду моста из того же исполняемого файла, если она не переопределена явно.
+Удалённое размещение сервиса не меняет локальную принадлежность файла моста.
 
-Authoritative health reconciliation creates missing projections and removes
-stale ones without duplicating existing terminal jobs. A `surface.closed` or
-session teardown stops only that bridge job and deletes its buffer. The running
-bridge reconnects its own WebSocket from its exact in-memory consumed cursor;
-ordinary transport loss does not change surface, client, worker, or kernel
-lifetime. Frontend core does not restart a dead bridge process because it cannot
-atomically infer the cursor from Neovim's terminal state.
+Авторитетное согласование health создаёт отсутствующие представления
+и удаляет устаревшие без дублирования существующих терминальных заданий.
+`surface.closed` или завершение сеанса останавливает только это задание моста
+и удаляет его буфер. Работающий мост переподключает свой WebSocket с точного
+курсора прочитанных байтов в памяти; обычная потеря транспорта не меняет
+время жизни поверхности, клиента, рабочего процесса или ядра.
+Ядро фронтенда не перезапускает завершившийся мост, поскольку не может
+атомарно определить курсор из состояния терминала Neovim.

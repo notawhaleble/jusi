@@ -16,7 +16,7 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 NAMES = ("jusi-plugin-development", "jusi-plugin-family-development")
-REPOSITORY = "https://github.com/notawhaleble/jusi.git"
+REPOSITORY = "ssh://my-org/Python/Jusi.git"
 MANIFEST = ".jusi-install.json"
 
 

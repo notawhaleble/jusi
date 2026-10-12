@@ -1,39 +1,42 @@
-# Completion requirements for the next slice
+# Требования к автодополнению для следующего этапа
 
-Status: implemented; wire contract and menu behavior are specified in
-[ADR 0027](../adr/0027-completions-use-explicit-source-ranges.md). Manual user
-testing is pending.
+Статус: реализовано; контракт передачи и поведение меню определены
+в [ADR 0027](../adr/0027-completions-use-explicit-source-ranges.md).
+Ручная пользовательская проверка ожидается.
 
-Regular cells complete in their Jupyter kernel scope. Send the entire cell body
-before the cursor as completion context. Text after the cursor must neither
-influence completion nor be removed or rewritten, including adjacent suffixes:
+Обычные ячейки дополняются в контексте своего ядра Jupyter. В качестве контекста
+отправляется всё тело ячейки до курсора. Текст после курсора не должен влиять
+на дополнение, удаляться или переписываться, включая примыкающие суффиксы:
 
 ```
 from time import s|lalala
 from time import sleep|lalala
 ```
 
-Plugins need body/cursor context and must control the replacement extent rather
-than inherit a core-wide Vim word heuristic. Distinguish small `word`, whitespace
-delimited `WORD`, and the full body prefix. Explicit coordinate units and ranges
-must make Unicode, multiline context, and before-cursor replacement unambiguous.
-Core must validate ranges and reject stale responses after text/cursor/cell/client
-changes. Menu selection previews and acceptance must preserve the untouched suffix;
-cancellation must restore the original prefix. Use Vim's native menu and default
-input behavior, with Tab only invoking completion. Earlier-line changes are
-finalized on acceptance; their current-line portion previews natively.
+Плагинам нужны контекст тела и курсора и управление диапазоном замены
+вместо общей для ядра Jusi эвристики слова Vim. Различайте малое `word`,
+разделённое пробелами `WORD` и полный префикс тела. Явные единицы координат
+и диапазоны должны делать Unicode, многострочный контекст и замену до курсора
+однозначными. Ядро Jusi должно проверять диапазоны и отклонять устаревшие ответы
+после изменения текста, курсора, ячейки или клиента. Предпросмотр выбора меню
+и подтверждение должны сохранять нетронутый суффикс; отмена должна
+восстанавливать исходный префикс. Используйте стандартное меню Vim и обычное
+поведение ввода; Tab только вызывает дополнение. Изменения предыдущих строк
+завершаются при подтверждении; их часть в текущей строке предварительно
+показывается стандартными средствами.
 
-Allow empty-prefix requests. A SQL plugin must be able to offer schemas after
-`select * from ` and then tables after selecting a schema. Core must not reject
-requests globally just because the current word is empty.
+Разрешайте запросы с пустым префиксом. SQL-плагин должен предлагать схемы
+после `select * from `, а после выбора схемы — таблицы. Ядро Jusi не должно
+глобально отклонять запросы только из-за пустого текущего слова.
 
-Review the read-only sibling `../jusivim` implementation and its tests before
-implementation. Initial inspection found `handler_followup_payload` in
-`autoload/jusi/session.vim` and `apply_completion_result`, which consumes item
-`value`, `label`, `detail`, `documentation`, `kind`, `start_col`, and `end_col`.
-The legacy request supplies `cell_text`, cell metadata/main lines, `cursor_row`,
-`cursor_col`, `line_text`, and `current_word`; the frontend also retains
-cell/client/handler identity and line snapshots.
-These are use-case evidence, not a wire contract to copy. In particular, inspect
-range preview, cancellation, stale response handling, word-vs-WORD and suffix
-regressions before choosing the 1.0 payload.
+До реализации изучите только для чтения соседнюю реализацию `../jusivim`
+и её тесты. Первоначальный обзор обнаружил `handler_followup_payload`
+в `autoload/jusi/session.vim` и `apply_completion_result`, использующий поля
+элемента `value`, `label`, `detail`, `documentation`, `kind`, `start_col`
+и `end_col`. Старый запрос передаёт `cell_text`, метаданные ячейки и основные
+строки, `cursor_row`, `cursor_col`, `line_text` и `current_word`;
+фронтенд также сохраняет идентификаторы ячейки, клиента и обработчика
+и снимки строк. Это свидетельства сценариев использования, а не контракт
+передачи для копирования. В частности, проверьте предпросмотр диапазона,
+отмену, обработку устаревших ответов, различия word/WORD и регрессии суффиксов
+до выбора нагрузки 1.0.

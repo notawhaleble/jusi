@@ -1,45 +1,49 @@
-# Cell Identity Through Structural Edits
+# Идентификатор ячейки при структурных изменениях
 
-## Rules
+## Правила
 
-The opener owns identity. Closer/history damage changes validity without
-retiring that identity. Opener damage retires the cell and fully closes its
-resources, without approval dialogs. Undo restores text, not retired resources.
-See [ADR 0024](../adr/0024-cell-identity-survives-invalid-closing-structure.md)
-and [ADR 0025](../adr/0025-opener-retirement-closes-cell-resources.md).
+Идентификатор принадлежит открывающей границе. Повреждение закрывающей границы
+или истории меняет корректность, не удаляя идентификатор. Повреждение начала
+удаляет ячейку и полностью закрывает её ресурсы без диалогов подтверждения.
+Отмена восстанавливает текст, а не удалённые ресурсы.
+См. [ADR 0024](../adr/0024-cell-identity-survives-invalid-closing-structure.md)
+и [ADR 0025](../adr/0025-opener-retirement-closes-cell-resources.md).
 
-| Edit | Identity and resource policy |
+| Изменение | Политика идентификаторов и ресурсов |
 | --- | --- |
-| Edit, insert, delete, or join body lines | Preserve while opener survives |
-| Join closer to body; damage or delete closer | Preserve; malformed text blocks submission, but focus/interrupt/close work |
-| Undo/redo or manually repair closer | Preserve throughout; output remains attached |
-| Modify history boundaries or separators | Preserve; validity and text ranges follow grammar |
-| Insert text or cells before an existing cell | Preserve surviving cell IDs |
-| Split by inserting closer and opener | Original opener retains original ID/output; new opener gets fresh ID without inherited output |
-| Insert opener inside unclosed cell | Original survives malformed up to new opener; new cell recovers independently |
-| Damage opener, delete opener, or delete whole cell | Retire identity; interrupt active work, close clients, remove outputs |
-| Merge by deleting A's closer and B's opener | A survives with its resources; B fully closes regardless of activity/retention |
-| Undo that merge | A survives; restored second cell is fresh C with no B resources |
-| Replace whole cell including opener | Fresh identity if original anchor was invalidated; old resources close |
-| Explicit reload | Old model identities retire and close; parsed cells receive fresh identities |
+| Изменение, вставка, удаление или соединение строк тела | Сохраняются, пока существует открывающая граница |
+| Соединение закрывающей границы с телом, её повреждение или удаление | Сохраняются; некорректный текст блокирует отправку, но фокус, прерывание и закрытие работают |
+| Отмена, повтор или ручное исправление закрывающей границы | Сохраняются всё время; вывод остаётся привязанным |
+| Изменение границ или разделителей истории | Сохраняются; корректность и диапазоны текста следуют грамматике |
+| Вставка текста или ячеек перед существующей ячейкой | Идентификаторы сохранившихся ячеек остаются |
+| Разделение вставкой закрывающей и открывающей границ | Исходное начало сохраняет идентификатор и вывод; новое получает новый идентификатор без унаследованного вывода |
+| Вставка начала внутри незакрытой ячейки | Исходная ячейка сохраняется некорректной до нового начала; новая восстанавливается независимо |
+| Повреждение или удаление начала, удаление всей ячейки | Идентификатор удаляется; активная работа прерывается, клиенты закрываются, вывод удаляется |
+| Объединение удалением конца A и начала B | A сохраняется со своими ресурсами; B полностью закрывается независимо от активности и закрепления |
+| Отмена этого объединения | A сохраняется; восстановленная вторая ячейка — новая C без ресурсов B |
+| Замена всей ячейки вместе с началом | Новый идентификатор, если исходная привязка потеряла силу; старые ресурсы закрываются |
+| Явная перезагрузка | Старые идентификаторы модели удаляются и закрываются; разобранные ячейки получают новые |
 
-Parking, when implemented, protects outputs from later execution cleanup only.
-It cannot preserve a deleted owner. No output or interaction is transferred
-between cells based on text equality, line number, or undo history.
+Закрепление, когда оно реализовано, защищает вывод только от очистки
+при последующих выполнениях. Оно не сохраняет удалённого владельца.
+Вывод и взаимодействие не переносятся между ячейками на основании равенства
+текста, номера строки или истории отмены.
 
-## Runtime Boundary
+## Граница среды выполнения
 
-Retirement notifications are deferred beyond buffer edits and model queries.
-Runtime orchestration closes exact execution/client identities and fences late
-presentation. Failures are surfaced and remain retryable on reconnect; backend
-resources are not declared closed without authoritative evidence. Body typing
-never performs backend work. Opener retirement triggers deferred lifecycle
-work, not synchronous cleanup inside the edit callback.
+Уведомления об удалении откладываются за пределы изменения буфера и запросов
+модели. Оркестрация среды закрывает точные идентификаторы выполнения
+и клиента и отсекает запоздавшее представление. Ошибки показываются,
+а повторная попытка остаётся доступна при переподключении; ресурсы бэкенда
+не объявляются закрытыми без авторитетного подтверждения. Набор текста тела
+никогда не выполняет работу бэкенда. Удаление начала запускает отложенную
+работу жизненного цикла, а не синхронную очистку в обработчике изменения.
 
-## Remaining Design Space
+## Оставшиеся варианты проектирования
 
-Explicit move or split commands could offer deliberate identity-preserving
-operations in the future. Their semantics must be specified separately from
-ordinary text deletion/insertion, which follows the rules above. Visual cues
-or optional opener protection may help avoid accidental resource retirement;
-modal editing approval dialogs are excluded.
+Явные команды перемещения или разделения в будущем могут предложить операции
+с намеренным сохранением идентификатора. Их семантику нужно задавать отдельно
+от обычного удаления и вставки текста, следующих правилам выше.
+Визуальные подсказки или необязательная защита начала могут помочь избежать
+случайного удаления ресурсов; модальные диалоги подтверждения редактирования
+исключены.

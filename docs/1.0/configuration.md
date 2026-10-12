@@ -1,35 +1,37 @@
-# Target-Side Configuration
+# Настройка на стороне целевого окружения
 
-Jusi 1.0 backend and plugin configuration belongs to the target that runs the
-service, kernel, and workers. The default path is:
+Конфигурация бэкенда и плагинов Jusi 1.0 хранится в целевом окружении,
+где работают сервис, ядро и рабочие процессы. Путь по умолчанию:
 
 ```text
 ~/.jusi/jusi.toml
 ```
 
-An alternate target-side path is explicit:
+Другой путь в целевом окружении задаётся явно:
 
 ```sh
 jusi serve --config /path/to/jusi.toml
 ```
 
-A missing default file is an empty configuration. A missing explicit file,
-malformed TOML, a file larger than 1 MiB, or a TOML value that cannot be carried
-as data fails kernel start/restart without stopping the service. Failure details
-include the path and parser location when available, never file contents.
+Отсутствие файла по умолчанию означает пустую конфигурацию. Если явно указанный
+файл отсутствует, TOML некорректен, размер файла превышает 1 МиБ или значение
+TOML нельзя передать как данные, запуск или перезапуск ядра завершается ошибкой,
+но сервис продолжает работать. В сведениях об ошибке указываются путь и, если
+доступно, позиция ошибки разбора; содержимое файла не раскрывается.
 
-The file is read afresh for every kernel start and full notebook restart. The
-resulting private snapshot remains fixed for that notebook-runtime generation.
-It is not returned by health, sent through SSE, logged, or transmitted to
-Neovim.
+Файл заново читается при каждом запуске ядра и полном перезапуске блокнота.
+Полученный закрытый снимок конфигурации остаётся неизменным для этого поколения
+среды выполнения блокнота. Он не возвращается в health, не передаётся через SSE,
+не записывается в журнал и не отправляется в Neovim.
 
-For a remote shared target, keep this file scoped to capabilities and routing
-needed on that target. Prefer provider support for environment-variable or
-secret-store resolution over literal credentials. Jusi cannot protect secrets
-from administrators or processes that already have equivalent OS authority on
-the target.
+На общем удалённом узле храните в этом файле только настройки возможностей
+и маршрутизации, необходимые этому узлу. Предпочитайте провайдеры, умеющие
+получать секреты из переменных окружения или хранилищ секретов, вместо записи
+учётных данных напрямую. Jusi не может защитить секреты от администраторов
+и процессов с такими же полномочиями ОС в целевом окружении.
 
-Plugin families own their sections. For example, the intended SQL shape remains:
+Каждое семейство плагинов отвечает за свои разделы. Например, предполагаемая
+структура SQL остаётся такой:
 
 ```toml
 [sql.main]
@@ -37,16 +39,16 @@ provider = "sqlite"
 path = "/data/main.sqlite"
 ```
 
-SQL interpretation is not implemented in core. This example documents the
-family boundary that the first SQL fixture and later external providers will
-consume.
+Ядро Jusi не реализует интерпретацию SQL. Этот пример описывает границу
+семейства, которую используют первая SQL-фикстура и будущие внешние провайдеры.
 
-## Palette aliases
+## Псевдонимы в палитре
 
-At kernel start/restart the service publishes discovered magic names and alias
-names from their matching `[magic.alias]` tables for `:J` command completion.
-For example, `[sql.main]` contributes `main` under `sql`. Scalar settings and
-undiscovered configuration sections are omitted; table contents and credentials
-are never included. Alias names must be nonempty single tokens. This convention
-does not resolve the provider or validate its private configuration. Families
-using another configuration layout remain usable through manually written cells.
+При запуске или перезапуске ядра сервис публикует обнаруженные имена магических
+команд и псевдонимы из соответствующих таблиц `[magic.alias]` для автодополнения
+команды `:J`. Например, `[sql.main]` добавляет `main` к `sql`. Скалярные настройки
+и разделы конфигурации необнаруженных команд не включаются; содержимое таблиц
+и учётные данные никогда не передаются. Псевдонимы должны быть непустыми
+одиночными токенами. Это соглашение не выбирает провайдера и не проверяет его
+закрытую конфигурацию. Семейства с другой структурой конфигурации по-прежнему
+можно использовать, записывая ячейки вручную.

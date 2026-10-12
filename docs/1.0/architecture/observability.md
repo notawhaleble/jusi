@@ -1,48 +1,52 @@
-# Kernel And Execution Observability
+# Наблюдаемость ядра и выполнения
 
-## Process Capture
+## Фиксация данных процесса
 
-The managed Jupyter adapter gives each kernel a private stderr capture file.
-Kernel startup, death, and incomplete cleanup failures preserve, when available:
+Управляемый адаптер Jupyter даёт каждому ядру закрытый файл захвата stderr.
+Сбои запуска, завершение ядра и неполная очистка сохраняют, если доступно:
 
-- kernel PID
-- exit code or signal
-- the final 16 KiB of stderr
-- an explicit truncation flag
+- PID ядра.
+- Код завершения или сигнал.
+- Последние 16 КиБ stderr.
+- Явный флаг усечения.
 
-The capture file and Jupyter channels are frontend-independent resources owned
-by the kernel adapter. They are removed and closed after normal stop and after a
-failed graceful/forced cleanup attempt. Diagnostics are materialized before the
-file is removed.
+Файл захвата и каналы Jupyter — ресурсы адаптера ядра, независимые
+от фронтенда. Они удаляются и закрываются после обычной остановки
+и неудачной попытки мягкой или принудительной очистки. Диагностика
+фиксируется до удаления файла.
 
-## Execution Context
+## Контекст выполнения
 
-Execution failures record UTF-8 payload byte count and line count, but never the
-cell body. User exceptions retain error name/value and ANSI traceback output.
-They remain `execution/execution_error` while the kernel stays `on`.
+Ошибки выполнения записывают размер нагрузки в байтах UTF-8 и число строк,
+но не тело ячейки. Пользовательские исключения сохраняют имя и значение ошибки
+и вывод трассировки ANSI. Они остаются `execution/execution_error`,
+а ядро остаётся `on`.
 
-If the kernel dies during execution, the supervisor emits a primary
-`kernel/kernel_died` failure with process diagnostics and a caused
-`execution/cancelled` failure for the owning execution. The authoritative kernel
-transition to `off` follows those failures in the ordered event chronology.
+Если ядро завершается во время выполнения, супервизор выдаёт первичную ошибку
+`kernel/kernel_died` с диагностикой процесса и вызванную ею
+`execution/cancelled` для владеющего выполнения. Авторитетный переход ядра
+в `off` следует за ними в упорядоченной хронологии событий.
 
-## Frontend Inspection
+## Проверка на фронтенде
 
-[ADR 0022](../adr/0022-session-local-failure-inspection.md) defines
-`:JusiTrace [trace-id]`. With no argument it opens the latest received failure's
-trace in a read-only scratch split. It remains usable after failed service
-startup and after the owning notebook is closed. Notifications surface missing
-configuration paths and local process exit/stderr causes directly.
+[ADR 0022](../adr/0022-session-local-failure-inspection.md) определяет
+`:JusiTrace [trace-id]`. Без аргумента команда открывает трассировку последнего
+полученного сбоя во временном окне только для чтения. Она доступна после
+неудачного запуска сервиса и после закрытия владеющего блокнота.
+Уведомления напрямую показывают отсутствующие пути конфигурации
+и причины завершения или stderr локального процесса.
 
-History contains up to 50 bounded, selectively copied failure records for the
-current Neovim session. Identical HTTP/SSE reports collapse; separate causal
-failures remain inspectable. Request/config/environment data are not captured.
-Failure producers must keep messages and stderr free of credentials.
+История содержит до 50 ограниченных, выборочно скопированных записей ошибок
+текущего сеанса Neovim. Одинаковые сообщения HTTP/SSE объединяются;
+отдельные причинные сбои доступны для проверки. Данные запросов,
+конфигурации и окружения не захватываются. Источники ошибок должны
+не допускать учётных данных в сообщениях и stderr.
 
-## Limits
+## Ограничения
 
-These mechanisms make a future reproduction of Incident 0001 actionable; they
-do not establish its cause. Parent PID and operating-system resource limits are
-not yet captured. Frontend failure history is neither a complete operation/event
-timeline nor durable backend trace storage; records not received by this editor,
-evicted records, and records from previous Neovim sessions cannot be inspected.
+Эти механизмы делают будущее воспроизведение инцидента 0001 пригодным
+для диагностики, но не устанавливают его причину. PID родителя и ограничения
+ресурсов ОС пока не фиксируются. История ошибок фронтенда — не полная
+хронология операций и событий и не долговременное хранилище трассировок
+бэкенда; нельзя проверить записи, не полученные этим редактором,
+вытесненные записи и записи предыдущих сеансов Neovim.

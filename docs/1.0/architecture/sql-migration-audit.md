@@ -1,84 +1,89 @@
-# SQL/VisiData Migration Audit
+# Аудит переноса SQL/VisiData
 
-This audit is based on the clean sibling repositories `jusi-sql` and
-`jusi-sqlite`, the archived 0.x backend, and `jusivim` behavior. Those
-repositories remain unchanged.
+Аудит основан на чистых соседних репозиториях `jusi-sql` и `jusi-sqlite`,
+архивном бэкенде 0.x и поведении `jusivim`. Эти репозитории остаются неизменными.
 
-## Preserve
+## Сохранить
 
-- `%%sql <alias>` is a family-level command. The alias resolves to one exact
-  installed provider from target-side configuration; the frontend never picks
-  `sqlite`, `postgres`, or another provider.
-- The shared SQL family and exact providers remain independently installable
-  Python distributions. They are not folded into core Jusi merely to make the
-  first test pass.
-- A successful SQL handoff creates one durable backend client and native
-  terminal surface. The worker owns its database state, query sequence,
-  transactions, datasets, and VisiData behavior until explicit close, fatal
-  worker/client failure, or notebook-runtime teardown.
-- Recoverable database/application errors are rendered by the healthy SQL
-  application, including inside a VisiData sheet when appropriate. Fatal
-  factory, worker, or terminal loss uses the core failure envelope.
-- SQL family syntax/indent hints, alias discovery, follow-up, completion, and
-  provider-specific refinement remain useful behavior. Only initial execute is
-  required for the first slice.
-- Terminal geometry is supplied by the generic terminal surface. VisiData
-  remains the terminal renderer for datasets; Neovim does not render SQL rows.
-- Catalog discovery, kernel adapter, plugin worker, and terminal application
-  must be separate import boundaries. The terminal application must not import
-  IPython merely because the kernel adapter does, and the worker must not load
-  either IPython or VisiData while establishing a client.
-- Full notebook restart reloads target configuration, rediscovers providers,
-  imports adapters in a fresh kernel, and starts no stale SQL worker.
+- `%%sql <alias>` — команда уровня семейства. Псевдоним разрешается
+  в одного конкретного установленного провайдера из конфигурации целевого
+  окружения; фронтенд никогда не выбирает `sqlite`, `postgres` или иной провайдер.
+- Общее семейство SQL и конкретные провайдеры остаются независимо
+  устанавливаемыми пакетами Python. Они не включаются в ядро Jusi
+  только ради прохождения первого теста.
+- Успешная передача управления SQL создаёт один долговременный клиент бэкенда
+  и стандартную терминальную поверхность. Рабочий процесс владеет состоянием
+  базы, последовательностью запросов, транзакциями, наборами данных
+  и поведением VisiData до явного закрытия, фатального сбоя рабочего процесса
+  или клиента либо очистки среды блокнота.
+- Восстанавливаемые ошибки базы и приложения отображаются исправным
+  SQL-приложением, при необходимости внутри листа VisiData. Фатальная
+  потеря фабрики, рабочего процесса или терминала использует конверт ошибки ядра Jusi.
+- Подсказки синтаксиса и отступов семейства SQL, обнаружение псевдонимов,
+  повторные запросы, автодополнение и уточнение провайдером остаются полезными.
+  Для первого этапа требуется только начальное выполнение.
+- Геометрия терминала предоставляется общей терминальной поверхностью.
+  VisiData остаётся отрисовкой наборов данных; Neovim не отрисовывает строки SQL.
+- Обнаружение каталога, адаптер ядра, рабочий процесс плагина
+  и терминальное приложение должны иметь отдельные границы импорта.
+  Приложение не должно импортировать IPython лишь потому, что это делает
+  адаптер ядра; рабочий процесс не должен загружать IPython или VisiData
+  при создании клиента.
+- Полный перезапуск блокнота перечитывает целевую конфигурацию,
+  заново обнаруживает провайдеры, импортирует адаптеры в новом ядре
+  и не запускает устаревший рабочий процесс SQL.
 
-## Retire
+## Исключить
 
-- 0.x handler base classes, handler snapshots, `follow-up` as a cell status,
-  prepared clients, attach/status files, and plugin-specific frontend messages.
-- Frontend loading and transmitting `~/.jusi/jusi.toml` or VisiData config.
-- `JUSI_PLUGIN_RUNTIME_CALLABLE`, JSON payloads in environment variables, and
-  the core-owned `plugin-runtime` bootstrap.
-- Core monkey-patching VisiData or interpreting SQL queries, rows, completions,
-  connection state, or provider errors.
-- Pickle/base64 handoffs used by the bundled 0.x `%%vd` path.
-- Any claim that a provider or application error changes kernel truth.
+- Базовые классы обработчиков 0.x, их снимки, `follow-up` как статус ячейки,
+  подготовленные клиенты, файлы подключения и статуса и сообщения фронтенда
+  конкретных плагинов.
+- Загрузку и передачу `~/.jusi/jusi.toml` или конфигурации VisiData фронтендом.
+- `JUSI_PLUGIN_RUNTIME_CALLABLE`, нагрузки JSON в переменных окружения
+  и принадлежащий ядру Jusi загрузчик `plugin-runtime`.
+- Подмену VisiData ядром Jusi или интерпретацию SQL-запросов, строк,
+  автодополнения, состояния соединения и ошибок провайдера ядром Jusi.
+- Передачу pickle/base64, использованную во встроенном пути `%%vd` 0.x.
+- Любое утверждение, что ошибка провайдера или приложения меняет состояние ядра.
 
-## Current 1.0 Gaps
+## Текущие пробелы 1.0
 
-- The service has no target-side configuration loader or runtime snapshot. The
-  accepted restart documents say configuration reloads, but there is currently
-  nothing to reload.
-- `jusi-sql` and `jusi-sqlite` implement the incompatible 0.x entry-point,
-  handler, kernel MIME, runtime bootstrap, and environment contracts.
-- The core environment intentionally has neither VisiData nor these provider
-  packages installed. Core should not gain mandatory SQL dependencies.
-- Core supports exact execute/handoff/client/terminal creation, but not generic
-  follow-up, completion, or interrupt HTTP operations yet.
-- The exact lifetime of VisiData startup configuration and its safe snapshot
-  transport still needs a decision after the initial query path.
+- У сервиса нет загрузчика конфигурации целевого окружения или снимка среды.
+  Принятые документы перезапуска говорят о перечитывании конфигурации,
+  но сейчас перечитывать нечего.
+- `jusi-sql` и `jusi-sqlite` реализуют несовместимые контракты 0.x
+  точек входа, обработчиков, MIME ядра, загрузки среды и окружения.
+- В основном окружении намеренно не установлены VisiData и эти пакеты
+  провайдеров. Ядро Jusi не должно получать обязательные зависимости SQL.
+- Ядро Jusi поддерживает конкретные выполнение, передачу управления,
+  создание клиента и терминала, но пока не общие операции HTTP
+  повторных запросов, автодополнения или прерывания.
+- Точное время жизни конфигурации запуска VisiData и безопасный транспорт
+  её снимков ещё требуют решения после начального пути запросов.
 
-## Proposed Migration Sequence
+## Предлагаемая последовательность переноса
 
-1. Accept or revise ADR 0019's target-side runtime configuration snapshot.
-2. Add a central 1.0 SQL/SQLite development fixture that uses the real generic
-   discovery, kernel adapter, exact worker, SQLite database, target PTY, and
-   VisiData process. It must not masquerade as an installed production plugin.
-3. Prove `%%sql main` selects SQLite from a temporary target config, renders a
-   read-only `select 1 as value` dataset in VisiData, closes only its client,
-   and leaves the kernel on.
-4. Prove invalid SQL and provider failure remain scoped correctly; prove full
-   restart reloads changed alias/provider configuration.
-5. Migrate the separate `jusi-sql` family package and `jusi-sqlite` exact
-   provider to the proven contract in their own repositories only after that
-   boundary is accepted. Do not copy their 0.x implementation into core.
-6. Add follow-up, completion, interrupt, VisiData editor actions, and additional
-   providers as later contract slices.
+1. Принять или пересмотреть снимок конфигурации целевой среды из ADR 0019.
+2. Добавить центральную фикстуру разработки SQL/SQLite 1.0, использующую
+   настоящие общие обнаружение, адаптер ядра, конкретный рабочий процесс,
+   базу SQLite, целевой PTY и процесс VisiData. Она не должна выдавать себя
+   за установленный рабочий плагин.
+3. Доказать, что `%%sql main` выбирает SQLite из временной целевой конфигурации,
+   показывает набор данных `select 1 as value` только для чтения в VisiData,
+   закрывает только свой клиент и оставляет ядро включённым.
+4. Доказать правильную область некорректного SQL и сбоя провайдера;
+   доказать перечитывание изменённых псевдонимов и провайдеров полным перезапуском.
+5. Перенести отдельный пакет семейства `jusi-sql` и конкретный провайдер
+   `jusi-sqlite` на проверенный контракт в их собственных репозиториях
+   только после принятия границы. Не копировать их реализацию 0.x в ядро Jusi.
+6. Добавить повторные запросы, автодополнение, прерывание, действия редактора
+   VisiData и дополнительных провайдеров как следующие этапы контракта.
 
-The first slice is deliberately read-only. Transaction policy and mutation
-confirmation belong to the SQL family/provider design, not the core walking
-skeleton.
+Первый этап намеренно только для чтения. Политика транзакций и подтверждение
+изменений относятся к проекту семейства или провайдера SQL,
+а не к минимальному сквозному сценарию ядра Jusi.
 
-For shared remote targets, the runtime TOML should contain only that target's
-capability/routing configuration. Provider secrets should normally be resolved
-from the target worker environment or a provider-owned secret facility rather
-than copied from the user's local machine into TOML.
+Для общих удалённых окружений TOML среды должен содержать только настройки
+возможностей и маршрутизации этого узла. Секреты провайдеров обычно следует
+получать из окружения целевого рабочего процесса или собственного хранилища
+провайдера, а не копировать с локальной машины пользователя в TOML.

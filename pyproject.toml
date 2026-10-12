@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "jusi"
 version = "1.0.5"
-description = "Jupyter-backed plain-text notebooks and interactive tools for Neovim"
+description = "Текстовые блокноты на базе Jupyter и интерактивные инструменты для Neovim"
 readme = { file = "README.pypi.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
@@ -49,9 +49,7 @@ test = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/notawhaleble/jusi"
-Repository = "https://github.com/notawhaleble/jusi"
-Issues = "https://github.com/notawhaleble/jusi/issues"
+Repository = "ssh://my-org/Python/Jusi.git"
 
 [project.scripts]
 jusi = "jusi.__main__:main"

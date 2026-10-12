@@ -1,27 +1,31 @@
-# Output Retention On New Execution
+# Сохранение вывода при новом выполнении
 
-Status: implemented
+Статус: реализовано
 
-An authoritative `execution.started` event cleans completed, unparked artifacts
-from other cells on the same kernel. Both `JusiExecute` and Enter's new-execution
-branch take this path. Rejected submissions do not trigger cleanup. Input
-replies and plugin followups do not create an execution and do not trigger it.
+Авторитетное событие `execution.started` удаляет завершённые незакреплённые
+артефакты других ячеек того же ядра. Этот путь используется и `JusiExecute`,
+и веткой нового выполнения Enter. Отклонённые отправки не запускают очистку.
+Ответы на запросы ввода и повторные запросы к плагинам не создают выполнение
+и не вызывают очистку.
 
-Candidates use the current presentation/client execution identity and observed
-controller outcome, not status-mark colors. Successful, failed, interrupted and
-cancelled outcomes are final. Any running work on the cell protects it. Live
-clients declaring followup remain by design, regardless of their initial
-execution outcome. Unknown outcomes and other kernels are preserved.
+Кандидаты определяются по текущему идентификатору выполнения представления
+или клиента и наблюдаемому результату контроллера, а не по цветам статуса.
+Успех, ошибка, прерывание и отмена — окончательные результаты. Любая текущая
+работа ячейки защищает её. Активные клиенты с поддержкой повторных запросов
+сохраняются намеренно, независимо от результата первоначального выполнения.
+Неизвестные результаты и другие ядра сохраняются.
 
-Cleanup uses full cell-artifact close, fences late output, and closes any final
-non-followup client. It does not delete cell text or change its identity/status.
+Очистка полностью закрывает артефакт ячейки, отсекает запоздавший вывод
+и закрывает завершённые клиенты без поддержки повторных запросов.
+Текст ячейки, её идентификатор и статус не меняются.
 
-`JusiPark` toggles retention of the owning cell's current output/client. Parking
-is independent of outcome. Cell-mode `S` toggles it; `~` appears beside the existing
-status symbol in the same color. Unparking
-makes the artifact eligible on the next accepted execution. Explicit close,
-opener retirement and re-executing the parked cell itself clear its retention;
-the one-artifact-per-cell invariant remains unchanged. Runtime replacement
-creates a fresh retention table and does not resurrect retained artifacts.
+`JusiPark` переключает сохранение текущего вывода или клиента владеющей ячейки.
+Закрепление не зависит от результата. `S` в режиме ячеек переключает его;
+`~` появляется рядом с существующим символом статуса в том же цвете.
+После открепления артефакт может быть удалён при следующем принятом выполнении.
+Явное закрытие, удаление открывающей границы и повторное выполнение самой
+закреплённой ячейки сбрасывают сохранение; инвариант одного артефакта на ячейку
+не меняется. Замена среды выполнения создаёт новую таблицу сохранения
+и не восстанавливает сохранённые артефакты.
 
-See [ADR 0033](../adr/0033-completed-output-retention.md).
+См. [ADR 0033](../adr/0033-completed-output-retention.md).

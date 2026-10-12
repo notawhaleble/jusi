@@ -1,21 +1,23 @@
-# Contributing
+# Участие в разработке
 
-The repository contains the Python backend, Neovim frontend, shared protocol,
-and tests. Read [AGENTS.md](AGENTS.md) and the scoped instructions before changing
-resource ownership or protocol behavior. Architecture and implementation status
-live under [docs/1.0](docs/1.0/status.md); legacy documents are historical evidence.
+Репозиторий содержит Python-бэкенд, фронтенд Neovim, общий протокол и тесты.
+Прежде чем менять владение ресурсами или поведение протокола, прочитайте
+[AGENTS.md](AGENTS.md) и инструкции соответствующего раздела. Архитектура
+описана в [docs/1.0](docs/1.0/architecture/overview.md);
+документы старых версий служат историческими материалами.
 
-## Development environment
+## Окружение для разработки
 
-With Python 3.9+ and Neovim 0.11+ available:
+Если установлены Python 3.9+ и Neovim 0.11+:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -e '.[test]'
 ```
 
-The frontend also uses curl and a POSIX shell. Run the suites from the repository
-root; integration tests need loopback HTTP and Jupyter ZeroMQ sockets:
+Фронтенд также использует curl и POSIX-совместимую оболочку. Запускайте наборы
+тестов из корня репозитория; интеграционным тестам нужны HTTP на loopback
+и сокеты Jupyter ZeroMQ:
 
 ```sh
 .venv/bin/python -m pytest -q
@@ -23,29 +25,32 @@ nvim --headless -u tests/frontend/minimal_init.lua -l tests/frontend/run.lua
 nvim --headless -u tests/frontend/minimal_init.lua -l tests/e2e/run.lua
 ```
 
-Use pytest; `python -m unittest` discovers no tests here.
+Используйте pytest; `python -m unittest` не обнаруживает здесь тестов.
 
-The Python suite includes process-death tests and takes several minutes. The
-isolated distribution test is opt-in; see [distribution verification](docs/1.0/architecture/distribution-verification.md).
-Development fixtures are test tools, not user-facing plugins.
+Набор Python-тестов включает проверки завершения процессов и занимает несколько
+минут. Изолированная проверка дистрибутива запускается отдельно; см.
+[проверку дистрибутива](docs/1.0/architecture/distribution-verification.md).
+Тестовые фикстуры — инструменты разработки, а не пользовательские плагины.
 
-To try this checkout with your regular Neovim configuration, replace the path:
+Чтобы попробовать эту рабочую копию с обычной конфигурацией Neovim,
+подставьте свой путь:
 
 ```sh
 nvim --cmd "lua dofile('/absolute/path/to/jusi/scripts/nvim-dev.lua')" example.vipynb
 ```
 
-The launcher disables legacy jusivim for this invocation and selects the
-checkout's `.venv` backend and bridge. Use `:JusiStart jusi` and `:JusiStop`.
-It does not change your permanent configuration.
+Скрипт запуска отключает старый jusivim для этого сеанса и выбирает бэкенд
+и терминальный мост из `.venv` рабочей копии. Используйте `:JusiStart jusi`
+и `:JusiStop`. Постоянная конфигурация не меняется.
 
-## Changes and releases
+## Изменения и выпуски
 
-Keep Python, Lua, schemas and fixtures in agreement when changing the protocol.
-Add focused regression coverage for failures, and update the relevant user guide
-when behavior changes. Record ownership decisions in ADRs and concrete incidents
-in incident records. Keep the status snapshot factual rather than appending a diary.
+При изменении протокола согласованно обновляйте Python, Lua, схемы и фикстуры.
+Для обнаруженных сбоев добавляйте целевые регрессионные тесты, а при изменении
+поведения обновляйте соответствующее пользовательское руководство. Решения
+о владении ресурсами записывайте в ADR, конкретные сбои — в отчёты об инцидентах.
+В документации поддерживайте актуальные факты, не превращая её в дневник.
 
-Plugin authors should use the [authoring guide](docs/1.0/skills.md) in a separate
-plugin project. Release maintainers should follow the
-[release procedure](docs/1.0/releasing.md).
+Авторам плагинов следует использовать [руководство по разработке](docs/1.0/skills.md)
+в отдельном проекте плагина. Ответственным за выпуски следует соблюдать
+[процедуру выпуска](docs/1.0/releasing.md).

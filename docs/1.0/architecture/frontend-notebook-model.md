@@ -1,62 +1,92 @@
-# Frontend Notebook Model
+# Модель блокнота на фронтенде
 
-## Boundary
+## Граница
 
-The frontend notebook model is local editor state. It has no backend, kernel, client, execution, or transport dependency. Text determines structure; the model owns runtime cell identities; extmarks only anchor model resources to changing text.
+Модель блокнота фронтенда — локальное состояние редактора. Она не зависит
+от бэкенда, ядра, клиента, выполнения или транспорта. Текст определяет
+структуру; модель владеет идентификаторами ячеек среды выполнения;
+extmark только привязывает ресурсы модели к меняющемуся тексту.
 
-## Parser
+## Парсер
 
-`lua/jusi/notebook/parser.lua` is a pure Lua state machine over exact lines. It recognizes only the accepted symbol-only delimiters and returns cells, active-body/history ranges, and local structural diagnostics.
+`lua/jusi/notebook/parser.lua` — чистый конечный автомат Lua по точным строкам.
+Он распознаёт только принятые символьные разделители и возвращает ячейки,
+диапазоны активного тела и истории и локальную диагностику структуры.
 
-Every opener is a recovery boundary. Encountering an opener while another cell is open finishes the earlier cell as invalid and begins the next cell. A malformed cell therefore cannot consume later cells.
+Каждое начало — граница восстановления. Если начало встречается внутри
+открытой ячейки, предыдущая завершается как некорректная и начинается новая.
+Поэтому повреждённая ячейка не может поглотить следующие.
 
-## Live Model
+## Текущая модель
 
-`lua/jusi/notebook/init.lua` attaches the parsed model to a Neovim buffer.
+`lua/jusi/notebook/init.lua` привязывает разобранную модель к буферу Neovim.
 
-- Cell IDs are opaque, monotonic within one notebook-model generation, and distinct from extmark IDs.
-- Structural extmarks cover delimiter text. Invalidating the opener retires its identity under the current conservative policy; damaging the closer or history preserves identity while changing text validity. Undo or later insertion cannot restore an actually retired cell identity.
-- Cells form a locally spliced linked model. Ordinary or structural edits do not rebuild or reindex an array of the whole notebook.
-- Ordered enumeration is explicit and is not used by the edit callback.
-- Active body and history text are read from current extmark-anchored ranges only when requested.
+- Идентификаторы ячеек непрозрачны, монотонны в пределах одного поколения
+  модели блокнота и отличны от идентификаторов extmark.
+- Структурные extmark покрывают текст разделителей. Потеря корректного начала
+  удаляет его идентификатор по текущей консервативной политике; повреждение
+  конца или истории сохраняет идентификатор, меняя корректность текста.
+  Отмена или последующая вставка не восстанавливают действительно удалённый
+  идентификатор ячейки.
+- Ячейки образуют связанную модель с локальной вставкой сегментов.
+  Обычные и структурные изменения не перестраивают и не переиндексируют
+  массив всего блокнота.
+- Упорядоченное перечисление выполняется явно и не используется обработчиком изменений.
+- Текст активного тела и истории читается из текущих диапазонов,
+  привязанных extmark, только по запросу.
 
-## Edit Paths
+## Пути редактирования
 
-A non-structural edit whose owning cell still has exact, live delimiter anchors:
+Неструктурное изменение, у владеющей ячейки которого остаются точные
+и активные привязки разделителей:
 
-1. resolves the nearest opener anchor
-2. validates only that cell's structural anchors
-3. increments that cell's text revision
-4. performs no parse, backend work, or whole-notebook enumeration
+1. Находит ближайшую привязку начала.
+2. Проверяет структурные привязки только этой ячейки.
+3. Увеличивает ревизию текста этой ячейки.
+4. Не выполняет разбор, работу бэкенда или перечисление всего блокнота.
 
-A structural or ambiguous edit reparses from the affected opener to the next surviving opener. The next opener is both the grammar recovery point and the reconciliation boundary. Only cells in that linked segment are retired, reused, or inserted. The old
-segment begins at the model successor of the left boundary, including cells
-whose deleted opener extmarks have disappeared; it must not begin at the first
-surviving opener inside the region (Incident 0012).
-Reconciliation is deferred beyond `on_lines` so Neovim undo finishes adjusting
-extmarks before replacement anchors are created. Public model queries flush
-pending work; `flush()` also allows explicit synchronization for measurement.
-Unclosed cells remain addressable up to the next opener or EOF, allowing focus,
-interrupt, and close while body submission is blocked.
+Структурное или неоднозначное изменение заново разбирается от затронутого
+начала до следующего сохранившегося. Следующее начало — и точка восстановления
+грамматики, и граница согласования. Только ячейки этого связанного сегмента
+удаляются, используются повторно или вставляются. Старый сегмент начинается
+с преемника левой границы в модели, включая ячейки, чьи extmark удалённых
+начал исчезли; он не должен начинаться с первого сохранившегося начала
+внутри области (инцидент 0012).
+Согласование откладывается за пределы `on_lines`, чтобы отмена Neovim успела
+скорректировать extmark до создания новых привязок. Публичные запросы модели
+завершают ожидающую работу; `flush()` также даёт явную синхронизацию для замеров.
+Незакрытые ячейки остаются адресуемыми до следующего начала или EOF,
+позволяя фокус, прерывание и закрытие при блокировке отправки тела.
 
-See [ADR 0024](../adr/0024-cell-identity-survives-invalid-closing-structure.md)
-and the [structural edit policy](cell-structural-edits.md) for guarantees and
-opener-retirement cleanup, merge/undo rules, and remaining explicit-move decisions.
+Гарантии, очистка при удалении начала, правила объединения и отмены
+и оставшиеся решения явного перемещения описаны
+в [ADR 0024](../adr/0024-cell-identity-survives-invalid-closing-structure.md)
+и [политике структурного редактирования](cell-structural-edits.md).
 
-Initial load and explicit reload are the only normal full-parse paths. Reload creates a new model generation rather than preserving runtime cell identities through unknown wholesale text replacement.
+Начальная загрузка и явная перезагрузка — единственные обычные пути полного
+разбора. Перезагрузка создаёт новое поколение модели вместо сохранения
+идентификаторов ячеек через неизвестную массовую замену текста.
 
-## Verification
+## Проверка
 
-`tests/frontend/notebook_spec.lua` covers grammar, malformed recovery, active body/history extraction, identity preservation, identity retirement, partial delimiter edits, and neighboring-cell isolation.
+`tests/frontend/notebook_spec.lua` охватывает грамматику, восстановление
+повреждённой структуры, извлечение активного тела и истории, сохранение
+и удаление идентификаторов, частичные изменения разделителей и изоляцию
+соседних ячеек.
 
-`tests/frontend/benchmark.lua` uses a 10,000-line/1,000-cell notebook and asserts the budgets in `docs/1.0/performance-budgets.md`, including a maximum structural scan of one neighboring recovery region and no full parse during edit workloads.
+`tests/frontend/benchmark.lua` использует блокнот из 10 000 строк и 1 000 ячеек
+и проверяет бюджеты `docs/1.0/performance-budgets.md`, включая ограничение
+структурного сканирования одной соседней областью восстановления
+и отсутствие полного разбора при редактировании.
 
-Retired cell IDs are delivered asynchronously to notebook-runtime orchestration,
-which shares the full close path with `JusiClose`. The model performs no backend
-work; a retired opener closes its resources under ADR 0025.
+Удалённые идентификаторы ячеек асинхронно доставляются оркестрации среды,
+использующей общий с `JusiClose` путь полного закрытия. Модель не выполняет
+работу бэкенда; удалённое начало закрывает свои ресурсы по ADR 0025.
 
-Cell editing uses the same model identities and local change notifications. A
-magic-header revision records changes independently from ordinary body edits,
-so an alias edited away and back cannot accept a stale provider attribution.
-Whole visible cells feed the isolated local language worker; its syntax spans
-are extmark projections, not structural truth. See [ADR 0030](../adr/0030-cell-local-syntax-and-indentation.md).
+Редактирование использует те же идентификаторы модели и локальные уведомления
+об изменениях. Ревизия заголовка магической команды записывает изменения
+независимо от обычного тела, чтобы изменение псевдонима и возврат обратно
+не принимали устаревшую привязку провайдера. Целые видимые ячейки передаются
+изолированному локальному языковому рабочему процессу; его диапазоны синтаксиса —
+представления extmark, а не структурный источник истины.
+См. [ADR 0030](../adr/0030-cell-local-syntax-and-indentation.md).

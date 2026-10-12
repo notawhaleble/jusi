@@ -35,7 +35,7 @@ def test_install_repeat_and_upgrade_keep_versioned_references(source, tmp_path, 
     for name in installer.NAMES:
         path = destination / name
         assert str(old) in (path / "references/source.md").read_text()
-        assert "/Users/niku" not in (path / "SKILL.md").read_text()
+        assert str(Path(__file__).resolve().parents[3]) not in (path / "SKILL.md").read_text()
         installer.managed(path, "skill")
     commit(source, "1.0.1")
     monkeypatch.setattr(installer, "distribution_version", lambda _: "1.0.1")

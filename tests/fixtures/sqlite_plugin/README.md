@@ -1,24 +1,25 @@
-# SQL/SQLite/VisiData development fixture
+# Фикстура разработки SQL/SQLite/VisiData
 
-This is a test-only 1.0 exact plugin. It proves family alias resolution and a
-real SQLite/VisiData terminal client without packaging SQL dependencies into
-core Jusi or modifying the external 0.x `jusi-sql` and `jusi-sqlite` projects.
+Это конкретный плагин 1.0 только для тестов. Он проверяет разрешение псевдонимов
+семейства и настоящий терминальный клиент SQLite/VisiData без включения
+зависимостей SQL в ядро Jusi или изменения внешних проектов 0.x `jusi-sql`
+и `jusi-sqlite`.
 
-It is discovered only when this directory is explicitly added to `PYTHONPATH`.
+Он обнаруживается только при явном добавлении этого каталога в `PYTHONPATH`.
 
-The fixture deliberately keeps four process roles in separate import modules:
+Фикстура намеренно разделяет четыре роли процессов по отдельным модулям импорта:
 
-- `jusi_sqlite_catalog`: data-only discovery metadata
-- `jusi_sqlite_kernel`: IPython adapter and `%%sql` handoff
-- `jusi_sqlite_worker`: isolated client worker and private launch payload
-- `jusi_sqlite_application`: SQLite query and VisiData terminal application
+- `jusi_sqlite_catalog`: метаданные обнаружения, содержащие только данные.
+- `jusi_sqlite_kernel`: адаптер IPython и передача управления через `%%sql`.
+- `jusi_sqlite_worker`: изолированный рабочий процесс клиента и закрытые данные запуска.
+- `jusi_sqlite_application`: запрос SQLite и терминальное приложение VisiData.
 
-Do not collapse these roles back into one import module. In particular, the
-worker and terminal application must not import IPython; fresh client startup
-is a user-visible path.
+Не объединяйте эти роли обратно в один модуль импорта. В частности,
+рабочий процесс и терминальное приложение не должны импортировать IPython;
+запуск нового клиента виден пользователю.
 
-The automated Neovim scenario creates its own database and config. For a manual
-run, create equivalents outside the repository:
+Автоматизированный сценарий Neovim создаёт собственные базу и конфигурацию.
+Для ручного запуска создайте аналогичные файлы вне репозитория:
 
 ```sh
 .venv/bin/python -c 'import sqlite3; c=sqlite3.connect("/tmp/jusi-sqlite.db"); c.execute("create table if not exists numbers(value integer)"); c.execute("delete from numbers"); c.execute("insert into numbers values (2)"); c.commit()'
@@ -26,7 +27,7 @@ printf '%s\n' '[sql.main]' 'provider = "sqlite"' 'path = "/tmp/jusi-sqlite.db"' 
 printf '%s\n' '╭──' '%%sql main' 'select value from numbers' '╰──' > /tmp/jusi-sqlite.vipynb
 ```
 
-Then launch a clean Neovim from the Jusi repository:
+Затем из репозитория Jusi запустите Neovim без пользовательской конфигурации:
 
 ```sh
 PYTHONPATH="$PWD/tests/fixtures/sqlite_plugin${PYTHONPATH:+:$PYTHONPATH}" \
@@ -36,7 +37,7 @@ PYTHONPATH="$PWD/tests/fixtures/sqlite_plugin${PYTHONPATH:+:$PYTHONPATH}" \
   /tmp/jusi-sqlite.vipynb
 ```
 
-Run `:JusiServiceStart`, `:JusiStartKernel`, and `:JusiExecute`. VisiData should
-open in a native terminal with a `value` column containing `2`. Return to the
-notebook, run `:JusiClose`, confirm the kernel remains on, then run
-`:JusiServiceStop`.
+Выполните `:JusiServiceStart`, `:JusiStartKernel` и `:JusiExecute`.
+VisiData должна открыться в стандартном терминале со столбцом `value`,
+содержащим `2`. Вернитесь в блокнот, выполните `:JusiClose`, убедитесь,
+что ядро остаётся включённым, затем выполните `:JusiServiceStop`.

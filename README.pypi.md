@@ -1,21 +1,21 @@
 # Jusi
 
-Jusi brings Jupyter kernels and interactive tools into Neovim. Edit plain-text
-notebooks, execute cells, and work with their outputs in native splits, using
-local or remote kernels.
+Jusi позволяет работать с ядрами Jupyter и интерактивными инструментами в Neovim.
+Редактируйте текстовые блокноты, выполняйте ячейки и работайте с их выводом
+в отдельных окнах Neovim, используя локальные или удалённые ядра.
 
-## Install
+## Установка
 
-Install the Python backend:
+Установите Python-бэкенд:
 
 ```sh
 pip install jusi
-# Or include VisiData:
+# Или установите вместе с VisiData:
 pip install 'jusi[vd]'
 ```
 
-Jusi requires Python 3.9+ and the matching Neovim frontend release. The frontend
-requires Neovim 0.11+, curl and a POSIX shell.
+Jusi требует Python 3.9+ и фронтенд Neovim той же версии выпуска.
+Фронтенду нужны Neovim 0.11+, curl и POSIX-совместимая оболочка.
 
-See the [Jusi project on GitHub](https://github.com/notawhaleble/jusi) for frontend
-installation, a first notebook, documentation and release notes.
+Установка фронтенда, первый блокнот, документация и история изменений
+доступны в [репозитории Jusi](ssh://my-org/Python/Jusi.git).

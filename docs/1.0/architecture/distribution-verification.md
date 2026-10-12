@@ -1,7 +1,7 @@
-# Distribution verification
+# Проверка дистрибутива
 
-This is a maintainer check for artifacts before publication. User installation
-is documented separately in the [installation guide](../installation.md).
+Это проверка артефактов сопровождающим перед публикацией. Пользовательская
+установка описана отдельно в [руководстве по установке](../installation.md).
 
 ```sh
 python -m pip install build
@@ -9,28 +9,38 @@ python -m build
 python scripts/check-distribution.py dist/jusi-1.0.0-py3-none-any.whl
 ```
 
-The build creates a source archive and builds the backend wheel from it. The
-wheel contains Python code, with no bundled Neovim frontend.
+Сборка создаёт архив исходников и собирает из него wheel бэкенда.
+Wheel содержит Python-код без встроенного фронтенда Neovim.
 
-The checker installs the wheel and declared dependencies in a fresh virtual
-environment. It separately clones the Git frontend into an isolated native
-Neovim package directory, then runs outside the development checkout with a
-fresh home. It verifies automatic package loading, filetype detection, kernel
-environment, execution/start/stop, and optional VisiData terminal/copy/open.
-Both dependency sets pass `pip check`; temporary paths include spaces. The gate
-also installs the wheel-provided authoring skills with a committed source
-reference, repeats installation, and proves user-edited skills are preserved.
+Проверяющий скрипт устанавливает wheel и объявленные зависимости в новое
+виртуальное окружение. Отдельно он клонирует фронтенд Git в изолированный
+стандартный каталог пакетов Neovim, затем запускается вне рабочей копии
+разработки с новым домашним каталогом. Проверяются автоматическая загрузка
+пакета, определение типа файла, окружение ядра, выполнение, запуск и остановка,
+а также необязательные терминал, копирование и открытие VisiData. Оба набора
+зависимостей проходят `pip check`; временные пути содержат пробелы. Проверка
+также устанавливает навыки разработки из wheel со справочной копией
+закоммиченных исходников, повторяет установку и подтверждает сохранение
+навыков, изменённых пользователем.
 
-By default the frontend clone comes from the local repository's HEAD. To verify
-an exact release source, pass `--frontend-repo URL --frontend-ref TAG`. This
-checks the intended release pair without depending on its prior publication.
-Dependency installation needs a package index or populated pip cache.
+По умолчанию фронтенд клонируется из HEAD локального репозитория. Для проверки
+конкретного выпуска передайте явные репозиторий и тег или коммит:
 
-The same opt-in gate is discovered by pytest:
+```sh
+python scripts/check-distribution.py dist/jusi-1.0.5-py3-none-any.whl \
+  --frontend-repo ssh://my-org/Python/Jusi.git --frontend-ref TAG
+```
+
+Замените `TAG` на проверенный тег выпуска или коммит.
+Это проверяет выбранную пару выпуска без зависимости от предварительной
+публикации. Для установки зависимостей нужен индекс пакетов или заполненный
+кеш pip.
+
+Та же проверка, включаемая явно, обнаруживается pytest:
 
 ```sh
 JUSI_DISTRIBUTION_WHEEL=dist/jusi-1.0.0-py3-none-any.whl python -m pytest -q tests/packaging
 ```
 
-Publishing the backend and tagging the matching frontend are separate release
-steps. These verification commands do neither.
+Публикация бэкенда и создание тега соответствующего фронтенда — отдельные
+шаги выпуска. Эти команды проверки не выполняют ни один из них.

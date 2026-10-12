@@ -1,44 +1,50 @@
-# Show a diff from a plugin application
+# Просмотр различий из приложения плагина
 
-A terminal application belonging to a Jusi client with editor_actions can call:
+Терминальное приложение клиента Jusi с возможностью `editor_actions`
+может вызвать:
 
 ```python
 from jusi.editor_client import show_diff
 
 show_diff(
-    "print('before')\n",
-    "print('after')\n",
+    "print('до')\n",
+    "print('после')\n",
     before_name="before.py",
     after_name="after.py",
     filetype="python",
 )
 ```
 
-Neovim opens a new tab with two native diff windows. Before is on the left,
-after on the right; focus moves to after. Both are read-only snapshots.
-Use ordinary window/tab navigation and :tabclose to leave the comparison.
+Neovim открывает новую вкладку с двумя стандартными окнами diff. Исходный
+вариант слева, изменённый справа; фокус переходит вправо. Оба варианта — снимки
+только для чтения. Используйте обычную навигацию по окнам и вкладкам
+и `:tabclose`, чтобы выйти из сравнения.
 
-The call returns when Neovim acknowledges display. It does not wait for review
-or report acceptance/rejection. Nothing is written back to the application or
-its files. The buffers survive closing the plugin client or stopping its kernel.
+Вызов возвращается после подтверждения показа Neovim. Он не ждёт проверки
+и не сообщает о принятии или отклонении изменений. Ничего не записывается
+обратно в приложение или его файлы. Буферы сохраняются после закрытия
+клиента плагина или остановки его ядра.
 
-Capture both values before starting background delivery when the application
-needs its UI to remain responsive. Report EditorDeliveryError inside the
-application, without automatically retrying an uncertain delivery.
+Если интерфейс приложения должен оставаться отзывчивым, зафиксируйте оба
+значения до фоновой доставки. Сообщайте об `EditorDeliveryError` внутри
+приложения, не повторяя автоматически доставку с неизвестным результатом.
 
-Names are basename hints, not paths. The common filetype is optional.
-Empty sides and identical content are supported. Transfers have no total byte
-ceiling and use the same remote-capable chunked channel as copy/open; the final
-buffers still require memory for their content.
+Имена — подсказки базовых имён файлов, а не пути. Общий тип файла необязателен.
+Пустые стороны и одинаковое содержимое поддерживаются. Передача не имеет
+общего ограничения размера в байтах и использует тот же канал передачи частями
+с поддержкой удалённых окружений, что и копирование и открытие;
+конечным буферам всё равно нужна память для содержимого.
 
-A worker handling an internal editor_action selection can instead return
-jusi.plugin_api.show_diff(...) with the same arguments. This constructs a worker
-result; it does not initiate an application-channel request.
+Рабочий процесс, обрабатывающий внутреннее выделение `editor_action`, вместо
+этого может вернуть `jusi.plugin_api.show_diff(...)` с теми же аргументами.
+Это создаёт результат рабочего процесса, а не запрос по каналу приложения.
 
-To test without another plugin, run the terminal fixture described in
-[backend-driven editor actions](backend-driven-editor-actions.md) and type
-action:diff in its terminal. It compares the fixture's selection with that text
-plus an added line.
+Для проверки без другого плагина запустите терминальную фикстуру, описанную
+в [действиях редактора по запросу бэкенда](backend-driven-editor-actions.md),
+и введите `action:diff` в её терминале. Она сравнит своё выделение с тем же
+текстом и добавленной строкой.
 
-See [ADR 0040](../adr/0040-show-diff-is-display-only.md) for the wire and lifecycle
-contract. A future accept/reject or edit-and-return feature would be separate.
+Контракт передачи и жизненного цикла описан
+в [ADR 0040](../adr/0040-show-diff-is-display-only.md).
+Будущая возможность принятия, отклонения или редактирования с возвратом
+будет отдельной функцией.

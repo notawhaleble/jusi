@@ -1,23 +1,26 @@
-# Useful commands
+# Полезные команды
 
-These optional helpers belong in your `init.lua`. They use Jusi's Lua modules;
-keep them alongside your matching frontend installation.
+Эти необязательные вспомогательные команды размещаются в `init.lua`.
+Они используют Lua-модули Jusi; держите их рядом с соответствующей
+версией установленного фронтенда.
 
-## JShell: a shell in the current directory
+## JShell: оболочка в текущем каталоге
 
-This helper opens or reuses a shell cell in a loaded notebook, using the current
-file's directory, the current netrw directory, or Neovim's working directory
-for an unnamed buffer. Without a range it submits `pwd` through Jusi's contextual
-submission path. With a visual selection or line range it submits the selected
-text as the shell body instead, preserving the cell's followup history.
+Эта команда открывает или повторно использует ячейку оболочки в загруженном
+блокноте, используя каталог текущего файла, текущий каталог netrw или рабочий
+каталог Neovim для безымянного буфера. Без диапазона она отправляет `pwd`
+через контекстную отправку Jusi. С визуальным выделением или диапазоном строк
+она отправляет выделенный текст как тело оболочки, сохраняя историю запросов
+ячейки.
 
-It requires a Jusi 1.0-compatible [jusi-shell plugin](https://github.com/notawhaleble/jusi-shell)
-installed in the target's service/kernel environment, and a started notebook
-whose discovered palette includes `shell`. The shell runs at the kernel target;
-for Docker or another remote target, the chosen directory must exist there
-(use matching mounts/paths when using this helper).
+Нужен совместимый с Jusi 1.0 плагин `jusi-shell`,
+установленный в окружении сервиса и ядра целевого узла, и запущенный блокнот,
+в обнаруженной палитре которого есть `shell`. Оболочка работает в целевом
+окружении ядра; для Docker или другого удалённого окружения выбранный каталог
+должен существовать там. При использовании этой команды согласуйте пути
+и точки монтирования.
 
-Paste the following into `init.lua`:
+Вставьте следующее в `init.lua`:
 
 ```lua
 local function jusi_shell_directory()
@@ -46,23 +49,23 @@ end
 
 local function set_jusi_magic_body(cell, body)
   if type(cell) ~= 'table' or vim.tbl_isempty(cell) then
-    return nil, 'Jusi did not resolve a shell cell'
+    return nil, 'Jusi не удалось определить ячейку оболочки'
   end
 
   local bufnr = vim.api.nvim_get_current_buf()
   local editor = require('jusi.editing').attach(bufnr)
   local snapshot = editor.model:cell_snapshot(cell)
   if not snapshot then
-    return nil, 'Jusi shell cell is no longer present'
+    return nil, 'Ячейка оболочки Jusi больше не существует'
   end
 
-  -- body_start_row is the magic-header row; preserve it and replace everything
-  -- through body_end_row, which excludes history and the closing delimiter.
+  -- body_start_row — строка заголовка магической команды; сохраните её
+  -- и замените всё до body_end_row, не включая историю и закрывающую границу.
   vim.api.nvim_buf_set_lines(bufnr, snapshot.body_start_row + 1, snapshot.body_end_row, false, { body })
   editor.model:flush()
   snapshot = editor.model:cell_snapshot(cell)
   if not snapshot then
-    return nil, 'Jusi shell cell could not be refreshed after replacing its body'
+    return nil, 'Не удалось обновить ячейку оболочки Jusi после замены её тела'
   end
   vim.api.nvim_win_set_cursor(0, { snapshot.body_start_row + 2, 0 })
   return snapshot
@@ -102,33 +105,38 @@ end, {
     local ok, aliases = pcall(require('jusi.palette').complete, arglead, command_line, #command_line)
     return ok and aliases or {}
   end,
-  desc = 'Open a Jusi shell in the current file or netrw directory',
+  desc = 'Открыть оболочку Jusi в каталоге текущего файла или netrw',
   force = true,
 })
 ```
 
-For a loaded `work.vipynb` notebook, run:
+Для загруженного блокнота `work.vipynb` выполните:
 
 ```vim
 :JShell work
 ```
 
-Notebook-name completion is available with Tab. Select shell commands in another
-buffer and use `:'<,'>JShell work`, or submit a line range with `:1,3JShell work`.
-The notebook opens in the current tab; execution reveals the shell output while
-keeping focus in the notebook. Use Jusi's focus shortcut (Ctrl-\ twice) to enter
-the terminal. See the [palette guide](usage.md#palette-and-focus) for the underlying
-`:J` / `:J!` commands.
+По Tab доступно автодополнение имён блокнотов. Выделите команды оболочки
+в другом буфере и используйте `:'<,'>JShell work` или отправьте диапазон строк
+через `:1,3JShell work`. Блокнот открывается в текущей вкладке; выполнение
+показывает вывод оболочки, сохраняя фокус в блокноте. Используйте сочетание
+переключения фокуса Jusi — Ctrl-\ дважды — для перехода в терминал.
+Базовые команды `:J` / `:J!` описаны
+в [руководстве по палитре](usage.md#palette-and-focus).
 
-## Clean up the current notebook view
+<a id="clean-up-the-current-notebook-view"></a>
 
-After a temporary JShell or other `:J` workflow, press `\Q` from the notebook
-or an output in Normal mode (including notebook cell mode). The built-in
-`:JusiCloseTab` command closes this notebook's outputs visible in the current
-tab and removes its extra notebook windows. It retains the last notebook view
-across all tabs and keeps the kernel running. No optional helper setup is needed.
+## Очистка текущих окон блокнота
 
-Clients visible in another tab remain usable there; only their windows in the
-current tab close. Hidden clients, unrelated project windows and application
-exports are preserved. If client cleanup fails, the notebook view remains so
-you can retry. Existing custom `\Q` mappings take precedence.
+После временной работы через JShell или другую команду `:J` нажмите `\Q`
+в блокноте или выводе в обычном режиме, включая режим ячеек блокнота.
+Встроенная команда `:JusiCloseTab` закрывает видимый в текущей вкладке вывод
+этого блокнота и удаляет его дополнительные окна. Она сохраняет последнее
+окно блокнота среди всех вкладок и оставляет ядро работающим.
+Дополнительная настройка вспомогательных команд не требуется.
+
+Клиенты, видимые в другой вкладке, остаются доступны там; закрываются только
+их окна текущей вкладки. Скрытые клиенты, посторонние окна проекта и экспорты
+приложений сохраняются. При ошибке очистки клиента окно блокнота остаётся
+для повторной попытки. Существующие пользовательские привязки `\Q`
+имеют приоритет.
