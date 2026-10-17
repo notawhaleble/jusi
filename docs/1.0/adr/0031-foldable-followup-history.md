@@ -37,6 +37,7 @@ start closed on first view. Native `zo`, `zc`, `za`, and related commands remain
 available. No mappings or fold/sign columns are installed.
 
 `JusiHistoryToggle` works from anywhere in the source cell.
+`JusiHistoryFoldAll` closes every history region in the current notebook window.
 `JusiHistoryApply` restores the entry at the cursor (including its leading
 separator) into the active body, preserving the current magic header and alias.
 It neither executes nor removes that entry. It closes this window's history,
@@ -66,10 +67,12 @@ it does not trigger a full fold rebuild or backend work.
 The notebook-owned editing worker renders each history entry in an isolated
 scratch buffer using the cell's current syntax and indentation profiles.
 An unfinished string or indentation block cannot leak between active body and
-history or between entries. Whole visible cells retain complete syntax context,
-including their history. Hidden history therefore still has language spans
-ready when a native fold opens. Scratch entries retire with their owning cell
-or when it leaves the visible-cell set.
+history or between entries. Visible history entries retain complete syntax context within each entry.
+Folded and offscreen entries are excluded from synchronous highlighting;
+cursor and viewport changes refresh the visible entry set. Scratch entries
+retire when hidden or with their owning cell. Cell snapshots are reused within
+one buffer changedtick so navigation and fold redraw do not repeatedly walk
+history markers. See Incident 0028.
 
 ## Verification
 

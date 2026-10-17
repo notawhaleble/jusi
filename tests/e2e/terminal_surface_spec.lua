@@ -64,6 +64,11 @@ function M.run()
       vim.api.nvim_win_get_height(record.window)
     )
     assert(terminal_text(record.buf):find(expected_geometry, 1, true), terminal_text(record.buf))
+    vim.api.nvim_win_set_height(record.window, 8)
+    local resized = string.format("resized=%dx%d",
+      vim.api.nvim_win_get_width(record.window), vim.api.nvim_win_get_height(record.window))
+    wait_for(1000, function() return terminal_text(record.buf):find(resized, 1, true) end,
+      "terminal resize did not promptly reach the target PTY")
     assert(vim.api.nvim_get_current_buf() == buf, "execution artifact stole notebook focus")
     for name, value in pairs(gutter_options) do
       assert(vim.api.nvim_get_option_value(name, { win = source_window }) == value, "terminal changed notebook gutters")

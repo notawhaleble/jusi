@@ -430,6 +430,8 @@ function Notebook:cell_snapshot(cell_or_id)
   if not cell then
     return nil
   end
+  local tick = vim.api.nvim_buf_get_changedtick(self.buf)
+  if cell.snapshot_tick == tick and cell.snapshot then return cell.snapshot end
   local open_row = mark_position(self.buf, self._open_namespace, cell.open_extmark_id)
   local rows = self:_marker_rows(cell)
   if not open_row or not rows then
@@ -451,7 +453,8 @@ function Notebook:cell_snapshot(cell_or_id)
     end
     table.insert(history_entries, { start_row = entry_start, end_row = rows.close })
   end
-  return {
+  cell.snapshot_tick = tick
+  cell.snapshot = {
     id = cell.id,
     valid = cell.valid,
     text_revision = cell.text_revision,
@@ -464,6 +467,7 @@ function Notebook:cell_snapshot(cell_or_id)
     end_row = end_row,
     open_extmark_id = cell.open_extmark_id,
   }
+  return cell.snapshot
 end
 
 function Notebook:cell_by_id(cell_id)

@@ -1,8 +1,15 @@
 # Jusi 1.0 Status
 
-Updated: 2026-10-10
+Updated: 2026-10-18
 
 ## Current Facts
+
+- History repair removes fragmented native folds per affected cell; fold text
+  stays local and falls back outside history. `JusiHistoryFoldAll` collapses
+  current-window history. Highlighting skips folded/offscreen entries and
+  snapshots are cached per changedtick. Terminal resize sends retain newer
+  pending geometry; editor exports open above their source. See
+  [Incident 0028](incidents/0028-history-folds-navigation-and-resize.md).
 
 - Core `:JusiCloseTab` / `\Q` cleans up the current notebook's visible artifacts in the current tab and closes extra notebook views while retaining the last view and running kernel. Shared clients remain usable in other tabs; hidden clients and unrelated project windows are preserved. See [ADR 0050](adr/0050-current-tab-notebook-cleanup.md) and [useful commands](useful-commands.md#clean-up-the-current-notebook-view).
 

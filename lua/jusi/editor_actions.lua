@@ -103,7 +103,7 @@ function M.apply(result, opts)
       local win = opts.win
       if win and not vim.api.nvim_win_is_valid(win) then error("source client window closed") end
       win = win or vim.api.nvim_get_current_win()
-      vim.api.nvim_open_win(buf, true, { split = "below", win = win })
+      vim.api.nvim_open_win(buf, true, { split = "above", win = win })
     end
   end)
   if not ok then

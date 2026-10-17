@@ -366,3 +366,30 @@ async def _raw_tty_round_trip() -> None:
             os.close(fd)
         os.close(output_read)
         os.close(error_read)
+
+
+def test_resize_signal_during_send_delivers_latest_geometry() -> None:
+    async def scenario() -> None:
+        geometry = [os.terminal_size((80, 24))]
+        bridge = TerminalBridge("http://localhost:1", "srf_resize",
+                                geometry=lambda: geometry[0])
+        bridge._connection = object()
+        started, release = asyncio.Event(), asyncio.Event()
+        controls = []
+
+        async def send(control):
+            controls.append(control)
+            if len(controls) == 1:
+                started.set()
+                await release.wait()
+
+        bridge._send_control = send
+        bridge._schedule_resize()
+        await asyncio.wait_for(started.wait(), 1)
+        geometry[0] = os.terminal_size((120, 40))
+        bridge._schedule_resize()
+        release.set()
+        await asyncio.wait_for(bridge._resize_task, 1)
+        assert [(item["columns"], item["rows"]) for item in controls] == [(80, 24), (120, 40)]
+
+    asyncio.run(scenario())

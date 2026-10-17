@@ -993,6 +993,7 @@ local function create_commands()
     end, { count = 1 })
   end
   vim.api.nvim_create_user_command("JusiHistoryToggle", function() require("jusi.history").command("toggle") end, {})
+  vim.api.nvim_create_user_command("JusiHistoryFoldAll", function() require("jusi.history").command("fold_all") end, {})
   vim.api.nvim_create_user_command("JusiHistoryApply", function() require("jusi.history").command("apply") end, {})
   vim.api.nvim_create_user_command("JusiTrace", function(command)
     diagnostics.open(command.args)
