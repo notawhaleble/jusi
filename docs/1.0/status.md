@@ -1,6 +1,6 @@
 # Jusi 1.0 Status
 
-Updated: 2026-10-19
+Updated: 2026-10-20
 
 ## Current Facts
 
@@ -29,10 +29,13 @@ Updated: 2026-10-19
 
 - Local history edits now repair native fold boundaries before collapse, including a missing fold; ordinary body typing keeps its local path. Explicit cell-mode toggles resync Insert state so Normal mappings, border overlays and the badge agree. See [Incident 0023](incidents/0023-history-fold-range-and-cell-mode-visual-drift.md).
 
-- **Jusi 1.0.5 is released.** [PyPI](https://pypi.org/project/jusi/1.0.5/)
-  and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.5)
-  are public. Tag `v1.0.5` identifies `cf1b08c`; GitHub assets include the
-  verified wheel, sdist and checksums.
+- **Jusi 1.0.6 is released.** [PyPI](https://pypi.org/project/jusi/1.0.6/)
+  and the [GitHub release](https://github.com/notawhaleble/jusi/releases/tag/v1.0.6)
+  are public. Tag `v1.0.6` identifies `112fda4`; GitHub assets include the
+  verified wheel, sdist and checksums. Coordinated bootstrap patches are also
+  public for `jusi-shell 0.2.3`, `jusi-acp 0.1.4`, `jusi-sql 0.2.1`,
+  `jusi-postgres 0.2.2`, `jusi-clickhouse 0.2.3` and `jusi-gigacode 0.1.2`.
+  All seven release commits are on their repositories' public `main` branches.
 
 - Busy established plugin operations no longer hold the kernel execution lane. Different clients and Python cells can run concurrently; same-client overlap receives a recoverable conflict. Initial construction remains a bounded serialized handoff. See [ADR 0047](adr/0047-plugin-work-does-not-own-the-kernel-lane.md) and [Incident 0022](incidents/0022-busy-plugin-blocked-kernel-execution.md).
 
@@ -42,16 +45,21 @@ Updated: 2026-10-19
 
 - Managed-kernel liveness now polls the owned process directly. A reproduced inherited-asyncio-loop error in Jupyter's synchronous wrapper previously reported a live kernel as dead and triggered runtime cleanup. The Codex-session report's original trigger remains unconfirmed. See [Incident 0019](incidents/0019-liveness-wrapper-falsely-reported-kernel-death.md).
 
-- Release validation passed 289 Python tests with one opt-in skip, both Neovim
-  suites, metadata/archive/checksum checks, built-wheel notebook conversion,
-  and isolated base/VisiData installation. Fresh PyPI and GitHub downloads match
-  the verified artifacts; the published wheel and public frontend tag passed
-  start/execute/stop and VisiData copy/open. A clean PyPI installation verified
-  the default `install-skills` release-tag fetch. The initial Python run raced
-  the editable version update; the full rerun passed after installation settled.
-  The first Neovim end-to-end run failed SQLite kernel startup; its full rerun
-  and isolated local/public distribution checks passed. Real remote transport-loss
-  review, independent skill evaluation, and Docker recipe execution remain deferred.
+- Release validation passed 309 core Python tests with one opt-in skip, both
+  Neovim suites, built-wheel notebook conversion and isolated base/VisiData
+  installation against local source and the public frontend tag. Shell (20),
+  SQL (21), PostgreSQL (20), ClickHouse (21) and GigaCode (13) tests passed;
+  PostgreSQL includes real-kernel bootstrap coexistence with ClickHouse. ACP
+  passed 122 tests including bootstrap, with its broader session-features UI
+  test reproducing the recorded native Neovim 0.11.4 signal-11 crash
+  ([Incident 0029](incidents/0029-acp-session-features-native-neovim-crash.md)).
+  All seven wheels install together with clean dependencies and valid catalogs;
+  public PyPI downloads and GitHub assets match the verified checksums. A fresh
+  PyPI installation verified all seven versions, kernel start/execute/stop and
+  the default `install-skills` release-tag fetch. The first core run encountered stale editable plugin metadata during version
+  updates; the full rerun passed after installation settled. Real remote
+  transport-loss review, independent skill evaluation and Docker recipe
+  execution remain deferred.
 
 - Release-facing documentation separates the README quick start, user guide, contributor setup and release procedure. The recorded GIF is embedded in the GitHub README; the source demo notebook and walkthrough are in `examples/`, and the recorded MP4 is attached to the GitHub release.
 
@@ -149,7 +157,7 @@ Updated: 2026-10-19
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - A real-kernel text reliability scenario proves pre-response SSE delivery, ordered ANSI stdout/stderr/result media, ANSI traceback preservation, survival after an ordinary execution error, and successful execution of a generated roughly quarter-megabyte markdown-like body. It does not reproduce or explain Incident 0001.
 - The same scenario proves a 40 KiB Unicode/ANSI output is split into byte-bounded SSE records and reconstructs exactly; frontend coverage deliberately splits an ANSI escape sequence across writes and lets Neovim consume it.
-- The SQL/VisiData migration audit preserves family alias routing, provider-owned VisiData/database behavior, durable clients, and generic terminal presentation while retiring 0.x handler/runtime/frontend-config machinery. The clean `jusi-sql` and `jusi-sqlite` repositories remain untouched and still target the incompatible 0.x contract.
+- The SQL/VisiData migration audit preserves family alias routing, provider-owned VisiData/database behavior, durable clients, and generic terminal presentation while retiring 0.x handler/runtime/frontend-config machinery. The external `jusi-sql` family and PostgreSQL/ClickHouse providers now target the 1.0 contract; `jusi-sqlite` remains a separate legacy migration.
 - ADR 0019 is accepted with the shared-host qualification: runtime configuration is target-side and should contain only capabilities/routing relevant to that target; providers should normally resolve credentials from their worker environment or another target-side secret mechanism.
 - `jusi serve` now snapshots bounded data-only TOML from target-side `~/.jusi/jusi.toml` on every kernel start/restart, with `--config PATH` for an explicit target file. Missing defaults are empty; missing explicit files and malformed/oversized/unsupported data fail the runtime operation without stopping the service, discovery, or spawning a kernel. Configuration values remain absent from public state and diagnostics; the palette publishes only discovered alias names.
 - Kernel adapters may receive that private frozen snapshot through `configure_jusi_runtime_v1` before their IPython extension loads and readiness attests. A real-kernel test verifies delivery; restart and redaction tests verify fresh generations without exposing values.
@@ -178,12 +186,12 @@ Deferred:
 
 - remote supervisors and `checking`
 - dead-bridge replacement policy and multiple terminal observers
-- plugin interrupt, rich media, and durable event storage
+- durable web clients and durable event storage
 
 ## Next Boundary
 
 Collect feedback on 1.0 and handle concrete regressions in follow-up releases.
 Real remote connection-loss review remains deferred until a remote target is
 available. Independent `%%todo` skill evaluation is deferred at the user's
-request. Legacy Jusi notebook migration is out of scope; external plugin and
-SQL-family migrations remain separate work.
+request. Legacy Jusi notebook migration is out of scope; remaining external provider
+migrations remain separate work.
