@@ -1,8 +1,12 @@
 # Jusi 1.0 Status
 
-Updated: 2026-10-18
+Updated: 2026-10-19
 
 ## Current Facts
+
+- Optional `JusiWebBuffer` presentation now supports bounded Jupyter HTML/SVG/image/JavaScript MIME bundles with plain-text fallback, cell-owned cleanup, and generic HTTP(S) `open_url` editor actions. Rich output reuses the cell’s visible output window, and the statusline composes with host browser indicators; see [Incident 0030](incidents/0030-web-output-splits-and-statusline.md). Durable web-only clients and reverse proxying remain deferred. See [ADR 0052](adr/0052-web-buffer-output-and-url-actions.md) and [usage](architecture/web-presentation.md).
+
+- Plugins can opt into explicit client initialization through `:JusiBootstrap` or empty-cell execution. Drafts and history are preserved; matching clients are reused and changed headers conflict. ACP opts in without sending an agent prompt. Shell opts in without sending a command; PostgreSQL and ClickHouse use the shared SQL bootstrap payload to warm metadata without a dummy query. See [ADR 0051](adr/0051-explicit-plugin-bootstrap.md). Dedicated ACP bootstrap validation passes; broader ACP session-features validation hits the native Neovim crash recorded in [Incident 0029](incidents/0029-acp-session-features-native-neovim-crash.md).
 
 - History repair removes fragmented native folds per affected cell; fold text
   stays local and falls back outside history. `JusiHistoryFoldAll` collapses
@@ -96,7 +100,7 @@ Updated: 2026-10-18
 
 - Cell status now uses opener-anchored extmarks with symbols after the opener and matching opener/closer colors, with purple busy *, green done ✓, red error ✗, orange interrupted !, blue followup >, and yellow never-executed delimiters. RGB and 256-color terminal palettes are provided. No sign or status columns are used. Execution/input, client lifecycle and exact followup operations drive the projection; ordinary typing only moves existing extmarks. See [ADR 0028](adr/0028-cell-status-is-an-inline-extmark-projection.md).
 
-- The foundation review is accepted; ADRs 0001-0016 and 0018-0042 are active. ADR 0017 and all web-surface implementation are explicitly deferred while the product direction—including web-as-text—is still exploratory.
+- The foundation review is accepted; ADRs 0001-0016 and 0018-0042 are active. ADR 0017’s durable web-surface reverse proxy remains deferred; finite rich snapshots and URL actions are implemented in ADR 0052.
 - `JusiTrace [trace-id]` inspects the latest or selected received failure, including bounded stderr, process status, configuration paths, and resource identities. ADR 0022 retains 50 selectively copied records independently of notebook/service lifetime; failed CLI startup is covered through the public command path. This is session-local history, not durable backend tracing.
 - The 0.x Python package, bundled `jusi_vd`, legacy tests, and stale smoke script have been removed from the active tree. Their exact provenance remains under `docs/legacy/0.x/` and Git history.
 - The Python package contains framework-independent domain/application layers, a managed Jupyter adapter, and a thin Tornado HTTP/SSE service.
@@ -140,7 +144,7 @@ Updated: 2026-10-18
 - `JusiInterrupt` targets the exact active execution through a control path that does not wait behind execute. Active execution identity survives authoritative health resynchronization; successful interruption completes it as `interrupted`, keeps the kernel on, and permits subsequent execution. Plugin-specific interrupt remains distinct from close and will preserve a usable durable session when the generic concurrent client-operation path lands.
 - Unexpected target terminal-process death emits a typed `client/run_terminal_surface/channel_closed` core failure with process diagnostics, retires only the owning surface/client/worker, and leaves kernel truth unchanged.
 - A test-only `terminal_fixture` exact plugin now proves the complete Neovim path through fresh discovery, kernel attestation/handoff, worker isolation, target PTY, WebSocket bridge, first-draw geometry, opaque input/output, explicit client close, and kernel survival. It is outside production packaging and is discovered only through an explicit test `PYTHONPATH`.
-- Backend-only terminal plugins expose generic terminal surfaces. SQL/VisiData, shell, and terminal text remain plugin-owned; frontend core manages native surfaces and generic input/geometry. Web surfaces remain a conceptual later family only. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
+- Backend-only terminal plugins expose generic terminal surfaces. SQL/VisiData, shell, and terminal text remain plugin-owned; frontend core manages native surfaces and generic input/geometry. Durable web surfaces remain a later family; finite web snapshots and URL actions are implemented in ADR 0052. Recoverable application errors stay in plugin presentation, while fatal worker/client/surface loss always uses the typed core failure channel.
 - The 1.0 development environment is `.venv`; legacy `venv2` imports Jusi 0.1.1 from the detached `/Users/niku/Documents/dev/jusi-0.x` worktree.
 - The headless-Neovim black-box scenario starts the real service and kernel, executes `1 + 1` from a model cell, receives the ordered `text/plain` result event, and stops the kernel without loading an interactive UI.
 - A real-kernel text reliability scenario proves pre-response SSE delivery, ordered ANSI stdout/stderr/result media, ANSI traceback preservation, survival after an ordinary execution error, and successful execution of a generated roughly quarter-megabyte markdown-like body. It does not reproduce or explain Incident 0001.

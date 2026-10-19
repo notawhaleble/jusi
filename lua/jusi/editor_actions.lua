@@ -66,6 +66,11 @@ function M.apply(result, opts)
   opts = opts or {}
   local valid, err = protocol.validate_editor_action(result, result and result.action)
   if not valid then return nil, err end
+  if result.action == "open_url" then
+    local ok, surface = pcall(require("jusi.presentation.web").open, result.url, { win = opts.win, enter = true })
+    if not ok then return nil, tostring(surface) end
+    return surface.buf
+  end
   if result.action == "show_diff" then return show_diff(result, opts) end
   if opts.source_path and result.action == "copy" then
     local file = assert(io.open(opts.source_path, "rb"))

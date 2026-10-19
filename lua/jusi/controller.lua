@@ -512,7 +512,20 @@ function Controller:restart_notebook(next_notebook_id, callback)
   end)
 end
 
-function Controller:execute(cell_id, callback)
+function Controller:empty_plugin_cell(cell_id)
+  local body = self.notebook:body(cell_id)
+  if not body then return false end
+  local magic = (body[1] or ""):match("^%s*%%%%([%a][%w_-]*)")
+  if not magic or table.concat(body, "\n", 2):match("%S") then return false end
+  for _, plugin in ipairs((self.plugin_catalog or {}).plugins or {}) do
+    for _, family in ipairs(plugin.families) do
+      if family.magic_name == magic then return true end
+    end
+  end
+  return false
+end
+
+function Controller:execute(cell_id, callback, bootstrap)
   local body, body_error = self.notebook:body(cell_id)
   if not body then
     if callback then
@@ -544,14 +557,25 @@ function Controller:execute(cell_id, callback)
     end
     return nil
   end
+  if bootstrap == nil then bootstrap = self:empty_plugin_cell(cell_id) end
+  self.bootstrap_pending = self.bootstrap_pending or {}
+  if bootstrap and self.bootstrap_pending[cell_id] then
+    if callback then callback(nil, { trace_id = "", layer = "frontend_model", operation = "execute",
+      reason = "conflict", message = "cell initialization is already pending", retryable = true,
+      scope = "cell", resource = { kind = "cell", id = cell_id } }) end
+    return nil
+  end
   local command = self:_command("execute", {
     kernel_id = self.kernel_id,
     notebook_id = self.notebook.notebook_id,
     cell_id = cell_id,
-    code = table.concat(body, "\n"),
+    code = bootstrap and (body[1] or "") or table.concat(body, "\n"),
+    bootstrap = bootstrap or nil,
   })
+  if bootstrap then self.bootstrap_pending[cell_id] = command.trace_id end
   if self.on_submission then self.on_submission(command, cell_id) end
   return self:_request("POST", "/v1/kernels/" .. self.kernel_id .. "/executions", command, function(response, failure)
+    if self.bootstrap_pending[cell_id] == command.trace_id then self.bootstrap_pending[cell_id] = nil end
     if self.on_submission_result then self.on_submission_result(command, response, failure) end
     if callback then callback(response, failure) end
   end)

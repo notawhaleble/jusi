@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import threading
 import uuid
 from contextlib import contextmanager
@@ -81,6 +82,7 @@ class Supervisor:
         self._current_configuration: dict[str, Any] | None = None
         self._known_runtime_ids: set[str] = set()
         self._clients: dict[str, ClientResource] = {}
+        self._client_headers: dict[str, tuple[str, str]] = {}
         self._known_client_ids: set[str] = set()
         self._closing_clients: set[str] = set()
         self._surfaces: dict[str, SurfaceResource] = {}
@@ -413,6 +415,7 @@ class Supervisor:
         cell_id: str,
         code: str,
         trace_id: str,
+        bootstrap: bool = False,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         control_timeout = 10.0 if timeout is None else timeout
@@ -434,6 +437,37 @@ class Supervisor:
                     scope="request",
                     resource=ResourceRef("kernel", kernel_id),
                 )
+
+            first_line, _, content = code.partition("\n")
+            match = re.fullmatch(r"[ \t]*%%([A-Za-z][A-Za-z0-9_-]*)(?:[ \t]+(.*))?", first_line.rstrip("\r"))
+            header = (match[1], match[2] or "") if match else None
+            runtime = self._current_runtime
+            families = [family for plugin in (runtime.plugin_catalog["plugins"] if runtime else [])
+                        for family in plugin["families"] if header and family["magic_name"] == header[0]]
+            if families and not content.strip() and all("bootstrap" in family["capabilities"] for family in families):
+                bootstrap = True
+            if bootstrap:
+                if not families or any("bootstrap" not in family["capabilities"] for family in families):
+                    raise self._request_failure(
+                        status_code=409, trace_id=trace_id, layer="supervisor", operation="execute",
+                        reason="unsupported", message="Cell plugin does not support bootstrap",
+                        retryable=False, scope="cell", resource=ResourceRef("cell", cell_id),
+                    )
+                with self._state_lock:
+                    clients = [client for client in self._clients.values()
+                               if client.kernel_id == kernel_id and client.cell_id == cell_id]
+                    if clients:
+                        client = clients[0]
+                        if (len(clients) != 1 or client.client_id in self._closing_clients
+                                or self._client_headers.get(client.client_id) != header):
+                            raise self._request_failure(
+                                status_code=409, trace_id=trace_id, layer="supervisor", operation="execute",
+                                reason="conflict", message="Cell already has a different or closing client; close it first",
+                                retryable=False, scope="cell", resource=ResourceRef("cell", cell_id),
+                            )
+                        operation = self._begin_operation("execute", trace_id, resource=ResourceRef("client", client.client_id))
+                        self._complete_operation(operation, "succeeded", resource=ResourceRef("client", client.client_id))
+                        return {"operation": operation.to_dict(), "client": client.to_dict()}
 
             operation = self._begin_operation("execute", trace_id, resource=ResourceRef("kernel", kernel_id))
             execution = ExecutionResource(
@@ -467,6 +501,7 @@ class Supervisor:
                             "output_kind": output.output_kind,
                             "media_type": output.media_type,
                             "data": output.data,
+                            **({"bundle_id": output.bundle_id, "bundle_end": output.bundle_end} if output.bundle_id else {}),
                         },
                     )
 
@@ -490,7 +525,15 @@ class Supervisor:
                             payload=dict(self._pending_input),
                         )
 
-                result = handle.execute(code, timeout=timeout, on_output=publish_output, on_input=publish_input)
+                if bootstrap:
+                    result = handle.bootstrap(*header, timeout=control_timeout, on_output=publish_output, on_input=publish_input)
+                else:
+                    result = handle.execute(code, timeout=timeout, on_output=publish_output, on_input=publish_input)
+                if bootstrap and result.outcome == "succeeded" and (
+                    len(result.handoffs) != 1 or result.handoffs[0].magic_name != header[0]
+                ):
+                    raise KernelAdapterError("Bootstrap did not produce the requested plugin handoff",
+                                             layer="execution", reason="protocol_violation", retryable=False)
             except KernelAdapterError as exc:
                 with self._state_lock:
                     self._active_kernel_execution = None
@@ -885,6 +928,8 @@ class Supervisor:
                         raise SupervisorError(503, failure) from exc
                 with self._state_lock:
                     self._clients[client_id] = client
+                    if header is not None:
+                        self._client_headers[client_id] = header
                     self._known_client_ids.add(client_id)
                     if surface is not None:
                         self._surfaces[surface.surface_id] = surface
@@ -2162,6 +2207,7 @@ class Supervisor:
             self._editor_action_broker.close_client(client_id)
         with self._state_lock:
             client = self._clients.pop(client_id, None)
+            self._client_headers.pop(client_id, None)
             surfaces = [surface for surface in self._surfaces.values() if surface.client_id == client_id]
             for surface in surfaces:
                 self._surfaces.pop(surface.surface_id, None)

@@ -129,7 +129,7 @@ local function bind_cell_lifecycle(session)
   local presentation, interactive = session.presentation, session.interactive
   interactive.editor_id = controller.editor_id
   local function capture_destination(action)
-    if action.action ~= "open" then return nil end
+    if action.action ~= "open" and action.action ~= "open_url" then return nil end
     local current = vim.api.nvim_get_current_win()
     local windows = require("jusi.presentation.window")
     for surface_id, record in pairs(interactive.surfaces) do
@@ -142,7 +142,7 @@ local function bind_cell_lifecycle(session)
   end
   local delivery = require("jusi.editor_delivery").new(controller, function(content, action, source_path, destination)
     local win
-    if content.action == "open" then
+    if content.action == "open" or content.action == "open_url" then
       if not destination then return nil end
       local record = interactive.surfaces[destination.surface_id]
       win = destination.win
@@ -496,6 +496,18 @@ function M.execute(buf, row, callback)
     end
     execute_cell()
   end)
+end
+
+function M.bootstrap(buf, row, callback)
+  local context_buf = buf or vim.api.nvim_get_current_buf()
+  local session = require_session(context_buf)
+  if not session then return end
+  local cell = cell_from_context(session, context_buf, row)
+  if not cell then notify("cursor is not inside a cell", vim.log.levels.ERROR); return end
+  return session.controller:execute(cell.id, function(response, failure)
+    if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
+    if callback then callback(response, failure) end
+  end, true)
 end
 
 -- Context selects an existing operation; input and followups keep their identities.
@@ -1015,6 +1027,7 @@ local function create_commands()
   vim.api.nvim_create_user_command("JusiRestart", function()
     M.restart()
   end, {})
+  vim.api.nvim_create_user_command("JusiBootstrap", function() M.bootstrap() end, {})
   vim.api.nvim_create_user_command("JusiExecute", function()
     M.execute()
   end, {})

@@ -1,0 +1,5 @@
+{
+  "action": "open_url",
+  "url": "https://example.com/plot?q=a%20b&x=1",
+  "text": ""
+}

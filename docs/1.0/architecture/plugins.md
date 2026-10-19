@@ -193,3 +193,12 @@ Terminal applications can declare the `attention` capability to publish durable
 requests for user activity or completion notices independently of busy worker
 operations. See [client attention](client-attention.md) for the Python helpers,
 frontend controls, ownership and cleanup contract.
+
+## Explicit initialization
+
+Families may declare `bootstrap` and install `__jusi_bootstrap_v1__(arguments)`
+on their registered cell-magic callable. The hook emits the ordinary exact
+handoff without consuming a cell body. The initial worker `execute` receives the
+provider's private initialization payload and creates its normal durable client.
+See [ADR 0051](../adr/0051-explicit-plugin-bootstrap.md) for HTTP semantics,
+idempotence, failure containment and the empty-magic boundary.

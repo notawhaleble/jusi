@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.6 — 2026-10-20
+
+- Add explicit plugin bootstrap with `:JusiBootstrap` and empty-cell execution, preserving drafts and history and reusing matching clients.
+- Add optional bounded rich web output and HTTP(S) URL actions with plain-text fallback and cell-owned cleanup.
+- Fix history folding, navigation performance, terminal resize/presentation, output splits and statusline composition.
+
 ## 1.0.5 — 2026-10-10
 
 - Add client-owned attention requests and completion notices, with statusline

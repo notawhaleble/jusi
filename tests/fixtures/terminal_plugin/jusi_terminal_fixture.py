@@ -28,7 +28,7 @@ def catalog_entry() -> dict:
         "families": [{
             "family_id": "terminal_fixture",
             "magic_name": "terminal_fixture",
-            "capabilities": ["execute", "followup", "complete", "interrupt", "editor_actions", "attention"],
+            "capabilities": ["execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention"],
         }],
         "kernel_extensions": ["jusi_terminal_fixture"],
         "worker_entry_point": "jusi_terminal_fixture:create_worker",
@@ -57,6 +57,7 @@ def load_ipython_extension(ipython) -> None:  # type: ignore[no-untyped-def]
             "payload": {"line": line, "body": cell},
         }}, raw=True)
 
+    fixture_magic.__jusi_bootstrap_v1__ = lambda line: fixture_magic(line, "")
     ipython.register_magic_function(fixture_magic, "cell", "terminal_fixture")
 
 

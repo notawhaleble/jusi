@@ -59,6 +59,11 @@ def copy(text: str, *, linewise: bool = False) -> dict[str, str]:
     return deliver({"action": "copy", "text": text, "regtype": "V" if linewise else "v"})
 
 
+def open_url(url: str) -> dict[str, str]:
+    """Open a browser-reachable HTTP(S) URL in the owning editor."""
+    return deliver({"action": "open_url", "text": "", "url": url})
+
+
 def open_text(text: str, *, name: str = "selection.txt", filetype: str = "") -> dict[str, str]:
     return deliver({"action": "open", "text": text, "name": name, "filetype": filetype})
 

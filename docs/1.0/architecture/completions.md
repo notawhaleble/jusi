@@ -37,3 +37,8 @@ cell/client/handler identity and line snapshots.
 These are use-case evidence, not a wire contract to copy. In particular, inspect
 range preview, cancellation, stale response handling, word-vs-WORD and suffix
 regressions before choosing the 1.0 payload.
+
+Plugin clients can be initialized before submitting content through
+`:JusiBootstrap` or empty-cell execution when the family advertises `bootstrap`.
+See [ADR 0051](../adr/0051-explicit-plugin-bootstrap.md). Completion itself still
+never creates resources; provider metadata can arrive asynchronously afterward.

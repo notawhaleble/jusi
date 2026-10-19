@@ -174,6 +174,7 @@ cell delimiters and use:
 :JusiConnect
 :JusiStartKernel
 :JusiExecute
+:JusiBootstrap
 :JusiInterrupt
 :JusiInput
 :JusiFollowup
@@ -283,3 +284,22 @@ never approves an action. The default tabline keeps the owning tab amber for
 questions/approvals or blue for notices, with a pending count, until resolved.
 New items notify without stealing focus; an unfocused
 terminal gets a configurable best-effort bell. See [attention settings](architecture/client-attention.md).
+
+### Initialize a plugin before writing its first request
+
+For a plugin supporting bootstrap, execute a cell containing only its magic
+header (for example `%%acp work`), or run `:JusiBootstrap` with the cursor in a
+populated cell. Bootstrap creates its client without submitting the body or
+adding a history entry. Your draft stays intact. Tab can then use that client's
+completion capability; agent-provided suggestions may arrive asynchronously.
+
+Repeated bootstrap reuses the same client. If you changed its magic or arguments,
+close the old client with `:JusiClose` before initializing the new target.
+Unsupported plugins report an error; regular Python cells use normal execution.
+
+## Rich output and web links
+
+Clients providing `JusiWebBuffer` render HTML, SVG and image outputs in cell-owned
+web buffers. Plain Neovim keeps text fallback. Plugins can deliver HTTP(S) links
+with `jusi.editor_client.open_url`. See [web presentation](architecture/web-presentation.md)
+for examples, cleanup behavior and remote-target limits.

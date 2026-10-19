@@ -215,6 +215,8 @@ function History:accept(id, body)
   end
 end
 function History:submit(command, id)
+  if command.bootstrap then return end
+  if command.kind == 'execute' and (command.code or ''):match('^%s*%%%%[%a][%w_-]*[^\n]*\n?%s*$') then return end
   if command.kind == 'execute' and not (command.code or ''):match('^%s*%%%%[%a][%w_-]*') then return end
   self.pending[command.trace_id] = { id = id, body = command.code or command.body, kind = command.kind }
 end

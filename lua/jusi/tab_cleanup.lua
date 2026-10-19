@@ -32,6 +32,11 @@ function M.close(session, options)
   for id, surface in pairs(session.presentation and session.presentation.surfaces or {}) do
     if not surface.closed then capture(surface.buf, id) end
   end
+  for id, surfaces in pairs(session.presentation and session.presentation.web_surfaces or {}) do
+    for _, surface in ipairs(surfaces) do
+      if not surface.closed then capture(surface.buf, id) end
+    end
+  end
   for _, surface in pairs(session.interactive and session.interactive.surfaces or {}) do
     if not surface.closed then capture(surface.buf, surface.client.cell_id) end
   end

@@ -93,6 +93,11 @@ def copy_text(text: str, *, linewise: bool = False) -> WorkerResult:
     return _editor_result({"action": "copy", "text": text, "regtype": "V" if linewise else "v"}, "copy")
 
 
+def open_url(url: str) -> WorkerResult:
+    """Open a browser-reachable HTTP(S) URL in the owning editor."""
+    return _editor_result({"action": "open_url", "text": "", "url": url}, "open_url")
+
+
 def open_text(text: str, *, name: str = "export.txt", filetype: str = "") -> WorkerResult:
     return _editor_result({"action": "open", "text": text, "name": name, "filetype": filetype}, "open")
 

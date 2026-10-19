@@ -112,3 +112,16 @@ when the user has included those migrations in scope. Run the family and provide
 Core changes require explicit task scope and core repository instructions. Keep
 fixtures explicit about what they prove; do not infer compatibility from one
 provider or treat legacy details as invariants.
+
+## Explicit client bootstrap
+
+A family may advertise `bootstrap` when every claiming provider supports creating
+its client without submitting application content. Attach a callable
+`__jusi_bootstrap_v1__(arguments)` to the registered cell-magic function. Resolve
+the alias at the target and emit the normal exact-provider handoff, using a
+provider-owned initialization payload for the ordinary worker `execute` handler.
+Do not fabricate a query, shell command or agent prompt. `:JusiBootstrap` preserves
+a populated draft; executing an empty plugin cell reaches the same hook. Repeats
+reuse a matching live client; changed headers require explicit close. Completion
+still never creates a client. Metadata may arrive after initialization. See
+ADR 0051 and `tests/fixtures/terminal_plugin/jusi_terminal_fixture.py`.
