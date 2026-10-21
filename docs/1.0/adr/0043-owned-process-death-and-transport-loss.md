@@ -48,8 +48,8 @@ discarded HTTP response from leaving a helper waiting forever after reconnect.
 
 ## Verification and limits
 
-See [the reliability matrix](../architecture/lifecycle-reliability.md) and
-[Incident 0017](../incidents/0017-process-death-cleanup.md). These probes cover
+See [the reliability matrix](docs/1.0/architecture/lifecycle-reliability.md) and
+[Incident 0017](docs/1.0/incidents/0017-process-death-cleanup.md). These probes cover
 managed Jupyter and the terminal fixture on the development POSIX host. They do
 not establish cleanup of arbitrary user-spawned daemons that detach from owned
 groups, host power loss, or recovery into a new editor session. No heartbeat

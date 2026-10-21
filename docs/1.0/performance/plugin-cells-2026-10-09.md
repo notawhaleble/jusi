@@ -122,5 +122,5 @@ fixtures explicitly through PYTHONPATH. The output directory contains
 `frontend.json` and, for instrumented runs, `service.jsonl` with nested spans.
 The harness cleans up its owned service, kernel, clients and temporary home.
 
-[Recorded stage summaries and individual timing samples](plugin-cells-2026-10-09.json)
+[Recorded stage summaries and individual timing samples](docs/1.0/performance/plugin-cells-2026-10-09.json)
 include the primary, control, fixture and shutdown diagnostic runs.

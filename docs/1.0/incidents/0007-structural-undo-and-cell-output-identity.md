@@ -41,4 +41,4 @@ its output and active resources remained orphaned. ADR 0025 resolves that gap:
 retired opener identities now trigger deferred full close, including exact
 interrupt and client cleanup; undo creates fresh C. Real-kernel and terminal
 fixtures verify cleanup and surviving A ownership in both activity orderings.
-See the [structural edit policy](../architecture/cell-structural-edits.md).
+See the [structural edit policy](docs/1.0/architecture/cell-structural-edits.md).

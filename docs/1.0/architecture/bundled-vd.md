@@ -47,7 +47,7 @@ Python, и таблиц pandas DataFrame/Series. Столбцы и значен�
 Снимки передаются через закрытые артефакты целевого окружения; содержимое
 копирования и открытия передаётся в Neovim частями. Данные всё равно требуют
 памяти в VisiData и целевом буфере или регистре. Проверка глубины структуры
-сохраняется. См. [ADR 0039](../adr/0039-user-data-is-not-a-control-frame.md).
+сохраняется. См. [ADR 0039](docs/1.0/adr/0039-user-data-is-not-a-control-frame.md).
 
 Пользовательская конфигурация и плагины VisiData загружаются в процессе
 приложения целевого окружения. Затем интеграция устанавливает обработчики
@@ -66,8 +66,8 @@ Python, и таблиц pandas DataFrame/Series. Столбцы и значен�
 `vd.run(*sheets)`. Функция настраивает локаль, каталоги, конфигурацию и плагины,
 а также интеграцию копирования и открытия Jusi; содержимое листов и поведение
 сеанса остаются ответственностью плагина.
-См. [ADR 0046](../adr/0046-shared-visidata-application-startup.md).
+См. [ADR 0046](docs/1.0/adr/0046-shared-visidata-application-startup.md).
 
-См. [ADR 0037](../adr/0037-bundled-visidata-provider.md),
-[ADR 0036](../adr/0036-application-driven-editor-actions.md)
-и [инцидент 0014](../incidents/0014-embedded-visidata-startup-and-editor-actions.md).
+См. [ADR 0037](docs/1.0/adr/0037-bundled-visidata-provider.md),
+[ADR 0036](docs/1.0/adr/0036-application-driven-editor-actions.md)
+и [инцидент 0014](docs/1.0/incidents/0014-embedded-visidata-startup-and-editor-actions.md).

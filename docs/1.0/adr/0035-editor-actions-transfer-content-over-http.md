@@ -1,7 +1,7 @@
 # ADR 0035: Editor Actions Transfer Content Over HTTP
 
 Total data-size limits described below are superseded by
-[ADR 0039](0039-user-data-is-not-a-control-frame.md).
+[ADR 0039](docs/1.0/adr/0039-user-data-is-not-a-control-frame.md).
 
 - Status: accepted
 - Date: 2026-09-09
@@ -74,5 +74,5 @@ after source close. Tests use loopback HTTP with a separate kernel/worker; a
 remote-machine deployment test remains part of remote workflow verification.
 
 Application-driven delivery is now implemented by
-[ADR 0036](0036-application-driven-editor-actions.md); it extends this content
+[ADR 0036](docs/1.0/adr/0036-application-driven-editor-actions.md); it extends this content
 contract with recipient binding, an application channel and acknowledgments.

@@ -26,12 +26,12 @@ SSE, this accounted for a remaining variable executor-shutdown tail.
 
 ## Resolution
 
-[ADR 0048](../adr/0048-owned-waits-wake-on-transport-close.md) adds explicit
+[ADR 0048](docs/1.0/adr/0048-owned-waits-wake-on-transport-close.md) adds explicit
 transport-owned wakeups to the listener, SSE condition and terminal attachment
 queue. Cleanup still completes and reaps resources before authoritative client
 retirement. Regression tests use long idle waits and explicit handshakes to
 prove cancellation, including cancellation before wait entry and independent
 live readers.
 
-The [before/after profile](../performance/plugin-cells-optimization-2026-10-09.md)
+The [before/after profile](docs/1.0/performance/plugin-cells-optimization-2026-10-09.md)
 records the resulting user-visible timings and remaining startup costs.

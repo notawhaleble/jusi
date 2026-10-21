@@ -1,7 +1,7 @@
 # ADR 0037: Bundled VisiData Uses the Plugin Boundary
 
 Total data-size limits described below are superseded by
-[ADR 0039](0039-user-data-is-not-a-control-frame.md).
+[ADR 0039](docs/1.0/adr/0039-user-data-is-not-a-control-frame.md).
 
 - Status: accepted
 - Date: 2026-09-09

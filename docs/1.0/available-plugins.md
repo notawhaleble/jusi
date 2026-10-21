@@ -20,7 +20,7 @@ pip install jusi-shell
 поддерживается автодополнение путей. Например, `%%shell bash` выбирает Bash,
 а `%%shell --cwd /path/to/project` задаёт рабочий каталог.
 Для открытия оболочки из другого буфера можно использовать
-[команду JShell](useful-commands.md).
+[команду JShell](docs/1.0/useful-commands.md).
 
 ## PostgreSQL
 

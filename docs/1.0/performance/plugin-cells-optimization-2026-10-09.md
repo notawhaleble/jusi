@@ -1,6 +1,6 @@
 # Plugin Lifecycle Optimization — 2026-10-09
 
-The [original profile](plugin-cells-2026-10-09.md) is preserved as the baseline.
+The [original profile](docs/1.0/performance/plugin-cells-2026-10-09.md) is preserved as the baseline.
 This pass removes avoidable idle waits and unnecessary fresh-process imports.
 
 ## Results
@@ -69,8 +69,8 @@ controlled before/after percentages.
    configuration. Interactive WebSocket output enables TCP_NODELAY; no separate
    wall-clock speedup is attributed to that socket option.
 
-[ADR 0048](../adr/0048-owned-waits-wake-on-transport-close.md) records the cleanup
-ownership rules; [Incident 0027](../incidents/0027-idle-waits-delayed-plugin-cleanup.md)
+[ADR 0048](docs/1.0/adr/0048-owned-waits-wake-on-transport-close.md) records the cleanup
+ownership rules; [Incident 0027](docs/1.0/incidents/0027-idle-waits-delayed-plugin-cleanup.md)
 records the blocking-wait failure. Resource identities, worker isolation,
 first-attachment geometry, full cleanup and existing wire contracts are retained.
 
@@ -91,7 +91,7 @@ plugins, external provider initialization and real remote links can add cost.
 The profiling harness and commands are documented in the original profile.
 For a normal-service comparison, set `JUSI_PROFILE_INSTRUMENT=0`; use a new output
 directory for every run and keep benchmark runs sequential. The
-[recorded optimized samples](plugin-cells-optimized-2026-10-09.json) contain all
+[recorded optimized samples](docs/1.0/performance/plugin-cells-optimized-2026-10-09.json) contain all
 final per-stage samples and environment metadata.
 
 Regression coverage tests cancellation before and during waits, independent

@@ -37,5 +37,5 @@ Unicode, пробельные символы, пустые ячейки и за�
 
 Это преобразование исходного текста, а не архивирование блокнота без потерь.
 Jupyter nbformat 3 и старые блокноты Jusi с разделителями `##` не поддерживаются.
-См. [формат Jusi](notebook-format.md) и
+См. [формат Jusi](docs/1.0/notebook-format.md) и
 [спецификацию формата Jupyter](https://nbformat.readthedocs.io/en/latest/format_description.html).

@@ -22,5 +22,5 @@ User installation instructions describe the release workflow. Preview artifact
 builds and unpublished-version verification belong in maintainer documentation.
 The initial bundled-frontend approach was withdrawn following product review.
 
-See [installation](../installation.md) and
-[verification](../architecture/distribution-verification.md).
+See [installation](docs/1.0/installation.md) and
+[verification](docs/1.0/architecture/distribution-verification.md).

@@ -5,7 +5,7 @@
 
 ## Context
 
-The [plugin timing profile](../performance/plugin-cells-2026-10-09.md) found
+The [plugin timing profile](docs/1.0/performance/plugin-cells-2026-10-09.md) found
 that client retirement waited about 160 ms for a 200 ms editor-action listener
 timeout. Whole-service exit waited about one second for an SSE executor thread.
 Cancelling an asyncio task that awaits `to_thread` does not stop the underlying

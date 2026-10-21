@@ -80,7 +80,7 @@ Bootstrap использует существующий последовател
 - Соседний `jusi-acp/tests/fixtures/bootstrap.lua`: реальное приложение ACP,
   автодополнение до первого запроса агенту, сохранение черновика и повторное
   использование клиента. Сбой более широкого теста возможностей сеанса описан
-  в [инциденте 0029](../incidents/0029-acp-session-features-native-neovim-crash.md).
+  в [инциденте 0029](docs/1.0/incidents/0029-acp-session-features-native-neovim-crash.md).
 
 ## Поддержка в Shell и SQL
 

@@ -13,7 +13,7 @@ unrelated Python executions wait for a plugin followup to return.
 
 ## Correction
 
-[ADR 0047](../adr/0047-plugin-work-does-not-own-the-kernel-lane.md) separates
+[ADR 0047](docs/1.0/adr/0047-plugin-work-does-not-own-the-kernel-lane.md) separates
 established-client work from kernel serialization and admits at most one active
 operation per client. Existing close fences and exact interrupts are retained.
 Regression coverage exercises all three established-client operation kinds and

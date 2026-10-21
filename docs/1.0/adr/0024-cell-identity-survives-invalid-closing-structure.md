@@ -32,7 +32,7 @@ invariant for retired identities.
 ADR 0025 resolves opener damage and merges: a damaged opener retires the cell
 and fully closes its resources. The surviving opener retains its identity;
 undo creates a fresh identity for restored text. See the
-[structural edit policy](../architecture/cell-structural-edits.md).
+[structural edit policy](docs/1.0/architecture/cell-structural-edits.md).
 
 ## Verification
 

@@ -6,8 +6,8 @@
 или истории меняет корректность, не удаляя идентификатор. Повреждение начала
 удаляет ячейку и полностью закрывает её ресурсы без диалогов подтверждения.
 Отмена восстанавливает текст, а не удалённые ресурсы.
-См. [ADR 0024](../adr/0024-cell-identity-survives-invalid-closing-structure.md)
-и [ADR 0025](../adr/0025-opener-retirement-closes-cell-resources.md).
+См. [ADR 0024](docs/1.0/adr/0024-cell-identity-survives-invalid-closing-structure.md)
+и [ADR 0025](docs/1.0/adr/0025-opener-retirement-closes-cell-resources.md).
 
 | Изменение | Политика идентификаторов и ресурсов |
 | --- | --- |

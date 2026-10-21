@@ -19,7 +19,7 @@ without kernel-channel observations. Plain curl had no independent owner signal.
 
 ## Resolution
 
-[ADR 0043](../adr/0043-owned-process-death-and-transport-loss.md) defines explicit
+[ADR 0043](docs/1.0/adr/0043-owned-process-death-and-transport-loss.md) defines explicit
 owner pipes for the local service and HTTP helpers, bounded escalation during
 teardown, worker owner-loss cleanup, and kernel observation during idle or plugin
 work. SSE keepalive loss now also detects a silent blackhole without claiming
@@ -27,6 +27,6 @@ kernel death or limiting user execution time.
 
 ## Regression coverage
 
-The [lifecycle matrix](../architecture/lifecycle-reliability.md) covers these
+The [lifecycle matrix](docs/1.0/architecture/lifecycle-reliability.md) covers these
 failures with real owned processes, both normal exit and SIGKILL, external-target
 survival, fresh kernel execution after death, and reconnect without resubmission.

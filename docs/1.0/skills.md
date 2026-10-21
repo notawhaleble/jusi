@@ -93,7 +93,7 @@ jusi install-skills --source /path/to/jusi --directory /tmp/jusi-agent/skills
 `tests/backend/integration/test_skill_installation.py` проверяет загрузку тега
 выпуска, повторное использование без сети, обновления, пользовательские правки,
 несовпадение версий, откат замены и параллельные изменения во время загрузки.
-[Проверка дистрибутива](architecture/distribution-verification.md) также
+[Проверка дистрибутива](docs/1.0/architecture/distribution-verification.md) также
 устанавливает упакованные навыки в изолированный каталог и проверяет повторную
 установку и защиту изменений через CLI из wheel.
 
