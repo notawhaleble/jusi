@@ -56,7 +56,8 @@
             "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128},
             "notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
             "cell_id": {"type": "string", "minLength": 1, "maxLength": 128},
-            "code": {"type": "string"}
+            "code": {"type": "string"},
+            "bootstrap": {"type": "boolean", "description": "Initialize the declared plugin using only its magic header; never submit cell content."}
           },
           "unevaluatedProperties": false
         }
@@ -260,7 +261,8 @@
           "enum": [
             "copy",
             "open",
-            "show_diff"
+            "show_diff",
+            "open_url"
           ]
         },
         "selection": {

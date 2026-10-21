@@ -28,7 +28,7 @@ Wheel содержит Python-код без встроенного фронте�
 
 ```sh
 python scripts/check-distribution.py dist/jusi-1.0.5-py3-none-any.whl \
-  --frontend-repo ssh://my-org/Python/Jusi.git --frontend-ref TAG
+  --frontend-repo ssh://fixmerepo/Python/Jusi.git --frontend-ref TAG
 ```
 
 Замените `TAG` на проверенный тег выпуска или коммит.

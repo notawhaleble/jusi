@@ -55,7 +55,8 @@
           "enum": [
             "copy",
             "open",
-            "show_diff"
+            "show_diff",
+            "open_url"
           ]
         }
       },
@@ -255,6 +256,10 @@
               }
             }
           }
+        },
+        {
+          "if": {"properties": {"action": {"properties": {"action": {"const": "open_url"}}}}},
+          "then": {"properties": {"content": {"properties": {"action": {"const": "open_url"}}}}}
         }
       ],
       "dependentRequired": {

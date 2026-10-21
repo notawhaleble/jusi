@@ -16,7 +16,7 @@ except ModuleNotFoundError:
     import tomli as tomllib
 
 NAMES = ("jusi-plugin-development", "jusi-plugin-family-development")
-REPOSITORY = "ssh://my-org/Python/Jusi.git"
+REPOSITORY = "ssh://fixmerepo/Python/Jusi.git"
 MANIFEST = ".jusi-install.json"
 
 
@@ -78,7 +78,7 @@ def templates():
 
 def install_skills(*, directory=None, source=None):
     version = distribution_version("jusi")
-    destination = Path(directory).expanduser() if directory else Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "skills"
+    destination = Path(directory).expanduser() if directory else Path.home() / ".gigacode" / "skills"
     destination = destination.resolve()
     destination.mkdir(parents=True, exist_ok=True)
     lock = destination / ".jusi-install.lock"
@@ -126,7 +126,7 @@ def install_skills(*, directory=None, source=None):
                 raise SkillInstallationError("Reference source has no readable Jusi project version") from exc
             if actual != version:
                 raise SkillInstallationError(f"Reference is Jusi {actual}, installed backend is {version}")
-            for required in ("AGENTS.md", "src/jusi/plugin_api.py", "protocol/schema/v1/plugin-catalog.schema.json", "docs/1.0/invariants.md"):
+            for required in ("AGENTS.md", "src/jusi/plugin_api.py", "protocol/schema/v1/plugin-catalog.schema.json", "docs/1.0/architecture/plugins.md"):
                 if not (clone / required).is_file():
                     raise SkillInstallationError(f"Reference source is missing {required}")
             commit = git("rev-parse", "HEAD", cwd=clone)

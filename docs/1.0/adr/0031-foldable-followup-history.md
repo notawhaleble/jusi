@@ -1,81 +1,89 @@
-# ADR 0031: Foldable Followup History
+# ADR 0031: Сворачиваемая история повторных запросов
 
-Status: accepted
+Статус: принято
 
-## Decision
+## Решение
 
-History is durable notebook text in the existing `╞══` / `├┄┄` suffix,
-newest first. Only followup-capable plugin submissions are captured:
+История хранится как текст блокнота в существующем суффиксе `╞══` / `├┄┄`,
+новые записи первыми. Сохраняются только отправки плагинам с `followup`:
 
-- Initial execution is captured when exact client creation declares `followup`.
-- Followups are captured on successful delivery or a worker-level failure after
-  client selection. Supervisor/protocol rejection adds nothing.
-- Capture uses the exact frontend submission snapshot, omits an initial magic
-  header, preserves whitespace and empty replies, and moves exact duplicates to
-  the front. Repeating the newest entry does not modify the buffer.
-- Kernel input replies and ordinary kernel executions are never captured.
+- Начальное выполнение сохраняется, если создаваемый конкретный клиент
+  объявляет `followup`.
+- Повторные запросы сохраняются при успешной доставке или ошибке рабочего
+  процесса после выбора клиента. Отказ супервизора или протокола ничего не добавляет.
+- Используется точный снимок отправки фронтенда без начального заголовка magic,
+  с сохранением пробелов и пустых ответов. Точный дубликат переносится в начало.
+  Повторение самой новой записи не меняет буфер.
+- Ответы ввода ядра и обычные выполнения ядра не сохраняются.
 
-HTTP and SSE share trace-correlated pending snapshots, so their ordering cannot
-capture a submission twice. These snapshots belong to the current frontend
-model; they are not an audit log or reconstructable backend history. Transport
-uncertainty waits for evidence rather than inventing acceptance. Initial
-handoff capture requires observing its client-created event. A retired opener
-cannot receive late history. Accepted snapshots awaiting structural repair are
-kept locally until repair or model retirement; no uncertain ranges are rewritten.
+HTTP и SSE используют общие ожидающие снимки, связанные trace ID, поэтому
+порядок доставки не может записать отправку дважды. Снимки принадлежат текущей
+модели фронтенда; это не журнал аудита и не восстанавливаемая история бэкенда.
+Неопределённость транспорта требует свидетельств принятия. Начальная передача
+сохраняется после события создания клиента. Удалённая открывающая граница
+не получает позднюю историю. Принятые снимки, ожидающие исправления структуры,
+хранятся локально до исправления или удаления модели; сомнительные диапазоны
+не переписываются.
 
-The literal-reserved-delimiter limitation of the notebook grammar remains in
-force. No new escaping or notebook format is introduced.
+Ограничение грамматики на буквальные зарезервированные разделители сохраняется.
+Нового экранирования или формата блокнота нет.
 
-## Folding And Commands
+## Свёртки и команды
 
-One native manual fold covers the history boundary through the final entry,
-excluding the cell closer. Fold text is `history: N entries`, with blank fold
-fill, window-local `Folded:Normal` background inheritance, and the muted `JusiHistoryFold` foreground (RGB and 256-color terminal
-defaults, reapplied after colorscheme changes). Expanded history retains its literal `╞══` boundary. The previous window
-fillchars setting is restored along with other folding options. History folds
-start closed on first view. Native `zo`, `zc`, `za`, and related commands remain
-available. No mappings or fold/sign columns are installed.
+Одна стандартная ручная свёртка охватывает границу истории и последнюю запись,
+исключая закрывающую границу ячейки. Текст свёртки — `history: N entries`,
+заполнение пустое, фон наследуется через локальный для окна `Folded:Normal`,
+а приглушённый цвет текста — через `JusiHistoryFold` с настройками RGB
+и 256 цветов, восстанавливаемыми после смены темы. Раскрытая история сохраняет
+буквальную границу `╞══`. Прежние fillchars и параметры свёрток восстанавливаются.
+При первом просмотре история свёрнута. Стандартные `zo`, `zc`, `za` доступны;
+новые привязки и колонки свёрток или знаков не устанавливаются.
 
-`JusiHistoryToggle` works from anywhere in the source cell.
-`JusiHistoryApply` restores the entry at the cursor (including its leading
-separator) into the active body, preserving the current magic header and alias.
-It neither executes nor removes that entry. It closes this window's history,
-focuses the restored body, and is one undoable text replacement. Contextual
-submission/navigation bindings remain deferred to cell mode.
+`JusiHistoryToggle` работает из любого места исходной ячейки.
+`JusiHistoryFoldAll` сворачивает всю историю в текущем окне блокнота.
+`JusiHistoryApply` восстанавливает запись под курсором с её начальным
+разделителем в активное тело, сохраняя текущий заголовок magic и псевдоним.
+Команда не выполняет и не удаляет запись, сворачивает историю этого окна,
+переносит фокус в восстановленное тело и составляет одну отменяемую замену
+текста. Контекстная отправка и навигация относятся к режиму ячеек.
 
-Fold state is independent per window. Ordinary edits, history capture, buffer
-switches and immediate frontend-model replacement preserve an existing view's
-choice. Runtime cell identity is not reconstructed from saved fold state.
-Damaged history structure is unfolded locally; repaired structure can fold
-again. Fold extmarks anchor presentation ranges only. Opener retirement uses
-existing full cell cleanup and drops that cell's folds and pending snapshots.
+Состояние свёрток независимо для каждого окна. Обычные правки, запись истории,
+переключение буфера и непосредственная замена модели фронтенда сохраняют выбор
+существующего представления. Идентичность ячейки среды не восстанавливается
+из сохранённой свёртки. Повреждённая история раскрывается локально;
+после исправления она снова сворачивается. Extmarks свёрток привязывают только
+диапазоны представления. Удаление открывающей границы выполняет обычную полную
+очистку ячейки и удаляет её свёртки и ожидающие снимки.
 
-Folding, restoration and language rendering work offline. Attaching a notebook
-sets window-local manual folding options and restores previous options when
-leaving the notebook. Jusi owns the generated history folds, not a parallel
-syntax-fold hierarchy.
+Свёртки, восстановление и языковое отображение работают без сервиса.
+Подключение блокнота задаёт локальные параметры ручных свёрток окна;
+при выходе прежние параметры восстанавливаются. Jusi владеет создаваемыми
+свёртками истории, а не параллельной иерархией синтаксических свёрток.
 
-## Locality And Language Context
+## Локальность и языковой контекст
 
-Initial window attachment enumerates cells. Later structural notifications
-update only affected/retired cell folds. Local edits inside history also update
-only that cell's fold, because native manual folds may retain their old end
-when text is inserted. Body typing leaves native folds to follow their text;
-it does not trigger a full fold rebuild or backend work.
+Начальное подключение окна перечисляет ячейки. Последующие структурные
+уведомления обновляют только затронутые или удалённые свёртки. Локальные правки
+истории также обновляют только эту ячейку: ручные свёртки могут сохранять
+старый конец после вставки текста. Ввод в теле позволяет стандартным свёрткам
+следовать тексту и не запускает полное перестроение или работу бэкенда.
 
-The notebook-owned editing worker renders each history entry in an isolated
-scratch buffer using the cell's current syntax and indentation profiles.
-An unfinished string or indentation block cannot leak between active body and
-history or between entries. Whole visible cells retain complete syntax context,
-including their history. Hidden history therefore still has language spans
-ready when a native fold opens. Scratch entries retire with their owning cell
-or when it leaves the visible-cell set.
+Рабочий процесс редактирования блокнота отображает каждую запись в изолированном
+временном буфере с текущими профилями синтаксиса и отступов ячейки.
+Незавершённая строка или блок отступов не проникает между телом и историей
+или соседними записями. Видимые записи сохраняют полный контекст внутри записи.
+Свёрнутые и находящиеся за экраном записи исключены из синхронной подсветки;
+курсор и область просмотра обновляют набор видимых записей. Временные записи
+удаляются при скрытии или вместе с ячейкой. Снимки ячейки повторно используются
+в пределах одного changedtick, чтобы навигация и перерисовка не обходили
+маркеры повторно. См. [инцидент 0028](../incidents/0028-history-folds-navigation-and-resize.md).
 
-## Verification
+## Проверка
 
-`tests/frontend/history_spec.lua` covers window-independent native folds,
-range boundaries, deduplication, Unicode and empty submissions, restore/undo,
-structural damage/repair, deferred accepted submissions, opener retirement,
-HTTP/SSE ordering, capability gating, buffer/model replacement, and isolated
-history syntax/indentation. `tests/e2e/terminal_surface_spec.lua` verifies initial
-handoff and followup capture through a real plugin worker and service.
+`tests/frontend/history_spec.lua` проверяет независимые свёртки окон, границы,
+дедупликацию, Unicode и пустые отправки, восстановление и отмену, повреждение
+и исправление структуры, отложенные принятые отправки, удаление открывающей
+границы, порядок HTTP/SSE, проверку возможностей, замену буфера и модели,
+изоляцию синтаксиса и отступов истории. `tests/e2e/terminal_surface_spec.lua`
+проверяет сохранение начальной передачи и повторных запросов через реальные
+рабочий процесс плагина и сервис.

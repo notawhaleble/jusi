@@ -14,9 +14,16 @@ Jusi поставляется с двумя навыками для разраб
 jusi install-skills
 ```
 
-Команда устанавливает оба навыка в `$CODEX_HOME/skills` или `~/.codex/skills`,
-если `CODEX_HOME` не задан. Она загружает соответствующий тег
-`v<installed-version>` из репозитория `ssh://my-org/Python/Jusi.git` и сохраняет справочную
+Команда устанавливает оба навыка в `~/.gigacode/skills/` для GigaCode
+и совместимых с Qwen агентов. Каждый навык занимает отдельный каталог:
+
+```text
+~/.gigacode/skills/jusi-plugin-development/SKILL.md
+~/.gigacode/skills/jusi-plugin-family-development/SKILL.md
+```
+
+Она загружает соответствующий тег
+`v<installed-version>` из репозитория `ssh://fixmerepo/Python/Jusi.git` и сохраняет справочную
 копию исходного кода в соседнем каталоге `jusi-references`.
 В `references/source.md` навыков записываются её абсолютный путь, версия пакета
 и коммит Git. Уже имеющаяся рабочая копия ядра Jusi не требуется. Python-пакет

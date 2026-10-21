@@ -44,6 +44,12 @@ function M.run()
     vim.api.nvim_buf_delete(staged, { force = true })
     os.remove(path)
   end
+  local source_win = vim.api.nvim_get_current_win()
+  local opened = assert(actions.apply({ action = "open", text = "top", name = "top.txt", filetype = "text" }))
+  assert(vim.api.nvim_win_get_position(0)[1] < vim.api.nvim_win_get_position(source_win)[1],
+    "open export did not use the top split")
+  vim.api.nvim_win_close(0, true)
+  vim.api.nvim_buf_delete(opened, { force = true })
   local disposable = assert(actions.apply(
     { action = "open", text = "temporary", name = "disposable.txt", filetype = "text" }, { show = false }))
   local win = vim.api.nvim_open_win(disposable, true, { split = "below", win = vim.api.nvim_get_current_win() })

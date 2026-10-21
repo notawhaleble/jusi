@@ -88,6 +88,7 @@ class TerminalBridge:
         self._write_lock: asyncio.Lock | None = None
         self._last_cursor = 0
         self._resize_task: asyncio.Task[None] | None = None
+        self._resize_requested = False
         self._pending_resizes: dict[str, tuple[int, int]] = {}
         self._reconnect_min_delay = reconnect_min_delay
         self._reconnect_max_delay = reconnect_max_delay
@@ -187,6 +188,8 @@ class TerminalBridge:
             })
             await self._wait_attached(size)
             self._attachment_succeeded = True
+            if self._read_geometry() != size:
+                self._schedule_resize()
             if announce_reconnected:
                 self._write_diagnostic("[Jusi terminal transport reconnected]")
         except BaseException:
@@ -236,9 +239,15 @@ class TerminalBridge:
     def _schedule_resize(self) -> None:
         if self._connection is None:
             return
+        self._resize_requested = True
         if self._resize_task is not None and not self._resize_task.done():
             return
-        self._resize_task = asyncio.create_task(self.send_resize())
+        self._resize_task = asyncio.create_task(self._flush_resizes())
+
+    async def _flush_resizes(self) -> None:
+        while self._resize_requested:
+            self._resize_requested = False
+            await self.send_resize()
 
     def _read_geometry(self) -> os.terminal_size:
         try:

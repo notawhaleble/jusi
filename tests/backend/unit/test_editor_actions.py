@@ -19,10 +19,11 @@ def setup(timeout=1):
 CONTENT = {"action": "copy", "text": "  α\tβ\n", "regtype": "v"}
 
 
-def test_exact_recipient_ack_replay_and_reconnect():
+@pytest.mark.parametrize("content", [CONTENT, {"action": "open_url", "text": "", "url": "https://example.com/page"}])
+def test_exact_recipient_ack_replay_and_reconnect(content):
     manager, notices = setup()
     with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(manager.submit, "cli_one", CONTENT)
+        future = pool.submit(manager.submit, "cli_one", content)
         action = notices.get(timeout=1)
         assert "text" not in str(action) and manager.pending() == [action]
         with pytest.raises(EditorActionError):
@@ -31,12 +32,12 @@ def test_exact_recipient_ack_replay_and_reconnect():
             manager.acknowledge(action["action_id"], "editor_other", "delivered")
         manager.disconnect("editor_one", "connection_one")
         with pytest.raises(EditorActionError):
-            manager.submit("cli_one", CONTENT)
+            manager.submit("cli_one", content)
         manager.connect("editor_one", "connection_new")
         # A late close from the old SSE connection cannot disconnect its successor.
         manager.disconnect("editor_one", "connection_one")
         fetched = manager.fetch(action["action_id"], "editor_one")
-        assert fetched["content"] == CONTENT and not future.done()
+        assert fetched["content"] == content and not future.done()
         ack = manager.acknowledge(action["action_id"], "editor_one", "delivered")
         assert future.result(timeout=1) == ack
         assert manager.acknowledge(action["action_id"], "editor_one", "delivered") == ack

@@ -78,6 +78,7 @@
                   "items": {
                     "enum": [
                       "execute",
+                      "bootstrap",
                       "followup",
                       "complete",
                       "interrupt",

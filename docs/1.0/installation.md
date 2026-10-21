@@ -29,7 +29,7 @@ pip install 'jusi[vd]'
 в менеджере плагинов или стандартный каталог пакетов Neovim:
 
 ```sh
-git clone ssh://my-org/Python/Jusi.git \
+git clone ssh://fixmerepo/Python/Jusi.git \
   "${XDG_DATA_HOME:-$HOME/.local/share}/nvim/site/pack/jusi/start/jusi"
 ```
 
@@ -42,7 +42,7 @@ git clone ssh://my-org/Python/Jusi.git \
 
 ```lua
 {
-  url = "ssh://my-org/Python/Jusi.git",
+  url = "ssh://fixmerepo/Python/Jusi.git",
 }
 ```
 
@@ -59,7 +59,7 @@ git clone ssh://my-org/Python/Jusi.git \
 
 ```sh
 python3 -m venv "$HOME/.venvs/jusi"
-"$HOME/.venvs/jusi/bin/python" -m pip install 'jusi[vd]==1.0.5'
+"$HOME/.venvs/jusi/bin/python" -m pip install 'jusi[vd]==1.0.6'
 "$HOME/.venvs/jusi/bin/python" -m ipykernel install --sys-prefix --name python3
 ```
 
@@ -71,7 +71,7 @@ Neovim использовать его без активации и без из�
 
 ```dockerfile
 FROM python:3.12-slim
-RUN python -m pip install --no-cache-dir 'jusi[vd]==1.0.5' \
+RUN python -m pip install --no-cache-dir 'jusi[vd]==1.0.6' \
     && python -m ipykernel install --sys-prefix --name python3
 WORKDIR /work
 CMD ["jusi", "serve", "--host", "0.0.0.0", "--port", "8765"]
@@ -81,8 +81,8 @@ CMD ["jusi", "serve", "--host", "0.0.0.0", "--port", "8765"]
 на loopback-интерфейсе хоста:
 
 ```sh
-docker build -t jusi-kernel:1.0.5 .
-docker run --rm --name jusi-kernel -p 127.0.0.1:9000:8765 jusi-kernel:1.0.5
+docker build -t jusi-kernel:1.0.6 .
+docker run --rm --name jusi-kernel -p 127.0.0.1:9000:8765 jusi-kernel:1.0.6
 ```
 
 Оставьте эту команду работающей, пока используете целевое окружение Docker.

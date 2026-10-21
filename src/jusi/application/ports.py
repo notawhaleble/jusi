@@ -12,6 +12,8 @@ class KernelOutput:
     output_kind: str
     media_type: str
     data: str
+    bundle_id: str | None = None
+    bundle_end: bool = False
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,12 @@ class KernelHandle(Protocol):
         code: str,
         *,
         timeout: float | None,
+        on_output: Callable[[KernelOutput], None],
+        on_input: Callable[[str, str, bool], None] | None = None,
+    ) -> KernelExecutionResult: ...
+
+    def bootstrap(
+        self, magic_name: str, arguments: str, *, timeout: float | None,
         on_output: Callable[[KernelOutput], None],
         on_input: Callable[[str, str, bool], None] | None = None,
     ) -> KernelExecutionResult: ...

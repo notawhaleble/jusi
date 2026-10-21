@@ -98,7 +98,7 @@ def _validate_client(client: object, context: str = "client") -> dict[str, Any]:
         context,
     )
     capabilities = client["capabilities"]
-    allowed_capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions", "attention"}
+    allowed_capabilities = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention"}
     if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) or any(
         capability not in allowed_capabilities for capability in capabilities
     ):
@@ -223,7 +223,12 @@ def _validate_event_payload(data: dict[str, Any]) -> None:
             raise ProtocolValidationError("input event resource mismatch")
     elif kind == "execution.output":
         fields = {"execution_id", "client_id", "output_kind", "media_type", "data"}
-        _exact_fields(payload, fields, set(), "payload")
+        _exact_fields(payload, fields, {"bundle_id", "bundle_end"}, "payload")
+        if payload["media_type"] == "application/vnd.jusi.mime-bundle.v1+json":
+            if not _bounded_string(payload.get("bundle_id"), 1, 128) or type(payload.get("bundle_end")) is not bool:
+                raise ProtocolValidationError("Invalid MIME bundle boundary")
+        elif "bundle_id" in payload or "bundle_end" in payload:
+            raise ProtocolValidationError("Bundle boundary requires MIME bundle media")
         _required_strings(payload, ("execution_id", "media_type"), "payload")
         if payload["client_id"] is not None and not _bounded_string(payload["client_id"], 3, 128):
             raise ProtocolValidationError("execution output client identity is invalid")
@@ -374,6 +379,10 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
     if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key):
         raise ProtocolValidationError("idempotency_key must be a non-empty string when provided")
     allowed = {"protocol_version", "command_id", "trace_id", "kind", "idempotency_key", *COMMAND_FIELDS[expected_kind]}
+    if expected_kind == "execute":
+        allowed.add("bootstrap")
+        if "bootstrap" in data and not isinstance(data["bootstrap"], bool):
+            raise ProtocolValidationError("bootstrap must be a boolean")
     if expected_kind == "dismiss_attention":
         allowed.add("revision")
     if expected_kind == "complete":
@@ -387,8 +396,8 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
         raise ProtocolValidationError("Invalid attention revision")
     if expected_kind == "editor_action":
         allowed.add("selection")
-        if data["action"] not in {"copy", "open", "show_diff"} or not isinstance(data.get("selection"), dict):
-            raise ProtocolValidationError("editor_action requires copy/open/show_diff and an object selection")
+        if data["action"] not in {"copy", "open", "show_diff", "open_url"} or not isinstance(data.get("selection"), dict):
+            raise ProtocolValidationError("editor_action requires copy/open/show_diff/open_url and an object selection")
     if expected_kind == "ack_editor_action" and data["outcome"] not in {"delivered", "failed"}:
         raise ProtocolValidationError("Editor acknowledgment outcome is invalid")
     unknown = sorted(set(data) - allowed)
@@ -573,7 +582,7 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
     if not isinstance(data["plugins"], list):
         raise ProtocolValidationError("plugins must be an array")
     plugin_ids: set[str] = set()
-    capabilities = {"execute", "followup", "complete", "interrupt", "editor_actions", "attention"}
+    capabilities = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention"}
     interactions = {"noninteractive", "request_response", "terminal_interactive"}
     fields = {"plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"}
     family_by_id: dict[str, tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
@@ -804,9 +813,11 @@ def validate_completion(result: object, cursor_pos: int) -> dict[str, Any]:
 
 def validate_editor_action(result: object, action: str) -> dict[str, Any]:
     """Content is transferred, never a target-side filesystem path or command."""
-    if not isinstance(result, dict) or result.get("action") != action or action not in {"copy", "open", "show_diff"}:
+    if not isinstance(result, dict) or result.get("action") != action or action not in {"copy", "open", "show_diff", "open_url"}:
         raise ProtocolValidationError("Editor action does not match the requested action")
     fields = {"action", "text", "regtype"} if action == "copy" else {"action", "text", "name", "filetype"}
+    if action == "open_url":
+        fields = {"action", "text", "url"}
     if action == "show_diff":
         fields = {"action", "text", "before_bytes", "before_name", "after_name", "filetype"}
     if set(result) != fields:
@@ -814,6 +825,11 @@ def validate_editor_action(result: object, action: str) -> dict[str, Any]:
     text = result["text"]
     if not isinstance(text, str) or "\x00" in text:
         raise ProtocolValidationError("Editor text must be UTF-8 without NUL")
+    if action == "open_url":
+        url = result["url"]
+        if text != "" or not isinstance(url, str) or len(url) > 8192 or re.fullmatch(r"https?://[^\s\x00-\x20\x7f]+", url) is None:
+            raise ProtocolValidationError("URL must be an absolute HTTP(S) URL without whitespace")
+        return result
     if action == "copy":
         if result["regtype"] not in {"v", "V"}:
             raise ProtocolValidationError("Copy register type must be v or V")
@@ -833,7 +849,7 @@ def validate_editor_action(result: object, action: str) -> dict[str, Any]:
 
 def validate_editor_action_metadata(value: object) -> dict[str, str]:
     fields = {"action_id", "client_id", "runtime_id", "notebook_id", "cell_id", "editor_id", "trace_id", "action"}
-    if not isinstance(value, dict) or set(value) != fields or value["action"] not in {"copy", "open", "show_diff"}:
+    if not isinstance(value, dict) or set(value) != fields or value["action"] not in {"copy", "open", "show_diff", "open_url"}:
         raise ProtocolValidationError("Invalid editor action metadata")
     for key in fields:
         if not _bounded_string(value[key], 1, 128):

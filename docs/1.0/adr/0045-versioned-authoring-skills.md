@@ -1,35 +1,39 @@
-# ADR 0045: Versioned authoring skills and reference source
+# ADR 0045: Версионируемые навыки разработки и справочные исходники
 
-Status: accepted
+Статус: принято
 
-## Decision
+## Решение
 
-Skill templates live in the core repository's `skills/` directory and ship as
-Python package data. `jusi install-skills` installs both the exact-plugin and
-family skills to an explicit directory or the conventional Codex skills path.
+Шаблоны навыков находятся в `skills/` основного репозитория и входят в данные
+Python-пакета. `jusi install-skills` устанавливает навыки конкретного плагина
+и семейства в явно заданный каталог или в `~/.gigacode/skills/` для GigaCode
+и совместимых с Qwen агентов. Каждый навык занимает отдельный каталог
+с `SKILL.md` и своими вспомогательными файлами.
 
-Reference material comes from the canonical Git repository's tag
-`v<installed-distribution-version>`. An explicit local Git source can substitute
-its committed HEAD, with the same project-version check. This supports offline
-source availability and development artifacts without guessing a branch.
-The installer records provenance, commit and content hashes. References are
-versioned and shared by the two skills, outside the skill-discovery directory.
-Each installed skill receives a generated reference-location file.
+Справочный код берётся из тега `v<installed-distribution-version>` репозитория
+`ssh://fixmerepo/Python/Jusi.git`. Явный локальный Git-источник позволяет
+использовать закоммиченный HEAD с той же проверкой версии проекта.
+Это поддерживает работу без сети и сборки разработки без угадывания ветки.
+Установщик записывает источник, коммит и хеши содержимого. Версионируемые
+справочные копии общие для двух навыков и находятся вне каталога обнаружения
+навыков. Каждый навык получает сгенерированный файл расположения справки.
+Наличие справочного API подтверждается сохраняемым документом архитектуры
+плагинов, а не удалёнными в этой ветке плановыми документами.
 
-References are read-only authoring inputs, not editable backend installations.
-Skills direct implementation into the requested plugin project and do not apply
-core-maintenance instructions indiscriminately to external projects. Python
-and Neovim installation remain separate; reference code is not added to editor
-runtimepath.
+Справка — материал разработки только для чтения, а не изменяемая установка
+бэкенда. Навыки направляют реализацию в запрошенный проект плагина
+и не применяют инструкции сопровождения ядра ко всем внешним проектам.
+Python и Neovim устанавливаются отдельно; справка не добавляется в runtimepath.
 
-Upgrade validates existing managed content before fetching and again before
-replacement. Unmanaged or edited skills/reference files require the user to
-preserve or move them; there is no force overwrite. A destination lock prevents
-concurrent installers. Staged replacement retains backups until both skills are
-installed and rolls back ordinary filesystem failures. A process crash leaves
-its lock/staging files for explicit recovery instead of deleting potential
-backups. Old versioned references are not automatically pruned.
+Обновление проверяет существующее управляемое содержимое перед загрузкой
+и повторно перед заменой. Неуправляемые или изменённые файлы нужно сохранить
+или переместить; принудительной перезаписи нет. Блокировка каталога предотвращает
+параллельные установки. Промежуточная замена сохраняет резервные копии до
+установки обоих навыков и откатывает обычные ошибки файловой системы.
+Падение процесса оставляет блокировку и промежуточные файлы для явного
+восстановления, не удаляя возможные резервные копии. Старые справочные версии
+автоматически не удаляются.
 
-Tests cover real Git repositories and packaged CLI installation, including
-unpublished builds through explicit local source. Structural validation of the
-skills does not substitute for an independent external-plugin development test.
+Тесты охватывают реальные Git-репозитории и установку через упакованный CLI,
+включая неопубликованные сборки из явно заданного локального источника.
+Структурная проверка навыков не заменяет независимую разработку внешнего плагина.

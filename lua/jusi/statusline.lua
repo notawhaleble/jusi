@@ -1,5 +1,8 @@
 local M = {}
-local expression = '%!v:lua.require("jusi.statusline").render()'
+-- An evaluated format item composes with host statusline suffixes. A whole-line
+-- %! expression would parse appended browser labels as Vimscript.
+local expression = '%{%v:lua.require("jusi.statusline").render()%}'
+local function owned(value) return value:sub(1, #expression) == expression end
 local saved, started, queued = {}, false, false
 local retained = {}
 local function highlights()
@@ -36,13 +39,15 @@ function M.refresh(win)
   local current = vim.api.nvim_get_option_value('statusline', { win = win, scope = 'local' })
   if relevant(vim.api.nvim_win_get_buf(win)) then
     if saved[win] == nil then
-      saved[win] = current == expression and '' or current
+      saved[win] = owned(current) and '' or current
     end
     -- Neovim restores window-local options when switching buffers, even if
     -- this window already displayed another notebook.
-    vim.api.nvim_set_option_value('statusline', expression, { win = win, scope = 'local' })
+    if not owned(current) then
+      vim.api.nvim_set_option_value('statusline', expression, { win = win, scope = 'local' })
+    end
   elseif saved[win] ~= nil then
-    if current == expression then vim.api.nvim_set_option_value('statusline', saved[win], { win = win, scope = 'local' }) end
+    if owned(current) then vim.api.nvim_set_option_value('statusline', saved[win], { win = win, scope = 'local' }) end
     saved[win] = nil
   end
 end

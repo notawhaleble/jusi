@@ -60,7 +60,7 @@ function M.capture(model, controller)
     return nil, "client does not support completion"
   end
   if not client_id and plugin_magic(controller, body[1] or "") then
-    return nil, "execute the plugin cell to create a client before completing it"
+    return nil, "initialize the plugin cell with :JusiBootstrap before completing it"
   end
   if controller.kernel_state ~= "on" or not controller.kernel_id then return nil, "no authoritative live kernel" end
   return { buf = buf, win = win, cell_id = cell.id, model = model, controller = controller,

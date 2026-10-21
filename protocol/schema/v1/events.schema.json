@@ -275,8 +275,13 @@
               "client_id": {"type": ["string", "null"]},
               "output_kind": {"enum": ["stdout", "stderr", "result", "display"]},
               "media_type": {"type": "string", "minLength": 1},
-              "data": {"type": "string"}
+              "data": {"type": "string"},
+              "bundle_id": {"type": "string", "minLength": 1, "maxLength": 128},
+              "bundle_end": {"type": "boolean"}
             },
+            "allOf": [{"if": {"properties": {"media_type": {"const": "application/vnd.jusi.mime-bundle.v1+json"}}},
+              "then": {"required": ["bundle_id", "bundle_end"]},
+              "else": {"not": {"anyOf": [{"required": ["bundle_id"]}, {"required": ["bundle_end"]}]}}}],
             "additionalProperties": false
           }
         }

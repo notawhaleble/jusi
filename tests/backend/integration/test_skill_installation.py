@@ -11,7 +11,7 @@ def source(tmp_path, monkeypatch):
     root = tmp_path / "source"
     root.mkdir()
     installer.git("init", "--quiet", root)
-    for name in ("AGENTS.md", "src/jusi/plugin_api.py", "protocol/schema/v1/plugin-catalog.schema.json", "docs/1.0/invariants.md"):
+    for name in ("AGENTS.md", "src/jusi/plugin_api.py", "protocol/schema/v1/plugin-catalog.schema.json", "docs/1.0/architecture/plugins.md"):
         path = root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("reference\n")
@@ -47,8 +47,12 @@ def test_install_repeat_and_upgrade_keep_versioned_references(source, tmp_path, 
 
 def test_release_tag_cache_works_without_origin(source, tmp_path, monkeypatch):
     monkeypatch.setattr(installer, "REPOSITORY", source.as_uri())
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "agent"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "agent")
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "other-agent"))
     first = installer.install_skills()
+    assert Path(first["directory"]) == tmp_path / "agent/.gigacode/skills"
+    for name in installer.NAMES:
+        assert (Path(first["directory"]) / name / "SKILL.md").is_file()
     source.rename(tmp_path / "offline-origin")
     assert installer.install_skills() == first
 

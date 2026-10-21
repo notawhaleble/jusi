@@ -1,5 +1,6 @@
 local M = {}
 function M.run()
+  local global_foldtext = vim.api.nvim_get_option_value('foldtext', { scope = 'global' })
   local buf = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buf)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, {
@@ -19,6 +20,8 @@ function M.run()
   assert(vim.fn.foldclosed(4) == 4 and vim.fn.foldclosedend(4) == 7)
   assert(vim.fn.foldclosed(8) == -1, 'closer must remain visible')
   assert(vim.fn.foldtextresult(4) == 'history: 2 entries')
+  assert(vim.api.nvim_get_option_value('foldtext', { scope = 'global' }) == global_foldtext,
+    'history changed the global fold text default')
   assert(vim.opt_local.fillchars:get().fold == ' ')
   local background = vim.o.background
   for _, value in ipairs({ 'light', 'dark' }) do
@@ -159,6 +162,53 @@ function M.run()
   vim.cmd((snapshot.history_row + 1) .. 'normal! zd')
   vim.api.nvim_win_set_cursor(0, { 2, 0 }); assert(history:toggle())
   assert(vim.fn.foldlevel(snapshot.history_row + 1) == 1, 'missing native fold was not repaired')
+  -- Reproduce fragmented/nested native folds, including a swallowed header.
+  vim.cmd('normal! zE')
+  vim.cmd('1,3fold')
+  vim.cmd('4,5fold')
+  vim.cmd('5,6fold')
+  history:changed({ model:cell_at_row(0).id }); settle()
+  history:fold_all()
+  for line = 1, snapshot.end_row do
+    local expected = line >= snapshot.history_row + 1 and line <= snapshot.close_row
+    assert(vim.fn.foldlevel(line) == (expected and 1 or 0), 'stale fold fragment at ' .. line)
+  end
+  assert(vim.fn.foldclosedend(snapshot.history_row + 1) == snapshot.close_row)
+  -- A split inheriting the callback must still render ordinary folds normally.
+  local plain = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(plain, 0, -1, false, { 'one', 'two', 'three' })
+  local plain_win = vim.api.nvim_open_win(plain, true, { split = 'below' })
+  vim.wo.foldmethod = 'manual'
+  vim.cmd('1,3fold')
+  assert(not vim.fn.foldtextresult(1):find('history:', 1, true))
+  vim.api.nvim_win_close(plain_win, true)
+  vim.api.nvim_buf_delete(plain, { force = true })
+  editor:close(); vim.api.nvim_buf_delete(buf, { force = true })
+
+  -- Folded and offscreen entries never enter the synchronous syntax worker.
+  buf = vim.api.nvim_create_buf(false, true); vim.api.nvim_set_current_buf(buf)
+  local lines = { '╭──', 'value = 1', '╞══' }
+  for i = 1, 1000 do
+    if i > 1 then table.insert(lines, '├┄┄') end
+    table.insert(lines, 'value = ' .. i)
+  end
+  vim.list_extend(lines, { '╰──', '╭──', 'next_value = 2', '╰──' })
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+  editor = require('jusi.editing').attach(buf); history = editor.history; model = editor.model
+  history:refresh()
+  local request = editor.request
+  local regions = 0
+  editor.request = function(self, payload)
+    if payload.action == 'highlight' then regions = regions + #(payload.regions or {}) end
+    return request(self, payload)
+  end
+  editor:refresh()
+  assert(regions == 0, 'folded history entered the syntax worker')
+  vim.api.nvim_win_set_cursor(0, { 2, 0 }); history:toggle()
+  editor:refresh()
+  assert(regions > 0 and regions < 100, 'offscreen history entered the syntax worker')
+  history:fold_all()
+  assert(vim.fn.foldclosed(3) == 3)
   editor:close(); vim.api.nvim_buf_delete(buf, { force = true })
 end
 return M

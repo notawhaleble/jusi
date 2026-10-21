@@ -104,7 +104,7 @@ local function validate_client(client)
   for _, field in ipairs({ "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "created_at" }) do
     if not nonempty_string(client[field]) then return false, "invalid client identity" end
   end
-  local allowed_capabilities = set({ "execute", "followup", "complete", "interrupt", "editor_actions", "attention" })
+  local allowed_capabilities = set({ "execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention" })
   if type(client.capabilities) ~= "table" then return false, "invalid client capabilities" end
   local seen = {}
   for _, capability in ipairs(client.capabilities) do
@@ -250,9 +250,12 @@ local function validate_event_payload(event)
     if not ok then return false, err end
     if event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "input event resource mismatch" end
   elseif kind == "execution.output" then
-    ok, err = exact_fields(payload, { "execution_id", "client_id", "output_kind", "media_type", "data" })
+    ok, err = exact_fields(payload, { "execution_id", "client_id", "output_kind", "media_type", "data" }, { "bundle_id", "bundle_end" })
     if not ok then return false, err end
     if not nonempty_string(payload.execution_id) or (not null(payload.client_id) and not bounded_string(payload.client_id, 3, 128)) or not nonempty_string(payload.media_type) or type(payload.data) ~= "string" or not ({ stdout = true, stderr = true, result = true, display = true })[payload.output_kind] then return false, "invalid execution output payload" end
+    if payload.media_type == "application/vnd.jusi.mime-bundle.v1+json" then
+      if not bounded_string(payload.bundle_id, 1, 128) or type(payload.bundle_end) ~= "boolean" then return false, "invalid MIME bundle boundary" end
+    elseif payload.bundle_id ~= nil or payload.bundle_end ~= nil then return false, "unexpected bundle boundary" end
     if event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "execution output resource mismatch" end
   elseif kind == "client.created" then
     ok, err = validate_client(payload)
@@ -321,6 +324,10 @@ function M.validate_command(command, expected_kind)
   for _, field in ipairs(fields) do
     allowed[field] = true
   end
+  if expected_kind == "execute" then
+    allowed.bootstrap = true
+    if command.bootstrap ~= nil and type(command.bootstrap) ~= "boolean" then return false, "invalid bootstrap flag" end
+  end
   if expected_kind == "complete" then
     allowed.cursor_pos, allowed.client_id = true, true
     local pos = command.cursor_pos
@@ -338,7 +345,7 @@ function M.validate_command(command, expected_kind)
   end
   if expected_kind == "editor_action" then
     allowed.selection = true
-    if not set({ "copy", "open", "show_diff" })[command.action] or type(command.selection) ~= "table"
+    if not set({ "copy", "open", "show_diff", "open_url" })[command.action] or type(command.selection) ~= "table"
         or (#command.selection > 0) then return false, "invalid editor action selection" end
   end
   if expected_kind == "ack_editor_action" and command.outcome ~= "delivered" and command.outcome ~= "failed" then
@@ -605,7 +612,7 @@ function M.validate_plugin_catalog(catalog)
   local top = { protocol_version = true, catalog_version = true, discovery_id = true, plugins = true }
   for field, _ in pairs(catalog) do if not top[field] then return false, "unknown plugin catalog field: " .. field end end
   local ids = {}
-  local capabilities = set({ "execute", "followup", "complete", "interrupt", "editor_actions", "attention" })
+  local capabilities = set({ "execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention" })
   local interactions = set({ "noninteractive", "request_response", "terminal_interactive" })
   local plugin_fields = set({ "plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction" })
   local family_by_id = {}
@@ -777,14 +784,19 @@ function M.validate_completion(result, cursor_pos)
 end
 
 function M.validate_editor_action(result, action)
-  if type(result) ~= "table" or result.action ~= action or not set({ "copy", "open", "show_diff" })[action] then
+  if type(result) ~= "table" or result.action ~= action or not set({ "copy", "open", "show_diff", "open_url" })[action] then
     return false, "editor action does not match request"
   end
   local fields = action == "copy" and { "action", "text", "regtype" } or { "action", "text", "name", "filetype" }
+  if action == "open_url" then fields = { "action", "text", "url" } end
   if action == "show_diff" then fields = { "action", "text", "before_bytes", "before_name", "after_name", "filetype" } end
   local ok, err = exact_fields(result, fields)
   if not ok then return false, err end
   if type(result.text) ~= "string" or result.text:find("%z") then return false, "invalid editor text" end
+  if action == "open_url" then
+    return result.text == "" and type(result.url) == "string" and vim.fn.strchars(result.url) <= 8192
+      and result.url:match("^https?://.+$") ~= nil and not result.url:find("[%s%c]"), "invalid HTTP(S) URL"
+  end
   if action == "copy" then
     if result.regtype ~= "v" and result.regtype ~= "V" then return false, "invalid register type" end
   else
@@ -809,7 +821,7 @@ function M.validate_editor_action_metadata(value)
   local ok, err = exact_fields(value, fields)
   if not ok then return false, err end
   for _, key in ipairs(fields) do if not bounded_string(value[key], 1, 128) then return false, "invalid editor action identity" end end
-  if value.action ~= "copy" and value.action ~= "open" and value.action ~= "show_diff" then return false, "invalid editor action type" end
+  if value.action ~= "copy" and value.action ~= "open" and value.action ~= "show_diff" and value.action ~= "open_url" then return false, "invalid editor action type" end
   return true
 end
 

@@ -296,6 +296,17 @@ class ManagedJupyterKernel:
                                          reason="timeout" if isinstance(exc, queue.Empty) else "channel_closed",
                                          retryable=True) from exc
 
+    def bootstrap(
+        self, magic_name: str, arguments: str, *, timeout: float | None,
+        on_output: Callable[[KernelOutput], None],
+        on_input: Callable[[str, str, bool], None] | None = None,
+    ) -> KernelExecutionResult:
+        # Arguments are Python literals, never executable user source. The hook
+        # bypasses IPython's empty-cell rejection without inventing a body.
+        code = ("__import__('jusi.kernel_bootstrap', fromlist=['bootstrap']).bootstrap("
+                f"{magic_name!r}, {arguments!r})")
+        return self.execute(code, timeout=timeout, on_output=on_output, on_input=on_input)
+
     def execute(
         self,
         code: str,
@@ -332,6 +343,7 @@ class ManagedJupyterKernel:
                     output_kind = "result" if message_type == "execute_result" else "display"
                     data = content.get("data", {})
                     if isinstance(data, dict):
+                        rich = any(mime in data for mime in ("text/html", "image/svg+xml", "image/png", "image/jpeg", "image/gif", "application/javascript", "text/javascript"))
                         for media_type, value in data.items():
                             if media_type == PLUGIN_HANDOFF_MIME:
                                 try:
@@ -350,8 +362,20 @@ class ManagedJupyterKernel:
                                 except ProtocolValidationError as exc:
                                     handoff_errors.append(str(exc))
                                 continue
-                            if isinstance(value, str):
+                            if isinstance(value, str) and not rich:
                                 emit_output(output_kind, str(media_type), value)
+                        if rich:
+                            bundle = {mime: value for mime, value in data.items()
+                                      if mime != PLUGIN_HANDOFF_MIME and isinstance(value, str)}
+                            encoded = json.dumps(bundle, ensure_ascii=False)
+                            if len(encoded.encode("utf-8")) > 16 * 1024 * 1024:
+                                emit_output(output_kind, "text/plain", bundle.get("text/plain", "[Rich output exceeds 16 MiB]"))
+                            else:
+                                chunks = list(_text_chunks(encoded))
+                                bundle_id = f"out_{uuid.uuid4().hex}"
+                                for index, chunk in enumerate(chunks):
+                                    on_output(KernelOutput(output_kind, "application/vnd.jusi.mime-bundle.v1+json",
+                                                           chunk, bundle_id, index == len(chunks) - 1))
                 elif message_type == "error":
                     traceback = content.get("traceback", [])
                     text = "\n".join(str(line) for line in traceback) if isinstance(traceback, list) else str(traceback)

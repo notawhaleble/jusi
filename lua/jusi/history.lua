@@ -5,6 +5,9 @@ local instances = {}
 local function highlights()
   vim.api.nvim_set_hl(0, 'JusiHistoryFold', { fg = '#7f848e', ctermfg = 102, default = true })
 end
+local function set_option(win, name, value)
+  vim.api.nvim_set_option_value(name, value, { win = win, scope = 'local' })
+end
 local function position(self, mark)
   local p = vim.api.nvim_buf_get_extmark_by_id(self.model.buf, self.ns, mark, {})
   return p[1] and p[1] + 1
@@ -13,6 +16,8 @@ function M.foldtext()
   local self = instances[vim.api.nvim_get_current_buf()]
   local cell = self and self.model:cell_at_row(vim.v.foldstart - 1)
   local s = cell and self.model:cell_snapshot(cell)
+  if not s or not s.history_row or vim.v.foldstart ~= s.history_row + 1
+      or vim.v.foldend ~= s.close_row then return vim.fn.foldtext() end
   return { { 'history: ' .. (s and #s.history_entries or 0) .. ' entries', 'JusiHistoryFold' } }
 end
 function History:update(win, id)
@@ -29,22 +34,31 @@ function History:update(win, id)
   vim.api.nvim_win_call(win, function()
     local view = vim.fn.winsaveview()
     local closed = old == nil or old.closed
-    if not old and valid and vim.fn.foldlevel(s.history_row + 1) > 0 then
-      vim.cmd('silent! ' .. (s.history_row + 1) .. 'normal! zD')
-    end
+    local old_first = old and old.first and position(self, old.first)
     if old and old.first then
-      local first, last = position(self, old.first), position(self, old.last)
+      local first = old_first
       if first and vim.fn.foldlevel(first) > 0 then
         closed = vim.fn.foldclosed(first) >= 0
-        if valid and first == s.history_row + 1 and last == s.close_row
-            and vim.fn.foldlevel(first - 1) == 0
-            and vim.fn.foldlevel(last) == 1
-            and vim.fn.foldlevel(last + 1) == 0 then return end
-        vim.cmd('silent! ' .. first .. 'foldopen!')
-        vim.cmd('silent! ' .. first .. 'normal! zd')
       end
       vim.api.nvim_buf_del_extmark(self.model.buf, self.ns, old.first)
       vim.api.nvim_buf_del_extmark(self.model.buf, self.ns, old.last)
+    end
+    -- Replacement/undo may split a native fold or move it away from its
+    -- extmarks. Remove every fragment in this cell before rebuilding.
+    if s then
+      local line = s.open_row + 1
+      while line <= s.end_row do
+        if vim.fn.foldlevel(line) > 0 then
+          vim.cmd('silent! ' .. line .. 'foldclose!')
+          local last = vim.fn.foldclosedend(line)
+          vim.cmd('silent! ' .. line .. 'normal! zD')
+          line = math.max(line + 1, last + 1)
+        else
+          line = line + 1
+        end
+      end
+    elseif old_first then
+      vim.cmd('silent! ' .. old_first .. 'normal! zD')
     end
     state.cells[id] = { closed = closed }
     if valid then
@@ -78,11 +92,11 @@ function History:refresh()
         if not mapping:match('^Folded:') then table.insert(mappings, mapping) end
       end
       table.insert(mappings, 'Folded:Normal')
-      vim.wo[win].winhighlight = table.concat(mappings, ',')
-      vim.wo[win].foldmethod = 'manual'
-      vim.wo[win].foldtext = "v:lua.require'jusi.history'.foldtext()"
-      vim.wo[win].foldenable = true
-      vim.wo[win].foldminlines = 0
+      set_option(win, 'winhighlight', table.concat(mappings, ','))
+      set_option(win, 'foldmethod', 'manual')
+      set_option(win, "foldtext", "v:lua.require'jusi.history'.foldtext()")
+      set_option(win, 'foldenable', true)
+      set_option(win, 'foldminlines', 0)
       vim.api.nvim_win_call(win, function() vim.opt_local.fillchars:append({ fold = ' ' }) end)
       for _, cell in ipairs(self.model:ordered_cells()) do self:update(win, cell.id) end
     else
@@ -112,6 +126,19 @@ function History:toggle()
   local line = s.history_row + 1
   if vim.fn.foldlevel(line) == 0 then return false end
   vim.cmd(line .. (vim.fn.foldclosed(line) >= 0 and 'foldopen!' or 'foldclose'))
+  vim.fn.winrestview(view)
+  return true
+end
+function History:fold_all()
+  self:refresh()
+  local win = vim.api.nvim_get_current_win()
+  local view = vim.fn.winsaveview()
+  for _, cell in ipairs(self.model:ordered_cells()) do
+    self:update(win, cell.id)
+    local range = self.windows[win].cells[cell.id]
+    local first = range and range.first and position(self, range.first)
+    if first then vim.cmd(first .. 'foldclose'); range.closed = true end
+  end
   vim.fn.winrestview(view)
   return true
 end
@@ -145,7 +172,7 @@ function History:before_edit(id)
         if first and vim.fn.foldlevel(first) > 0 then
           range.closed = vim.fn.foldclosed(first) >= 0
           local view = vim.fn.winsaveview()
-          vim.cmd('silent! ' .. first .. 'normal! zd')
+          vim.cmd('silent! ' .. first .. 'normal! zD')
           vim.fn.winrestview(view)
         end
       end)
@@ -188,6 +215,8 @@ function History:accept(id, body)
   end
 end
 function History:submit(command, id)
+  if command.bootstrap then return end
+  if command.kind == 'execute' and (command.code or ''):match('^%s*%%%%[%a][%w_-]*[^\n]*\n?%s*$') then return end
   if command.kind == 'execute' and not (command.code or ''):match('^%s*%%%%[%a][%w_-]*') then return end
   self.pending[command.trace_id] = { id = id, body = command.code or command.body, kind = command.kind }
 end
@@ -222,11 +251,11 @@ function History:leave(win)
       local first = position(self, range.first)
       if first and vim.fn.foldlevel(first) > 0 then
         range.closed = vim.fn.foldclosed(first) >= 0
-        vim.cmd('silent! ' .. first .. 'normal! zd')
+        vim.cmd('silent! ' .. first .. 'normal! zD')
       end
     end
   end
-  for name, value in pairs(state.saved) do vim.wo[win][name] = value end
+  for name, value in pairs(state.saved) do set_option(win, name, value) end
   state.active = false
 end
 function History:close()
@@ -255,10 +284,10 @@ function History:close()
       vim.api.nvim_win_call(win, function()
         for _, range in pairs(state.cells) do
           local first = range.first and position(self, range.first)
-          if first then vim.cmd('silent! ' .. first .. 'normal! zd') end
+          if first then vim.cmd('silent! ' .. first .. 'normal! zD') end
         end
       end)
-      for name, value in pairs(state.saved) do vim.wo[win][name] = value end
+      for name, value in pairs(state.saved) do set_option(win, name, value) end
     end
   end
   if vim.api.nvim_buf_is_valid(self.model.buf) then vim.api.nvim_buf_clear_namespace(self.model.buf, self.ns, 0, -1) end

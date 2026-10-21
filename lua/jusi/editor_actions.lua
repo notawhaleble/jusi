@@ -66,6 +66,11 @@ function M.apply(result, opts)
   opts = opts or {}
   local valid, err = protocol.validate_editor_action(result, result and result.action)
   if not valid then return nil, err end
+  if result.action == "open_url" then
+    local ok, surface = pcall(require("jusi.presentation.web").open, result.url, { win = opts.win, enter = true })
+    if not ok then return nil, tostring(surface) end
+    return surface.buf
+  end
   if result.action == "show_diff" then return show_diff(result, opts) end
   if opts.source_path and result.action == "copy" then
     local file = assert(io.open(opts.source_path, "rb"))
@@ -103,7 +108,7 @@ function M.apply(result, opts)
       local win = opts.win
       if win and not vim.api.nvim_win_is_valid(win) then error("source client window closed") end
       win = win or vim.api.nvim_get_current_win()
-      vim.api.nvim_open_win(buf, true, { split = "below", win = win })
+      vim.api.nvim_open_win(buf, true, { split = "above", win = win })
     end
   end)
   if not ok then

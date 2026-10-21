@@ -156,6 +156,7 @@ class ExecutionsHandler(BaseHandler):
                 notebook_id=command["notebook_id"],
                 cell_id=command["cell_id"],
                 code=command["code"],
+                bootstrap=command.get("bootstrap", False),
                 trace_id=command["trace_id"],
             )
         except SupervisorError as exc:

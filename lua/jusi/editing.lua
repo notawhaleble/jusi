@@ -20,7 +20,7 @@ function Editing:request(request)
   end
   return result
 end
-function Editing:context(cell)
+function Editing:context(cell, visible)
   local snapshot = self.model:cell_snapshot(cell)
   if not snapshot then return nil end
   local lines = vim.api.nvim_buf_get_lines(self.model.buf, snapshot.body_start_row, snapshot.body_end_row, false)
@@ -36,9 +36,15 @@ function Editing:context(cell)
   local regions = {}
   if snapshot.valid then
     for index, entry in ipairs(snapshot.history_entries) do
-      table.insert(regions, { id = cell.id .. ":history:" .. index,
+      local shown = not visible
+      for _, range in ipairs(visible or {}) do
+        if entry.start_row <= range.last and entry.end_row > range.first then
+          shown = true; break
+        end
+      end
+      if shown then table.insert(regions, { id = cell.id .. ":history:" .. index,
         start = entry.start_row, finish = entry.end_row,
-        lines = vim.api.nvim_buf_get_lines(self.model.buf, entry.start_row, entry.end_row, false) })
+        lines = vim.api.nvim_buf_get_lines(self.model.buf, entry.start_row, entry.end_row, false) }) end
     end
   end
   return { regions = regions, id = cell.id, syntax = profile.syntax, indent = profile.indent, lines = lines,
@@ -93,7 +99,7 @@ function Editing:retire(id)
   for execution, submitted in pairs(self.submissions) do if submitted.id == id then self.submissions[execution] = nil end end
 end
 function Editing:visible_cells()
-  local result = {}
+  local result, ranges = {}, {}
   for _, win in ipairs(vim.fn.win_findbuf(self.model.buf)) do
     local first, last = unpack(vim.api.nvim_win_call(win, function() return { vim.fn.line("w0") - 1, vim.fn.line("w$") - 1 } end))
     local cell = self.model:cell_at_row(first)
@@ -102,14 +108,19 @@ function Editing:visible_cells()
       local snapshot = self.model:cell_snapshot(cell)
       if not snapshot or snapshot.open_row > last then break end
       result[cell.id] = cell
+      ranges[cell.id] = ranges[cell.id] or {}
+      local expanded = snapshot.history_row and vim.api.nvim_win_call(win, function()
+        return vim.fn.foldclosed(snapshot.history_row + 1) < 0
+      end)
+      if expanded then table.insert(ranges[cell.id], { first = first, last = last }) end
       cell = cell.next
     end
   end
-  return result
+  return result, ranges
 end
 function Editing:refresh()
   if self.closed then return end
-  local visible = self:visible_cells()
+  local visible, ranges = self:visible_cells()
   for id in pairs(self.cache) do
     if not visible[id] then
       if self.namespaces[id] then vim.api.nvim_buf_clear_namespace(self.model.buf, self.namespaces[id], 0, -1) end
@@ -118,7 +129,7 @@ function Editing:refresh()
     end
   end
   for id, cell in pairs(visible) do
-    local ctx = self:context(cell)
+    local ctx = self:context(cell, ranges[id])
     if ctx then
       local region_keys = {}
       for _, region in ipairs(ctx.regions) do table.insert(region_keys, { region.lines, region.start - ctx.start }) end
@@ -225,7 +236,7 @@ function M.new(model, controller)
   vim.bo[model.buf].autoindent = true
   vim.bo[model.buf].shiftwidth, vim.bo[model.buf].softtabstop, vim.bo[model.buf].expandtab = 4, 4, true
   instances[model.buf] = self
-  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP", "BufWinEnter", "InsertEnter" }, {
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI", "TextChangedP", "BufWinEnter", "InsertEnter", "CursorMoved" }, {
     group = self.group, buffer = model.buf, callback = function() self:schedule() end,
   })
   vim.api.nvim_create_autocmd({ "WinScrolled", "WinResized", "WinClosed" }, { group = self.group, callback = function() self:schedule() end })

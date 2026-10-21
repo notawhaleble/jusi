@@ -152,3 +152,31 @@ def test_application_diff_streams_both_snapshots_and_acknowledges_display(monkey
     finally:
         manager.close()
         broker.close()
+
+
+def test_open_url_helper_preserves_url_through_private_delivery(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from jusi.editor_client import open_url
+    from jusi.plugin_api import open_url as worker_open_url
+    notices = Queue()
+    manager = EditorActionManager(notices.put, timeout=3)
+    manager.register(SimpleNamespace(capabilities=("editor_actions",), client_id="cli_web", runtime_id="run_web", notebook_id="nb_web", cell_id="cell_web"))
+    manager.connect("editor_web", "connection_web")
+    manager.bind("cli_web", "editor_web")
+    broker = LocalEditorActionBroker()
+    env = broker.open("cli_web", lambda content: manager.submit("cli_web", content))
+    monkeypatch.setenv("JUSI_EDITOR_ACTION_SOCKET", env["JUSI_EDITOR_ACTION_SOCKET"])
+    url = 'https://example.com/report?q=one%20two&fragment=three#four'
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(open_url, url)
+            action = notices.get(timeout=3)
+            assert action['action'] == 'open_url' and 'url' not in action
+            fetched = manager.fetch(action['action_id'], 'editor_web', 0)
+            assert fetched['content'] == worker_open_url(url).result
+            assert fetched['eof'] and fetched['offset'] == fetched['next_offset'] == 0
+            manager.acknowledge(action['action_id'], 'editor_web', 'delivered')
+            assert future.result(timeout=3)['outcome'] == 'delivered'
+    finally:
+        manager.close()
+        broker.close()

@@ -1,0 +1,11 @@
+{
+  "protocol_version": 1,
+  "kind": "execute",
+  "command_id": "cmd_bootstrap",
+  "trace_id": "trace_bootstrap",
+  "kernel_id": "kernel_test",
+  "notebook_id": "nb",
+  "cell_id": "cell",
+  "code": "%%sql main",
+  "bootstrap": "true"
+}

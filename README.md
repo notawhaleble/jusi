@@ -23,12 +23,12 @@ pip install jusi
 pip install 'jusi[vd]'
 ```
 
-Установите фронтенд из репозитория `ssh://my-org/Python/Jusi.git`
+Установите фронтенд из репозитория `ssh://fixmerepo/Python/Jusi.git`
 через менеджер плагинов Neovim с явным URL или используйте стандартный
 каталог пакетов:
 
 ```sh
-git clone ssh://my-org/Python/Jusi.git \
+git clone ssh://fixmerepo/Python/Jusi.git \
   "${XDG_DATA_HOME:-$HOME/.local/share}/nvim/site/pack/jusi/start/jusi"
 ```
 

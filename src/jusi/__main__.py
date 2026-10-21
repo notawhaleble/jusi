@@ -21,7 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
         conversion.add_argument("-o", "--output")
         conversion.add_argument("--force", action="store_true", help="replace an existing output file")
     skills_parser = subparsers.add_parser("install-skills", help="install plugin-authoring skills and matching reference source")
-    skills_parser.add_argument("--directory", help="destination skills directory (default: CODEX_HOME/skills or ~/.codex/skills)")
+    skills_parser.add_argument("--directory", help="destination skills directory (default: ~/.gigacode/skills)")
     skills_parser.add_argument("--source", help="local Git checkout for development/offline installation")
     serve_parser = subparsers.add_parser("serve", help="start the Jusi HTTP/SSE service")
     serve_parser.add_argument("--host", default="127.0.0.1")
