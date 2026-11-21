@@ -4,6 +4,8 @@ local function wait_for(predicate, message)
   assert(vim.wait(12000, predicate, 10), message)
 end
 function M.run()
+  local original_input = vim.fn.input
+  vim.fn.input = function() return vim.NIL end
   local old_notify = vim.notify
   local messages = {}
   vim.notify = function(message) table.insert(messages, tostring(message)) end
@@ -128,6 +130,7 @@ function M.run()
     return true
   end, 10)
   jusi.setup({ kernel_name = "python3", targets = { ["local"] = { kind = "local" } } })
+  vim.fn.input = original_input
   vim.notify = old_notify
   if not ok then error(failure .. "\nnotifications:\n" .. table.concat(messages, "\n")) end
   print("Target alias start/stop lifecycle passed")

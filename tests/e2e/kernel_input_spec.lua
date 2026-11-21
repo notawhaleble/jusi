@@ -6,6 +6,22 @@ end
 
 function M.run()
   local old_notify = vim.notify
+  local original_input, original_secret = vim.fn.input, vim.fn.inputsecret
+  local reply = vim.NIL
+  vim.fn.input = function(options)
+    if reply == vim.NIL then
+      vim.api.nvim_feedkeys(vim.keycode("<Esc>"), "nt", false)
+      return original_input(options)
+    end
+    return reply
+  end
+  local secret_prompts = 0
+  vim.fn.inputsecret = function(options)
+    assert(options.prompt == "Password: ")
+    secret_prompts = secret_prompts + 1
+    vim.api.nvim_feedkeys("private-value" .. vim.keycode("<CR>"), "nt", false)
+    return original_secret(options)
+  end
   local notifications = {}
   vim.notify = function(message) table.insert(notifications, message) end
   local buf, service, session
@@ -59,7 +75,7 @@ function M.run()
     controller:connect()
     wait_for(function() return controller.transport_state == "connected" end, "input reconnect failed")
     assert(controller.pending_input.input_request_id == first.input_request_id)
-    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "ololo" })
+    reply = "ololo"
     vim.api.nvim_win_set_cursor(notebook_win, { 2, 0 })
     vim.cmd("JusiSubmit")
     complete(first.execution_id, "succeeded")
@@ -74,22 +90,24 @@ function M.run()
     assert(starts == 1, "input submission created a new execution")
     assert(session.presentation:buffer_for_cell(cell_id) == output_buf, "input replaced the artifact")
 
-    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "a = input('assigned: ')" })
+    local password_code = "from getpass import getpass; assert getpass('Password: ') == 'private-' + 'value'"
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { password_code })
     jusi.execute(buf, 1)
-    local assigned = pending()
-    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "ololo" })
-    jusi.input(buf, 1)
-    complete(assigned.execution_id, "succeeded")
-    local assigned_buf = assert(session.presentation:buffer_for_cell(cell_id))
-    wait_for(function() return vim.api.nvim_buf_get_lines(assigned_buf, 0, 1, false)[1] == "assigned: ololo" end,
-      "assignment must visibly echo accepted input even without an expression result")
+    wait_for(function() return secret_prompts == 1 end, "password request did not open native secret input")
+    wait_for(function() return session.marks.records[cell_id].state == "done" end, "password reply failed")
+    assert(vim.fn.histget("input", -1) ~= "private-value")
+    assert(vim.api.nvim_buf_get_lines(buf, 1, 2, false)[1] == password_code)
+    local transcript = vim.api.nvim_buf_get_lines(session.presentation:buffer_for_cell(cell_id), 0, -1, false)
+    assert(not table.concat(transcript):find("private-value", 1, true))
+    reply = vim.NIL
 
     -- Two prompts in one execution get separate identities. Empty/multiline input is literal.
     vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "a = input('first: '); b = input('second: '); print(repr((a, b)))" })
     jusi.execute(buf, 1)
     local second = pending()
-    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "" })
+    reply = ""
     jusi.input(buf, 1)
+    vim.schedule(function() reply = vim.NIL end)
     wait_for(function() return controller.pending_input and controller.pending_input.input_request_id ~= second.input_request_id end, "second prompt missing")
     local third = controller.pending_input
     assert(third.execution_id == second.execution_id)
@@ -100,7 +118,7 @@ function M.run()
     wait_for(function() return stale_done end, "stale reply did not complete")
     assert(stale_failure and stale_failure.reason == "conflict")
     assert(controller.pending_input.input_request_id == third.input_request_id)
-    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "  α  ", "β" })
+    reply = "  α  \nβ"
     jusi.input(assert(session.presentation:buffer_for_cell(cell_id)), 999)
     complete(second.execution_id, "succeeded")
     output_buf = assert(session.presentation:buffer_for_cell(cell_id))
@@ -108,7 +126,8 @@ function M.run()
       return table.concat(vim.api.nvim_buf_get_lines(output_buf, 0, -1, false), "\n"):find("('', '  α  \\nβ')", 1, true) ~= nil
     end, "empty/Unicode/multiline input did not round trip")
 
-    vim.api.nvim_buf_set_lines(buf, 1, 3, false, { "input('interrupt: ')" })
+    reply = vim.NIL
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "input('interrupt: ')" })
     jusi.execute(buf, 1)
     local interrupted = pending()
     jusi.interrupt(buf, 1)
@@ -256,6 +275,7 @@ function M.run()
   end, debug.traceback)
   if buf and jusi._sessions[buf] then jusi._destroy_session(buf)
   elseif service and service.state ~= "stopped" then service:stop() end
+  vim.fn.input, vim.fn.inputsecret = original_input, original_secret
   vim.notify = old_notify
   if not ok then error(failure .. "\nnotifications: " .. vim.inspect(notifications) .. "\nservice stderr: " .. (service and service.stderr or "")) end
   print("Kernel input cell submission passed")

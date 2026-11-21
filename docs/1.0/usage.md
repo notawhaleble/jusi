@@ -38,7 +38,7 @@ returns to cell-mode controls.
 | Cell-mode key | Action |
 | --- | --- |
 | `j`, `k` | Next / previous cell or expanded history entry; counts work |
-| Enter | Execute, send pending input, send a followup, or restore history by context |
+| Enter | Execute, reopen a pending input prompt, send a followup, or restore history by context |
 | `H` | Toggle history |
 | Ctrl-P / Ctrl-N | Restore older / newer history |
 | `C` | Clear payload and edit, keeping magic header and history |
@@ -194,15 +194,14 @@ Both RGB and 256-color terminal palettes are defined; `termguicolors` is optiona
 The buffer text and sign/status columns are untouched. These marks show the last
 observed work outcome; editing a cell does not erase it.
 
-For kernel input, execute a cell containing `input('lalala: ')`. Its output
-split shows the prompt without taking focus. Replace the same cell body with
-`ololo` and run `:JusiInput`; the original execution receives that literal text
-and resumes. `JusiInput` requires a pending request for that cell. It preserves
-whitespace and joins body lines with newlines; it does not evaluate the reply.
-Accepted replies echo literally on the prompt line, followed by a newline,
-including for assignment forms such as `a = input('lalala: ')`. Bare `input(...)`
-can also produce a genuine Python expression result on the following line.
-The command has no default mapping and is separate from plugin followups.
+When a cell calls `input('Name: ')`, Neovim opens a command-line prompt.
+Type the reply and press Enter. Pressing Enter on an empty prompt sends an
+empty string. Escape dismisses the prompt and leaves the execution waiting.
+Use `:JusiInput` in the owning cell or its output to reopen it.
+
+Password requests such as Python's `getpass.getpass()` use Neovim's masked
+input and omit the reply from input history. The output split shows
+`[input accepted]` for a password and the literal reply for ordinary input.
 Kernel execution and input waits have no automatic time limit. End them with
 `JusiInterrupt`, `JusiClose`, kernel stop, or restart; retiring the owning cell
 also closes its active work.

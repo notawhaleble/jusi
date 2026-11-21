@@ -123,6 +123,34 @@ local function close_clients(session, client_ids, callback, index)
   end)
 end
 
+local function prompt_input(session, request, callback)
+  local controller = session.controller
+  if session.input_prompt == request or controller.input_submissions[request.input_request_id] then return end
+  session.input_prompt = request
+  vim.schedule(function()
+    local function current()
+      return sessions[session.buf] == session and controller.pending_input == request
+        and session.lifecycle:accepts(request.cell_id)
+        and not session.presentation.retired_executions[request.execution_id]
+        and controller.transport_state ~= "disconnected"
+    end
+    if session.input_prompt ~= request then return end
+    if current() then
+      local read = request.password and vim.fn.inputsecret or vim.fn.input
+      local ok, value = pcall(read, { prompt = request.prompt, cancelreturn = vim.NIL })
+      if ok and type(value) == "string" and current() then
+        controller:submit_input(request, value, function(response, failure)
+          if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
+          if callback then callback(response, failure) end
+        end)
+      elseif not ok and not tostring(value):match("Interrupt") then
+        notify("Unable to open the kernel input prompt", vim.log.levels.ERROR)
+      end
+    end
+    if session.input_prompt == request then session.input_prompt = nil end
+  end)
+end
+
 local function bind_cell_lifecycle(session)
   local model, controller = session.model, session.controller
   controller.on_state_changed = require("jusi.statusline").redraw
@@ -220,13 +248,14 @@ local function bind_cell_lifecycle(session)
   end
   local callbacks = presentation:controller_callbacks()
   for _, name in ipairs({ "on_execution_started", "on_output", "on_input_requested", "on_input_replied" }) do
-    controller[name] = function(cell_id, ...)
+    controller[name] = function(cell_id, payload, ...)
       if lifecycle:accepts(cell_id) then
         if name == "on_execution_started" then
           lifecycle:set_park(cell_id, false)
-          lifecycle:cleanup_completed(select(1, ...))
+          lifecycle:cleanup_completed(payload)
         end
-        callbacks[name](cell_id, ...)
+        callbacks[name](cell_id, payload, ...)
+        if name == "on_input_requested" then prompt_input(session, payload) end
       end
     end
   end
@@ -679,10 +708,12 @@ function M.input(buf, row, callback)
     notify("cursor is not inside a cell", vim.log.levels.ERROR)
     return nil
   end
-  return session.controller:submit_input(cell.id, function(response, failure)
-    if failure then notify(failure_text(failure), vim.log.levels.ERROR) end
-    if callback then callback(response, failure) end
-  end)
+  local request = session.controller.pending_input
+  if not request or request.cell_id ~= cell.id then
+    notify("cell has no pending kernel input request", vim.log.levels.WARN)
+    return
+  end
+  return prompt_input(session, request, callback)
 end
 
 function M.interrupt(buf, row)

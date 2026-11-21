@@ -49,15 +49,15 @@ on. Stop/restart fence input waits for their exact owning execution before
 joining the serialized teardown lane, including prompts arriving after
 teardown queues. Wrong runtime identities cannot cancel a valid input wait.
 
-The explicit frontend command is `JusiInput`: resolve the model cell from
-notebook text or projection identity, read its current body, join lines with
-newlines, and submit it unchanged. Empty input and leading/trailing whitespace
-are valid; no quotes, evaluation, trimming, or final newline are added. The
-cell text and current execution artifact remain in place. This plaintext-cell
-command is not a hidden password entry surface, even when the kernel's request
-carries `password=true`.
+The frontend opens a native Neovim command-line prompt when the request
+arrives. It passes the literal prompt to `input()` for ordinary replies and
+`inputsecret()` for password replies. This keeps notebook source intact and
+gives password entry Neovim's masking and input-history protection. Escape
+dismisses the prompt. `JusiInput` reopens it from the owning cell or its output.
+An empty confirmed reply is valid. Submission checks that the same request
+is still pending after the user finishes typing.
 
-The submitting frontend keeps the reply transiently until the ordered
+The submitting frontend keeps ordinary reply text transiently until the ordered
 `execution.input_replied` event confirms its exact submission trace. It then
 echoes the literal value and a newline on the prompt line, without quotes.
 HTTP completion does not insert presentation out of event order. A password

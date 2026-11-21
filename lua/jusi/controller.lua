@@ -671,15 +671,14 @@ function Controller:followup(cell_id, callback)
   end)
 end
 
-function Controller:submit_input(cell_id, callback)
-  local request = self.pending_input
-  local body, body_error = self.notebook:body(cell_id)
-  if not body or not request or request.cell_id ~= cell_id or request.kernel_id ~= self.kernel_id
+function Controller:submit_input(request, value, callback)
+  local cell_id = request.cell_id
+  if self.pending_input ~= request or not self.notebook:cell_by_id(cell_id) or request.kernel_id ~= self.kernel_id
       or self.input_submissions[request.input_request_id] then
     if callback then
       callback(nil, {
         trace_id = "", layer = "frontend_model", operation = "submit_input", reason = "conflict",
-        message = body_error or "cell has no available kernel input request (a reply may already be in flight)", retryable = false,
+        message = "cell has no available kernel input request (a reply may already be in flight)", retryable = false,
         scope = "cell", resource = { kind = "cell", id = cell_id },
       })
     end
@@ -687,9 +686,9 @@ function Controller:submit_input(cell_id, callback)
   end
   local command = self:_command("submit_input", {
     kernel_id = request.kernel_id, execution_id = request.execution_id,
-    input_request_id = request.input_request_id, value = table.concat(body, "\n"),
+    input_request_id = request.input_request_id, value = value,
   })
-  self.input_submissions[request.input_request_id] = { request = request, value = command.value, trace_id = command.trace_id }
+  self.input_submissions[request.input_request_id] = { request = request, value = not request.password and value or nil, trace_id = command.trace_id }
   return self:_request("POST", "/v1/kernels/" .. request.kernel_id
     .. "/executions/" .. request.execution_id .. "/input", command, function(response, failure)
       if failure and failure.layer ~= "frontend_transport" then

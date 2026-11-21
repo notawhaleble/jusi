@@ -4,6 +4,8 @@ Updated: 2026-11-21
 
 ## Current Facts
 
+- Jupyter stdin opens a native Neovim prompt on arrival. Password requests use masked entry. See [ADR 0023](adr/0023-kernel-input-is-an-execution-reply.md).
+
 - Start and restart preserve pane-local views during history fold cleanup.
   Cell commands resolve the focused notebook pane. See [Incident 0035](incidents/0035-notebook-pane-cursors.md).
 

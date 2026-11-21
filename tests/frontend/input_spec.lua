@@ -51,17 +51,17 @@ function M.run()
   assert(#prompts == 1 and prompts[1][1] == cell_id, "inspection must recover pending input and prompt")
   local request_id = controller.pending_input.input_request_id
   local failure
-  controller:submit_input(model:cell_at_row(4).id, function(_, err) failure = err end)
+  controller:submit_input(vim.tbl_extend("force", controller.pending_input, {cell_id = model:cell_at_row(4).id}), "", function(_, err) failure = err end)
   assert(failure and #requests == 0, "other cell cannot answer this prompt")
-  vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "  ololo  ", "α" })
-  controller:submit_input(cell_id)
-  assert(requests[1].payload.value == "  ololo  \nα", "input must be literal body text")
+  local request = controller.pending_input
+  controller:submit_input(request, "  ololo  \nα")
+  assert(requests[1].payload.value == "  ololo  \nα", "input must be literal prompt text")
   assert(requests[1].payload.input_request_id == request_id)
   assert(requests[1].payload.kind == "submit_input")
   assert(requests[1].path:match("/input$"))
   assert(#echoes == 0, "submission alone is not acceptance")
   local duplicate_failure
-  controller:submit_input(cell_id, function(_, err) duplicate_failure = err end)
+  controller:submit_input(request, "", function(_, err) duplicate_failure = err end)
   assert(duplicate_failure and #requests == 1, "duplicate in-flight submission must not overwrite reply echo")
   local next_request = vim.deepcopy(controller.pending_input)
   next_request.input_request_id = "inp_next"
@@ -84,7 +84,7 @@ function M.run()
   assert(next(controller.input_submissions) == nil, "accepted reply text must be released")
   controller.pending_input = nil
   failure = nil
-  controller:submit_input(cell_id, function(_, err) failure = err end)
+  controller:submit_input(request, "", function(_, err) failure = err end)
   assert(failure and #requests == 1, "no prompt must not fall through to execute or followup")
   model:detach()
   vim.api.nvim_buf_delete(buf, { force = true })

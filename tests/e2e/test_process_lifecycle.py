@@ -72,6 +72,8 @@ s.controller.on_event=function(e)
   if e.kind=='execution.completed' then finishes=finishes+1 end
   if e.kind=='failure.occurred' and e.payload.reason=='kernel_died' then kernel_died=true end
 end
+-- Dismiss native stdin so the headless editor can observe the pending execution.
+if MODE=='input' then vim.fn.input=function() return vim.NIL end end
 if MODE~='idle' then
   j.execute(buf,1)
   wait(function()
