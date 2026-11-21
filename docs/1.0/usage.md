@@ -25,8 +25,7 @@ At kernel start/restart, discovered family `presentation` profiles select
 syntax and indentation for recognized magics. An exact provider can declare
 `provider_presentation` overrides, applied after its cell executes. Editing the
 magic or alias resets that attribution. Profiles name installed Neovim
-`syntax/<name>.vim` and `indent/<name>.vim` files independently; missing profiles
-warn once. One local headless Neovim editing worker is owned by each open
+`syntax/<name>.vim` and `indent/<name>.vim` files independently. Missing files use the plain editing fallback silently. One local headless Neovim editing worker is owned by each open
 notebook; editing does not call the backend. See [ADR 0030](adr/0030-cell-local-syntax-and-indentation.md).
 
 ## Navigation And Cell Mode
@@ -288,9 +287,9 @@ terminal gets a configurable best-effort bell. See [attention settings](architec
 ### Initialize a plugin before writing its first request
 
 For a plugin supporting bootstrap, execute a cell containing only its magic
-header (for example `%%acp work`), or run `:JusiBootstrap` with the cursor in a
-populated cell. Bootstrap creates its client without submitting the body or
-adding a history entry. Your draft stays intact. Tab can then use that client's
+header (for example `%%acp work`), or press Insert-mode `Ctrl-B` (or run
+`:JusiBootstrap`) with the cursor in a populated cell. Bootstrap creates its
+client without submitting the body or adding a history entry. Your draft stays intact. Tab can then use that client's
 completion capability; agent-provided suggestions may arrive asynchronously.
 
 Repeated bootstrap reuses the same client. If you changed its magic or arguments,

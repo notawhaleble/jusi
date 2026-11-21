@@ -209,7 +209,8 @@ class FakePluginWorkerHandle:
         self.operation_result = operation_result or PluginWorkerOperationResult({"accepted": True})
         self.stop_count = 0
 
-    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float, request_id=None) -> PluginWorkerOperationResult:
+    def request(self, operation: str, payload: dict, *, trace_id: str, timeout: float, request_id=None, source_context=None) -> PluginWorkerOperationResult:
+        self.last_request = (operation, payload, source_context)
         if self.request_error is not None:
             raise self.request_error
         return self.operation_result
@@ -254,6 +255,9 @@ class FakeTerminalSurfaces:
 
     def set_fatal_handler(self, handler) -> None:  # type: ignore[no-untyped-def]
         self.on_fatal = handler
+
+    def set_success_handler(self, handler) -> None:
+        self.on_success = handler
 
     def prepare(self, resource: object, request: object) -> None:
         self.prepared[resource.surface_id] = (resource, request)  # type: ignore[attr-defined]
@@ -1599,3 +1603,70 @@ def test_busy_plugin_does_not_block_kernel_or_other_clients(kind):
         assert busy.result(timeout=2)["operation"]["outcome"] == "succeeded"
     assert supervisor.health()["client_operations"] == []
     supervisor.stop_kernel(kernel_id=kernel_id, trace_id="trace_stop")
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_source_context_is_separate_from_body_and_capability_gated(enabled):
+    plugin = plugin_entry()
+    plugin['families'][0]['capabilities'].append('followup')
+    if enabled: plugin['families'][0]['capabilities'].append('source_context')
+    handoff = PluginHandoff(plugin_id='exact_sql', plugin_version='1.0.0', family_id='sql', magic_name='sql', payload={'body': 'literal', 'source_context': 'private-value'})
+    workers = FakePluginWorkerFactory()
+    manager = PluginWorkerManager(workers)
+    supervisor = Supervisor(FakeFactory(FakeKernel(KernelExecutionResult('succeeded', handoffs=(handoff,)))), FakeDiscovery(plugins=[plugin]), manager)
+    started = supervisor.start_kernel(notebook_id='nb', kernel_name='python3', trace_id='trace_start')
+    try:
+        result = supervisor.execute(kernel_id=started['kernel']['kernel_id'], notebook_id='nb', cell_id='cell', code='%%sql',
+                                    trace_id='trace_execute', source_context='ctx_initial')
+        client = result['execution']['client_id']
+        assert workers.handles[0].last_request == ('execute', handoff.payload, 'ctx_initial' if enabled else None)
+        supervisor.followup(client_id=client, body='literal α', trace_id='trace_next', source_context='ctx_next')
+        assert workers.handles[0].last_request == ('followup', {'body': 'literal α'}, 'ctx_next' if enabled else None)
+    finally:
+        supervisor.close()
+
+
+def test_rejected_initial_context_retires_unpublished_worker():
+    from jusi.application.ports import PluginOperationError
+
+    workers = FakePluginWorkerFactory(request_error=PluginOperationError("Context collision", reason="conflict", retryable=False))
+    handoff = PluginHandoff(plugin_id="exact_sql", plugin_version="1.0.0", family_id="sql", magic_name="sql", payload={})
+    supervisor = Supervisor(FakeFactory(FakeKernel(KernelExecutionResult("succeeded", handoffs=(handoff,)))),
+                            FakeDiscovery(plugins=[plugin_entry()]), PluginWorkerManager(workers))
+    try:
+        started = supervisor.start_kernel(notebook_id="nb", kernel_name="python3", trace_id="trace_start")
+        with pytest.raises(SupervisorError):
+            supervisor.execute(kernel_id=started["kernel"]["kernel_id"], notebook_id="nb", cell_id="cell",
+                               code="%%sql", trace_id="trace_execute")
+        assert workers.handles[0].stop_count == 1
+        assert supervisor.health()["clients"] == []
+        assert supervisor.health()["kernel"]["state"] == "on"
+    finally:
+        supervisor.close()
+
+
+def test_successful_terminal_close_is_scoped_and_does_not_report_failure():
+    handoff = PluginHandoff(plugin_id='exact_sql', plugin_version='1.0.0',
+        family_id='sql', magic_name='sql', payload={})
+    worker_factory = FakePluginWorkerFactory(operation_result=PluginWorkerOperationResult(
+        {}, (TerminalSurfaceRequest('terminal_main', ('opener',), close_on_success=True),)))
+    surfaces = FakeTerminalSurfaces()
+    supervisor = Supervisor(FakeFactory(FakeKernel(KernelExecutionResult('succeeded', handoffs=(handoff,)))),
+        FakeDiscovery(plugins=[interactive_plugin_entry()]), PluginWorkerManager(worker_factory), surfaces)
+    started = supervisor.start_kernel(notebook_id='nb', kernel_name='python3', trace_id='trace_start')
+    for cell in ('first', 'second'):
+        supervisor.execute(kernel_id=started['kernel']['kernel_id'], notebook_id='nb', cell_id=cell,
+            code='%%sql', trace_id='trace_' + cell)
+    first, second = [item[0] for item in surfaces.prepared.values()]
+    surfaces.on_success(first)
+    surfaces.on_success(first)  # A stale completion must be harmless.
+    health = supervisor.health()
+    assert [c['client_id'] for c in health['clients']] == [second.client_id]
+    assert [s['surface_id'] for s in health['surfaces']] == [second.surface_id]
+    assert health['kernel']['state'] == 'on'
+    events = supervisor.events.events_after(0)
+    assert not any(e['kind'] == 'failure.occurred' for e in events)
+    closed = [e for e in events if e['kind'] == 'client.closed']
+    assert len(closed) == 1 and closed[0]['payload']['reason'] == 'explicit_close'
+    for event in events: validate_event(event)
+    supervisor.close_client(client_id=second.client_id, trace_id='trace_cleanup')

@@ -23,6 +23,10 @@ function M.close_for_buffer(buf)
 end
 
 function M.find(buf, tab)
+  local current = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(current) == buf and (not tab or vim.api.nvim_win_get_tabpage(current) == tab) then
+    return current
+  end
   local windows = valid_windows(buf)
   for _, window in ipairs(windows) do
     if vim.api.nvim_win_get_tabpage(window) == (tab or vim.api.nvim_get_current_tabpage()) then return window end

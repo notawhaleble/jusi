@@ -83,7 +83,8 @@
                       "complete",
                       "interrupt",
                       "editor_actions",
-                      "attention"
+                      "attention",
+                      "source_context"
                     ]
                   }
                 },

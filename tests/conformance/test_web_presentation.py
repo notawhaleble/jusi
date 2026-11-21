@@ -14,6 +14,9 @@ def read(name):
 @pytest.mark.parametrize('name,validate,schema,bad', [
     ('open-url', lambda v: validate_editor_action(v, 'open_url'), 'responses.schema.json#/$defs/editor_action',
      ['open-url-scheme', 'open-url-newline', 'open-url-empty-host']),
+    ('open-url-slot', lambda v: validate_editor_action(v, 'open_url'), 'responses.schema.json#/$defs/editor_action', ['open-url-slot']),
+    ('close-url', lambda v: validate_editor_action(v, 'close_url'), 'responses.schema.json#/$defs/editor_action',
+     ['close-url-missing-slot', 'close-url-text', 'close-url-url']),
     ('javascript-bundle', validate_event, 'events.schema.json', []),
     ('mime-bundle', validate_event, 'events.schema.json', ['mime-bundle-boundary', 'mime-bundle-media']),
 ])

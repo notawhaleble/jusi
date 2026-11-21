@@ -204,6 +204,7 @@ class TerminalSurfaceRequest:
     cwd: str | None = None
     environment_overrides: dict[str, str] = field(default_factory=dict)
     capabilities: tuple[str, ...] = ("input", "resize")
+    close_on_success: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -213,6 +214,7 @@ class TerminalSurfaceRequest:
             "cwd": self.cwd,
             "environment_overrides": dict(self.environment_overrides),
             "capabilities": list(self.capabilities),
+            **({"close_on_success": True} if self.close_on_success else {}),
         }
 
 
@@ -234,6 +236,7 @@ class PluginWorkerHandle(Protocol):
         trace_id: str,
         timeout: float | None,
         request_id: str | None = None,
+        source_context: str | None = None,
     ) -> PluginWorkerOperationResult: ...
 
     def interrupt(self, target_request_id: str, *, trace_id: str, timeout: float) -> dict[str, Any]: ...

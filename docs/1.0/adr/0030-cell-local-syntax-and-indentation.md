@@ -20,7 +20,7 @@ need not. Core does not inspect alias configuration to guess the provider.
 Profiles are local Neovim runtime identifiers: empty (no language-specific rules), or a lowercase
 letter followed by lowercase letters, digits or underscores, at most 64 bytes.
 They name local syntax/indent files, never paths, commands or backend code.
-Unavailable profiles warn once and fall back to unhighlighted text/previous-line
+Unavailable profiles silently fall back to unhighlighted text/previous-line
 indentation. Unknown magics retain Python body editing and a distinct magic
 header; recognized families can independently select or disable each profile.
 

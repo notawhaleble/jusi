@@ -31,6 +31,7 @@ function M.run()
   local requests, acks, applied = {}, {}, 0
   local alive, lost_ack = true, nil
   local c = { editor_id = action.editor_id, supervisor_id = "sup_fixture", transport_state = "connected",
+    on_failure = function() end,
     clients = { [action.client_id] = { runtime_id = action.runtime_id, cell_id = action.cell_id } },
     notebook = { notebook_id = action.notebook_id, cell_by_id = function() return alive and {} or nil end },
     transport = { request = function(_, method, path, _, _, callback)
@@ -129,6 +130,54 @@ function M.run()
   assert(not protocol.validate_application_action(boundary))
   streaming:close()
   delivery:close()
+
+  -- Cancellation may invoke the callback synchronously; a late completion must
+  -- not overwrite the failed outcome, acknowledge twice or leak a reply file.
+  local done, cancels = nil, 0
+  local async = Delivery.new(c, function()
+    return { start = function(callback)
+      done = callback
+      return function() cancels = cancels + 1; callback(false) end
+    end }
+  end)
+  local pending = vim.deepcopy(response); pending.action.action_id = 'act_async_cancel'
+  async:request(pending.action); requests[#requests].callback(pending)
+  local record = async.seen[pending.action.action_id]
+  local ack_count = #acks
+  async:finish(pending.action, record, 'failed')
+  assert(cancels == 1 and #acks == ack_count + 1 and record.outcome == 'failed')
+  local reply = vim.fn.tempname(); vim.fn.writefile({ 'late reply' }, reply)
+  done(true, reply)
+  assert(vim.fn.filereadable(reply) == 0 and #acks == ack_count + 1 and record.outcome == 'failed')
+  async:close()
+
+  -- All renderer failure forms retain the action trace, including ordinary
+  -- nil,error returns (pcall's third result) and asynchronous readiness errors.
+  for index, apply in ipairs({
+    function() error('synchronous renderer error') end,
+    function() return nil, 'returned renderer error' end,
+    function() return { start = function() error('renderer start error') end } end,
+    function() return { start = function(callback) callback(false, nil, 'asynchronous renderer error') end } end,
+  }) do
+    local rejected = vim.deepcopy(response)
+    rejected.action.action_id = 'act_renderer_error_' .. index
+    rejected.action.trace_id = 'trace_renderer_error_' .. index
+    if index % 2 == 0 then
+      rejected.offset, rejected.next_offset, rejected.eof = 0, #rejected.content.text, true
+    end
+    local failing = Delivery.new(c, apply)
+    failing:request(rejected.action); requests[#requests].callback(rejected)
+    assert(acks[#acks].outcome == 'failed')
+    local failures = require('jusi.diagnostics').find(rejected.action.trace_id)
+    assert(#failures == 1 and failures[1].layer == 'frontend_presentation')
+    assert(failures[1].operation == 'editor_action' and failures[1].scope == 'client')
+    assert(failures[1].resource.id == action.client_id)
+    assert(failures[1].details.action_id == rejected.action.action_id)
+    assert(failures[1].message:find('renderer error', 1, true) or failures[1].message:find('renderer start error', 1, true))
+    failing:request(rejected.action)
+    assert(#require('jusi.diagnostics').find(rejected.action.trace_id) == 1, 'Replay duplicated failure')
+    failing:close()
+  end
 
 end
 return M

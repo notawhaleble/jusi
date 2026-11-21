@@ -251,3 +251,28 @@ def test_python_consumes_shared_plugin_kernel_fixtures() -> None:
     invalid = load_json(fixture_root / "invalid" / "plugin-handoff-missing-provider.json")
     with pytest.raises(ProtocolValidationError, match="fields"):
         validate_plugin_kernel_message(invalid)
+
+
+def test_terminal_close_policy_shared_schema_and_python():
+    from jsonschema import Draft202012Validator
+    checker = Draft202012Validator(load_json(SCHEMA_DIR / 'plugin-worker.schema.json'))
+    for kind in ('valid', 'invalid'):
+        value = load_json(ROOT / 'protocol/fixtures/v1' / kind / 'plugin-worker-terminal-close-on-success.json')
+        assert checker.is_valid(value) == (kind == 'valid')
+        if kind == 'valid':
+            assert validate_plugin_worker_message(value)['core_requests'][0]['close_on_success'] is True
+        else:
+            with pytest.raises(ProtocolValidationError): validate_plugin_worker_message(value)
+
+
+def test_worker_source_context_envelope():
+    from jsonschema import Draft202012Validator
+    checker = Draft202012Validator(load_json(SCHEMA_DIR / 'plugin-worker.schema.json'))
+    for kind in ('valid', 'invalid'):
+        message = load_json(ROOT / 'protocol/fixtures/v1' / kind / 'plugin-worker-source-context.json')
+        assert checker.is_valid(message) == (kind == 'valid')
+        if kind == 'valid':
+            validate_plugin_worker_message(message)
+        else:
+            with pytest.raises(ProtocolValidationError):
+                validate_plugin_worker_message(message)

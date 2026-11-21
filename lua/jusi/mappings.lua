@@ -1,4 +1,11 @@
 local M = {}
+function M.setup()
+  for _, mapping in ipairs(vim.api.nvim_get_keymap('n')) do
+    if mapping.lhs == '\\Q' then return end
+  end
+  vim.keymap.set('n', '\\Q', function() require('jusi').close_tab() end,
+    { silent = true, desc = 'Jusi: clean up current tab' })
+end
 function M.attach(buf)
   local owned = {}
   local function action(name, argument) return function() require('jusi.cellmode').command(name, argument) end end
@@ -11,7 +18,6 @@ function M.attach(buf)
     ['00'] = function() require('jusi').restart() end,
     ii = function() require('jusi').interrupt() end,
     q = function() require('jusi').close_number(vim.v.count) end,
-    Q = function() require('jusi').close_tab() end,
     g = function() require('jusi').goto_number(vim.v.count) end,
   }
   local function install(mode, key, callback, description)
@@ -27,6 +33,7 @@ function M.attach(buf)
       install('n', '\\' .. suffix, callback, 'Jusi notebook action')
     end
   end)
+  install('i', '<C-B>', function() require('jusi').bootstrap() end, 'Bootstrap current Jusi cell')
   install('i', '<C-Y>', function()
     -- Preserve native completion acceptance while the popup menu is visible.
     if vim.fn.pumvisible() == 1 then

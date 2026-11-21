@@ -66,9 +66,28 @@ function M.apply(result, opts)
   opts = opts or {}
   local valid, err = protocol.validate_editor_action(result, result and result.action)
   if not valid then return nil, err end
-  if result.action == "open_url" then
-    local ok, surface = pcall(require("jusi.presentation.web").open, result.url, { win = opts.win, enter = true })
+  if result.action == 'open_document' or result.action == 'offer_document' or result.action == 'open_shared_document' or result.action == 'close_document' or result.action == 'source_snapshot' then
+    return require('jusi.presentation.documents').apply(result, opts)
+  end
+  if result.action == "open_url" or result.action == "close_url" then
+    local slots = opts.url_slots
+    local key = result.slot and ("url:" .. result.slot)
+    if key then
+      if not slots then return nil, "managed URLs require an owning client" end
+      local previous = slots[key]
+      if previous then
+        local ok, failure = pcall(previous.close, previous)
+        if not ok then return nil, tostring(failure) end
+        slots[key] = nil
+      end
+    end
+    if result.action == "close_url" then return true end
+    local ok, surface = pcall(require("jusi.presentation.web").open, result.url, {
+      win = opts.win or (result.slot and vim.api.nvim_get_current_win() or nil), enter = true,
+      replace = result.slot ~= nil, source_buf = opts.source_buf,
+    })
     if not ok then return nil, tostring(surface) end
+    if result.slot then slots[key] = surface end
     return surface.buf
   end
   if result.action == "show_diff" then return show_diff(result, opts) end

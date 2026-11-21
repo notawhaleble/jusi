@@ -16,6 +16,11 @@ function M.open(url, opts)
   local tab = win and vim.api.nvim_win_get_tabpage(win) or vim.api.nvim_get_current_tabpage()
   local reuse = opts.reuse_buf and windows.find(opts.reuse_buf, tab)
   local previous = reuse and opts.reuse_buf
+  if opts.replace then
+    assert(win, 'replacing a web view requires a source window')
+    previous = vim.api.nvim_win_get_buf(win)
+    reuse = win
+  end
   local scratch
   if reuse then
     win = reuse
@@ -55,13 +60,27 @@ function M.open(url, opts)
   if opts.enter then vim.api.nvim_set_current_win(win)
   elseif vim.api.nvim_win_is_valid(original) then vim.api.nvim_set_current_win(original) end
   local surface = { buf = buf, execution_id = opts.execution_id }
+  local source_buf = opts.source_buf or previous
+  local function restore_source()
+    if not opts.replace or not vim.api.nvim_buf_is_valid(source_buf) then return end
+    -- Only restore windows still showing this page. A user may have reused
+    -- its former window for an unrelated buffer while the page was hidden.
+    for _, window in ipairs(vim.fn.win_findbuf(buf)) do
+      if vim.api.nvim_win_is_valid(window) and vim.api.nvim_win_get_buf(window) == buf then
+        vim.api.nvim_win_set_buf(window, source_buf)
+        require('jusi.statusline').refresh(window)
+      end
+    end
+  end
   function surface:close()
     if self.closed then return end
-    self.closed = true
     if vim.api.nvim_buf_is_valid(self.buf) then
+      restore_source()
       windows.close_for_buffer(self.buf)
       vim.api.nvim_buf_delete(self.buf, { force = true })
     end
+    -- A failed restore/delete must remain retryable in its owning slot.
+    self.closed = true
   end
   return surface
 end

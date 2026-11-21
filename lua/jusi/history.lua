@@ -245,6 +245,7 @@ end
 function History:leave(win)
   local state = self.windows[win]
   if not state or not state.active then return end
+  local view = vim.fn.winsaveview()
   for id in pairs(state.cells) do
     local range = state.cells[id]
     if range.first then
@@ -256,6 +257,7 @@ function History:leave(win)
     end
   end
   for name, value in pairs(state.saved) do set_option(win, name, value) end
+  vim.fn.winrestview(view)
   state.active = false
 end
 function History:close()
@@ -281,13 +283,7 @@ function History:close()
   vim.api.nvim_del_augroup_by_id(self.group)
   for win, state in pairs(self.windows) do
     if state.active and vim.api.nvim_win_is_valid(win) and vim.api.nvim_win_get_buf(win) == self.model.buf then
-      vim.api.nvim_win_call(win, function()
-        for _, range in pairs(state.cells) do
-          local first = range.first and position(self, range.first)
-          if first then vim.cmd('silent! ' .. first .. 'normal! zD') end
-        end
-      end)
-      for name, value in pairs(state.saved) do set_option(win, name, value) end
+      vim.api.nvim_win_call(win, function() self:leave(win) end)
     end
   end
   if vim.api.nvim_buf_is_valid(self.model.buf) then vim.api.nvim_buf_clear_namespace(self.model.buf, self.ns, 0, -1) end

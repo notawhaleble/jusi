@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.0.7 — unreleased
+
+- Preserve notebook cursors during start and restart. Execute and close use the
+  focused pane when multiple panes display the same notebook.
+- Silently fall back when optional plugin syntax or indentation files are absent.
+
+- Include client-owned document overlays in `\Q` tab cleanup, closing their
+  clients and splits while preserving independent books and clients viewed in
+  other tabs.
+- Fix source-window resolution for shared document opens and retain application
+  editor-delivery failures in `JusiTrace` with their action and client identities.
+- Reuse independent documents before transferring content; negotiate private
+  shared staging for owned local targets, with the same HTTP fallback and
+  document lifetime rules.
+- Add finite document artifact delivery and source snapshot replies through the
+  capability-checked editor action channel, without shared filesystem paths.
+- Add opt-in selection context that retains the captured reader page across
+  palette submission, navigation and followups.
+- Select installed document providers by MIME type; support reusable independent
+  documents and client-owned overlays with bounded transfer and cleanup.
+
 ## 1.0.6 — 2026-10-20
 
 - Add explicit plugin bootstrap with `:JusiBootstrap` and empty-cell execution, preserving drafts and history and reusing matching clients.

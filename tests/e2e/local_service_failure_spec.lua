@@ -15,6 +15,17 @@ local function test_spawn_failure_is_typed()
   assert(captured.reason == "spawn_failed")
   assert(captured.resource.kind == "service_process")
   assert(captured.trace_id ~= "")
+  assert(vim.fn.isdirectory(service.artifact_candidate.directory) == 0)
+end
+
+local function test_inaccessible_shared_directory_keeps_service_usable()
+  local service = local_service.start({ command = { '.venv/bin/python', '-c',
+    "import os; os.environ['JUSI_SHARED_ARTIFACT_ROOT']='/unavailable/jusi-stage'; from jusi.__main__ import main; main(['serve', '--host', '127.0.0.1', '--port', '0', '--owner-stdin'])" } })
+  assert(vim.wait(8000, function() return service.state ~= 'starting' end, 10))
+  assert(service.state == 'running' and not service.shared_artifacts, vim.inspect(service.failure))
+  service:stop()
+  assert(vim.wait(5000, function() return service.state == 'stopped' end, 10))
+  assert(vim.fn.isdirectory(service.artifact_candidate.directory) == 0)
 end
 
 local function test_invalid_readiness_preserves_bounded_stderr()
@@ -43,6 +54,7 @@ end
 function M.run()
   test_spawn_failure_is_typed()
   test_invalid_readiness_preserves_bounded_stderr()
+  test_inaccessible_shared_directory_keeps_service_usable()
 end
 
 return M

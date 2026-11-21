@@ -130,6 +130,7 @@ class FreshProcessPluginWorker:
         trace_id: str,
         timeout: float | None,
         request_id: str | None = None,
+        source_context: str | None = None,
     ) -> PluginWorkerOperationResult:
         if timeout is not None and timeout <= 0:
             raise ValueError("timeout must be positive")
@@ -142,6 +143,7 @@ class FreshProcessPluginWorker:
             "trace_id": trace_id,
             "operation": operation,
             "payload": payload,
+            **({"source_context": source_context} if source_context is not None else {}),
         })
         with self._lock:
             if self._fenced or self._process.poll() is not None:
@@ -176,6 +178,7 @@ class FreshProcessPluginWorker:
                         argv=tuple(item["argv"]),
                         cwd=item["cwd"],
                         environment_overrides=dict(item["environment_overrides"]),
+                        close_on_success=item.get("close_on_success", False),
                         capabilities=tuple(item["capabilities"]),
                     )
                     for item in response["core_requests"]

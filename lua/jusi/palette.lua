@@ -105,6 +105,7 @@ function M.command(command)
     end
     header = '%%' .. table.concat(args, ' ', 2)
   end
+  local source_buf = vim.api.nvim_get_current_buf()
   local body = selection(command) -- capture before changing the current window
   local editor = require('jusi.editing').attach(item.buf)
   local model, snapshot = editor.model
@@ -139,6 +140,16 @@ function M.command(command)
     row = start + 1
   end
   model:flush()
+  local source_cell = model:cell_at_row(row)
+  local captures = false
+  for _, plugin in ipairs(item.session and item.session.controller.plugin_catalog and item.session.controller.plugin_catalog.plugins or {}) do
+    for _, family in ipairs(plugin.families) do
+      if family.magic_name == args[2] and vim.tbl_contains(family.capabilities, 'source_context') then captures = true end
+    end
+  end
+  if source_cell then
+    require('jusi.source_context').capture(editor, source_cell.id, body and captures and source_buf or nil)
+  end
   local win = windows.show(item.buf, {
     tab = vim.api.nvim_get_current_tabpage(), split = 'left', fullheight = true, enter = true,
   })

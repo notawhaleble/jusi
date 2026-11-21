@@ -1,0 +1,6 @@
+{
+  "action": "open_url",
+  "text": "",
+  "url": "https://example.com/next",
+  "slot": "page"
+}

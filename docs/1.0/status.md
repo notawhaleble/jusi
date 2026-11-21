@@ -1,8 +1,52 @@
 # Jusi 1.0 Status
 
-Updated: 2026-10-20
+Updated: 2026-11-21
 
 ## Current Facts
+
+- Start and restart preserve pane-local views during history fold cleanup.
+  Cell commands resolve the focused notebook pane. See [Incident 0035](incidents/0035-notebook-pane-cursors.md).
+
+- Independent document reuse, URL slot ownership, source capture expiry and
+  worker handoff isolation follow the clarified [ADR 0054](adr/0054-document-artifacts-and-source-context.md).
+  Regression coverage is listed in [Incident 0034](incidents/0034-document-ownership-and-source-context.md).
+
+- Document delivery preserves original UTF-8 basenames and supports explicit tab
+  placement without changing default splits or overlays. Workers can opt into
+  normal client close after successful terminal application exit; errors retain
+  the fatal path. This supports read open-only cells while independent books
+  survive cleanup. See [ADR 0056](adr/0056-document-placement-and-successful-application-close.md).
+  Verification passed for 372 core Python tests, both headless Neovim suites and
+  28 read-plugin tests. The wheel check and three read-plugin cases skipped. The e2e scenario
+  confirms successful one-shot cells finish as done with no followup client.
+
+- Shared document offers/opens now use the same source-window resolution as HTTP
+  opens, including hidden client views. Application delivery errors retain typed
+  client-scoped diagnostics under their action trace instead of bypassing
+  `JusiTrace`. Production session-wiring regressions cover placement and provider
+  failure; see [Incident 0032](incidents/0032-shared-document-destination-and-missing-trace.md).
+
+- The unpublished 1.0.7 patch adds generic application document artifacts and
+  opt-in source context, with MIME provider selection, owned Markdown-style
+  overlays and immutable reader snapshots. There are no reading-provider
+  branches or plugin-to-Neovim RPC. Existing remote rich MIME output is unchanged.
+  Independent documents are now offered for reuse before content transfer.
+  Owned local launches negotiate private shared staging, with HTTP fallback;
+  adopted files survive service shutdown. See
+  [ADR 0054](adr/0054-document-artifacts-and-source-context.md),
+  [ADR 0055](adr/0055-local-document-staging-and-early-reuse.md),
+  [API/transport limits](architecture/document-artifacts.md) and the
+  [114 MiB PDF benchmark](performance/document-artifacts-2026-11-02.md).
+  Final verification: 347 Python tests passed with one opt-in skip; frontend and e2e suites passed,
+  including cancellation, late-callback fencing and retained-client recovery.
+  All 22 jusi-read tests passed across HTTP/shared staging (three expected skips);
+  the two opt-in real-PDF benchmark cases also passed. Real PDF/DjVu integration
+  and built-wheel imports passed.
+  Wheel and sdist build as 1.0.7. Two-machine
+  deployment and an authenticated assistant session remain unverified; no
+  release or tag was published.
+
+- Generic URL actions support client-scoped navigation slots across all tabs, including opens with both terminal and page hidden. Application and worker-result opens share source placement; failed deletion preserves retryable slot ownership. Terminal clients, repurposed windows and other clients' pages remain isolated. See [ADR 0053](adr/0053-client-scoped-url-slots.md) and [Incident 0031](incidents/0031-hidden-managed-url-replacement.md).
 
 - Optional `JusiWebBuffer` presentation now supports bounded Jupyter HTML/SVG/image/JavaScript MIME bundles with plain-text fallback, cell-owned cleanup, and generic HTTP(S) `open_url` editor actions. Rich output reuses the cell’s visible output window, and the statusline composes with host browser indicators; see [Incident 0030](incidents/0030-web-output-splits-and-statusline.md). Durable web-only clients and reverse proxying remain deferred. See [ADR 0052](adr/0052-web-buffer-output-and-url-actions.md) and [usage](architecture/web-presentation.md).
 
@@ -15,7 +59,7 @@ Updated: 2026-10-20
   pending geometry; editor exports open above their source. See
   [Incident 0028](incidents/0028-history-folds-navigation-and-resize.md).
 
-- Core `:JusiCloseTab` / `\Q` cleans up the current notebook's visible artifacts in the current tab and closes extra notebook views while retaining the last view and running kernel. Shared clients remain usable in other tabs; hidden clients and unrelated project windows are preserved. See [ADR 0050](adr/0050-current-tab-notebook-cleanup.md) and [useful commands](useful-commands.md#clean-up-the-current-notebook-view).
+- Core `:JusiCloseTab` / `\Q` works from any focused window and cleans up all notebooks' visible artifacts in the current tab and closes extra notebook views while retaining the last view and running kernel. Client-owned documents select their hidden terminal client, including without a visible notebook; client teardown removes their splits. Shared terminal/document views protect clients in other tabs; entirely hidden clients, independent books and unrelated windows are preserved. See [ADR 0050](adr/0050-current-tab-notebook-cleanup.md), [Incident 0033](incidents/0033-document-overlays-escaped-tab-cleanup.md) and [useful commands](useful-commands.md#clean-up-the-current-notebook-view).
 
 - Client-owned attention now supports action-required requests and completion notices through the private application channel, with reconnect snapshots, exact notice dismissal, statusline counts, persistent native tab backgrounds, `:JusiAttention`, and optional host-side bell/notification hooks. Visible client windows determine tab ownership; hidden clients fall back to notebook views. Custom tablines remain untouched. Application prompts and approvals remain plugin-owned. See [ADR 0049](adr/0049-client-attention.md) and the [plugin guide](architecture/client-attention.md).
 

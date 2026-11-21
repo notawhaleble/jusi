@@ -1,0 +1,26 @@
+{
+  "records": [
+    {
+      "version": 1,
+      "metadata": {
+        "page": 7
+      },
+      "files": [
+        {
+          "name": "../page.png",
+          "media_type": "image/png",
+          "size": 7
+        }
+      ]
+    },
+    {
+      "index": 0,
+      "offset": 0,
+      "data": "YWJjAHh5eg==",
+      "sha256": "5d2122ce48f1488e17571d04ebb2ea01094a2a9e2d856feb773fe398d09b258c"
+    },
+    {
+      "end": true
+    }
+  ]
+}

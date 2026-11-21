@@ -69,8 +69,9 @@ request: legacy blocking edit publishes first, leaving a possible fast-reply rac
 
 The same flow handles local and remote targets. The shell helper reads the file
 in its own execution context and sends bytes; neither the service nor Neovim
-needs access to that filesystem path. Large/binary content can extend the
-transport later without making open depend on SCP or shared storage.
+needs access to that filesystem path. [Document artifacts](document-artifacts.md)
+now extend this channel with finite binary content and source snapshot replies,
+without making open depend on SCP or shared storage.
 
 ## Ownership and failure requirements implemented by ADR 0036
 

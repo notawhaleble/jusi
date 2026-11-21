@@ -37,9 +37,7 @@ function M.close(session, options)
       if not surface.closed then capture(surface.buf, id) end
     end
   end
-  for _, surface in pairs(session.interactive and session.interactive.surfaces or {}) do
-    if not surface.closed then capture(surface.buf, surface.client.cell_id) end
-  end
+  require('jusi.client_views').each(session, function(buf, client) capture(buf, client.cell_id) end)
   local token = {}
   session.tab_cleanup[tab] = token
   local function current()

@@ -68,6 +68,7 @@ class _Endpoint:
                     if request["kind"] not in {"application.editor_action", "application.editor_action_begin", "application.attention"}:
                         raise ProtocolValidationError("Expected application action request")
                     snapshot = None
+                    monitor_done = threading.Event()
                     attention = request["kind"] == "application.attention"
                     try:
                         content = request["content"]
@@ -81,12 +82,36 @@ class _Endpoint:
                                 if chunk["eof"]:
                                     break
                             content = snapshot
+                        if snapshot is not None and snapshot.content["action"] == "source_snapshot":
+                            snapshot.cancelled = threading.Event()
+                            def monitor():
+                                while not monitor_done.wait(0.05):
+                                    try:
+                                        readable, _, _ = select.select([connection], [], [], 0)
+                                        if readable and not connection.recv(1, socket.MSG_PEEK):
+                                            snapshot.cancelled.set(); return
+                                    except OSError:
+                                        snapshot.cancelled.set(); return
+                            threading.Thread(target=monitor, daemon=True).start()
                         result = self.submit(content)
                     except (EditorActionError, ValueError, OSError) as exc:
                         result = {"attention_id" if attention else "action_id": "", "outcome": "failed", "reason": getattr(exc, "reason", "invalid_request")}
                     finally:
+                        monitor_done.set()
                         if snapshot is not None:
                             snapshot.close()
+                    reply = result.pop("_reply", None)
+                    if reply is not None:
+                        try:
+                            offset = 0
+                            while True:
+                                text, offset = reply.read(offset)
+                                eof = offset == reply.size
+                                write_frame(stream, {"protocol_version": 1, "kind": "application.editor_reply_chunk",
+                                    "request_id": request["request_id"], "text": text, "eof": eof})
+                                if eof: break
+                        finally:
+                            reply.close()
                     write_frame(stream, {"protocol_version": 1, "kind": "application.attention_result" if attention else "application.action_result",
                                          "request_id": request["request_id"], **result})
         except (OSError, ValueError, EOFError):
@@ -119,7 +144,8 @@ class _Endpoint:
 
 class LocalEditorActionBroker:
     """Private target-side application IPC; never a frontend-local proxy."""
-    def __init__(self) -> None:
+    def __init__(self, shared_artifacts=None) -> None:
+        self.shared_artifacts = shared_artifacts
         self._lock = threading.Lock()
         self._endpoints: dict[str, _Endpoint] = {}
 
@@ -127,16 +153,24 @@ class LocalEditorActionBroker:
         with self._lock:
             endpoint = _Endpoint(submit)
             self._endpoints[client_id] = endpoint
-            return {"JUSI_EDITOR_ACTION_SOCKET": endpoint.path}
+            environment = {"JUSI_EDITOR_ACTION_SOCKET": endpoint.path,
+                           "JUSI_DOCUMENT_STAGE_DIR": "", "JUSI_DOCUMENT_STAGE_TOKEN": ""}
+            if self.shared_artifacts:
+                environment.update(self.shared_artifacts.open_client(client_id))
+            return environment
 
     def close_client(self, client_id: str) -> None:
         with self._lock:
             endpoint = self._endpoints.pop(client_id, None)
         if endpoint is not None:
             endpoint.close()
+        if self.shared_artifacts:
+            self.shared_artifacts.close_client(client_id)
 
     def close(self) -> None:
         with self._lock:
             clients = list(self._endpoints)
         for client_id in clients:
             self.close_client(client_id)
+        if self.shared_artifacts:
+            self.shared_artifacts.close()

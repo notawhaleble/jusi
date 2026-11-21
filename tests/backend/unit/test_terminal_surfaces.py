@@ -165,3 +165,31 @@ def test_slow_attachment_is_fenced_without_blocking_surface_drain_or_cleanup() -
     assert wait_chunk(replacement).data == b"second"
     assert window["latest_cursor"] == 11
     assert manager.close("srf_test", timeout=1)["result"] == "stopped"
+
+
+@pytest.mark.parametrize('opt_in,exit_code,success', [(True, 0, True), (False, 0, False), (True, 7, False), (True, None, False)])
+def test_successful_exit_closes_only_when_explicitly_requested(opt_in, exit_code, success):
+    from dataclasses import replace
+    from threading import Event
+    from jusi.domain.models import ProcessDiagnostics
+    broker = FakeBroker()
+    broker.handle.diagnostics = ProcessDiagnostics(pid=4321, exit_code=exit_code)
+    seen, done = [], Event()
+    def failed(surface, error):
+        seen.append(('failure', error.diagnostics))
+        done.set()
+    manager = TerminalSurfaceManager(broker, on_fatal=failed)
+    def closed(surface):
+        seen.append(('success', surface.client_id))
+        manager.close(surface.surface_id, timeout=1)
+        done.set()
+    manager.set_success_handler(closed)
+    manager.prepare(resource(), replace(request(), close_on_success=opt_in))
+    manager.attach('srf_test', attachment_id='att_one', rows=24, cols=80, after_cursor=0)
+    try:
+        broker.handle.running = False
+        assert done.wait(2)
+        assert len(seen) == 1
+        assert seen[0][0] == ('success' if success else 'failure')
+    finally:
+        manager.close('srf_test', timeout=1)

@@ -66,3 +66,29 @@ URLs must be absolute HTTP(S) and reachable from the editor host. A target-side
 There is no implicit tunnel or reverse proxy. These helpers provide generic
 navigation for plugins; a durable web-only client is a separate future surface
 contract. See [ADR 0052](../adr/0052-web-buffer-output-and-url-actions.md).
+
+An application may opt into a client-scoped navigation slot:
+
+```python
+from jusi.editor_client import open_url, close_url
+open_url('https://example.com/first', slot='page')
+open_url('https://example.com/second', slot='page')  # delete first, create second
+close_url(slot='page')  # also closes hidden pages; repeated close is harmless
+```
+
+Slots accept 1-64 ASCII letters, digits, underscores or hyphens and never target
+another client's page. A slot open replaces its prior buffer, rather than
+navigating it in place. Managed pages use the source application's window,
+retaining the terminal buffer underneath. Placement searches all tabs; if both
+the terminal and page are hidden, core reveals the source terminal in a new
+window before opening its replacement. Replacement always deletes the old
+buffer, wherever it is displayed or hidden. `close_url` restores that terminal
+in windows still displaying the page; a window reused for unrelated content
+is left alone. Native window close hides the page; use `JusiToggleFocus` from
+the source cell to reveal the retained terminal again.
+Closing a page leaves the terminal application alive.
+Closing the source client leaves its last delivered page available and forgets
+the slot. Helpers block for editor acknowledgment; serialize navigation calls
+and keep them off the application UI thread. Worker editor-action results can
+use the equivalent `jusi.plugin_api` helpers. See
+[ADR 0053](../adr/0053-client-scoped-url-slots.md).

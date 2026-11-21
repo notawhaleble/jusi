@@ -4,6 +4,22 @@ LocalService.__index = LocalService
 
 local counter = 0
 local MAX_STDERR_BYTES = 16 * 1024
+local function prepare_artifacts()
+  local directory = vim.fn.tempname()
+  if vim.fn.mkdir(directory, '', 448) ~= 1 then return nil end
+  local token = (vim.uv.random(32):gsub('.', function(c) return string.format('%02x', c:byte()) end))
+  local file = io.open(directory .. '/challenge', 'wb')
+  if not file then vim.fn.delete(directory, 'rf'); return nil end
+  file:write(token); file:close()
+  return { directory = directory, token = token }
+end
+local function accepted_artifacts(root, ready)
+  if not root or ready.shared_artifacts ~= root.token then return nil end
+  local file = io.open(root.directory .. '/accepted', 'rb')
+  if not file then return nil end
+  local token = file:read(65); file:close()
+  return token == root.token and root or nil
+end
 
 local function new_id()
   counter = counter + 1
@@ -48,6 +64,7 @@ function LocalService:_complete_start(ready, failure)
   end
   self.start_completed = true
   if ready then
+    self.shared_artifacts = accepted_artifacts(self.artifact_candidate, ready)
     self.ready = ready
     self.supervisor_id = ready.supervisor_id
     self.base_url = string.format("http://%s:%d", ready.host, ready.port)
@@ -55,6 +72,7 @@ function LocalService:_complete_start(ready, failure)
   else
     self.state = "stopped"
     self.failure = failure
+    if self.artifact_candidate then vim.fn.delete(self.artifact_candidate.directory, "rf") end
   end
   if self.on_started then
     self.on_started(ready and self or nil, failure)
@@ -77,6 +95,8 @@ end
 
 function LocalService:_on_exit(result)
   vim.schedule(function()
+    if self.artifact_candidate then vim.fn.delete(self.artifact_candidate.directory, "rf") end
+    self.shared_artifacts = nil
     local was_requested = self.stop_requested
     self.state = "stopped"
     local failure
@@ -121,6 +141,7 @@ function M.start(options, callback)
   vim.list_extend(command, { "--host", opts.host or "127.0.0.1", "--port", tostring(opts.port or 0), "--owner-stdin" })
   local service_process_id = new_id()
   local service = setmetatable({
+    artifact_candidate = prepare_artifacts(),
     service_process_id = service_process_id,
     trace_id = "trace_" .. service_process_id,
     command = command,
@@ -136,6 +157,7 @@ function M.start(options, callback)
 
   local spawned, process = pcall(vim.system, command, {
     text = true,
+    env = { JUSI_SHARED_ARTIFACT_ROOT = service.artifact_candidate and service.artifact_candidate.directory or "" },
     stdin = true,
     stdout = function(error, data)
       if error and error ~= "" then

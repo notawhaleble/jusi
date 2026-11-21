@@ -20,16 +20,18 @@ from jusi.infrastructure.plugin_worker import FreshProcessPluginWorkerFactory
 from jusi.infrastructure.terminal_pty import PosixTerminalBroker
 from jusi.interfaces.http import make_application
 from jusi.infrastructure.editor_action_socket import LocalEditorActionBroker
+from jusi.infrastructure.shared_artifacts import SharedArtifacts
 
 
 async def serve(host: str, port: int, *, config_path: str | None = None, owner_stdin: bool = False) -> None:
+    shared_artifacts = SharedArtifacts.negotiate()
     supervisor = Supervisor(
         ManagedJupyterKernelFactory(),
         FreshProcessPluginCatalogDiscovery(),
         PluginWorkerManager(FreshProcessPluginWorkerFactory()),
         TerminalSurfaceManager(PosixTerminalBroker()),
         TomlRuntimeConfigurationLoader(config_path, required=config_path is not None),
-        LocalEditorActionBroker(),
+        LocalEditorActionBroker(shared_artifacts),
     )
     application = make_application(supervisor)
     sockets = tornado.netutil.bind_sockets(port, address=host)
@@ -43,6 +45,7 @@ async def serve(host: str, port: int, *, config_path: str | None = None, owner_s
                 "host": host,
                 "port": actual_port,
                 "supervisor_id": supervisor.supervisor_id,
+                **({"shared_artifacts": shared_artifacts.token} if shared_artifacts else {}),
             },
             separators=(",", ":"),
         ),

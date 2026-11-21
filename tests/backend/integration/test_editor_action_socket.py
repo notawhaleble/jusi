@@ -180,3 +180,89 @@ def test_open_url_helper_preserves_url_through_private_delivery(monkeypatch):
     finally:
         manager.close()
         broker.close()
+
+
+def test_managed_url_helpers_preserve_slots_and_acknowledge_close(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from jusi.editor_client import open_url, close_url
+    from jusi.plugin_api import open_url as worker_open, close_url as worker_close
+    notices = Queue()
+    manager = EditorActionManager(notices.put, timeout=3)
+    manager.register(SimpleNamespace(capabilities=("editor_actions",), client_id="cli_slot", runtime_id="run_slot", notebook_id="nb_slot", cell_id="cell_slot"))
+    manager.connect("editor_slot", "connection_slot")
+    manager.bind("cli_slot", "editor_slot")
+    broker = LocalEditorActionBroker()
+    env = broker.open("cli_slot", lambda content: manager.submit("cli_slot", content))
+    monkeypatch.setenv("JUSI_EDITOR_ACTION_SOCKET", env["JUSI_EDITOR_ACTION_SOCKET"])
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            for helper, args, expected in [
+                (open_url, ("https://example.com/page",), worker_open("https://example.com/page", slot="page").result),
+                (close_url, (), worker_close(slot="page").result),
+            ]:
+                future = pool.submit(helper, *args, slot="page")
+                action = notices.get(timeout=3)
+                assert "slot" not in action and "url" not in action
+                fetched = manager.fetch(action["action_id"], "editor_slot", 0)
+                assert fetched["content"] == expected
+                assert not future.done()
+                manager.acknowledge(action["action_id"], "editor_slot", "delivered")
+                assert future.result(timeout=3)["outcome"] == "delivered"
+    finally:
+        manager.close()
+        broker.close()
+
+
+def test_source_capture_cancel_releases_pending_reply_and_keeps_client_usable(monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from jusi.artifacts import encode
+    from jusi.editor_client import source_snapshot
+
+    notices = Queue()
+    finished = threading.Event()
+    manager = EditorActionManager(notices.put, timeout=10)
+    manager.register(SimpleNamespace(capabilities=("editor_actions", "source_context"),
+        client_id="cli_source", runtime_id="run_source", notebook_id="nb_source", cell_id="cell_source"))
+    manager.connect("editor_source", "connection_source")
+    manager.bind("cli_source", "editor_source")
+
+    def submit(content):
+        try:
+            return manager.submit("cli_source", content)
+        finally:
+            finished.set()
+
+    broker = LocalEditorActionBroker()
+    env = broker.open("cli_source", submit)
+    monkeypatch.setenv("JUSI_EDITOR_ACTION_SOCKET", env["JUSI_EDITOR_ACTION_SOCKET"])
+    cancel = threading.Event()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(source_snapshot, tmp_path / "cancelled", slot="book", cancel=cancel)
+            action = notices.get(timeout=2)["action_id"]
+            manager.fetch(action, "editor_source", 0)
+            manager.upload_reply(action, "editor_source", offset=0, text="partial", eof=False)
+            partial = manager._actions[action].reply
+            cancel.set()
+            with pytest.raises(InterruptedError, match="cancelled"):
+                future.result(timeout=2)
+            assert finished.wait(2)
+            assert partial.stream.closed
+            assert manager.pending() == []
+            assert not (tmp_path / "cancelled").exists()
+
+            # A later request uses the same client/channel and receives real bytes.
+            page = tmp_path / "page.txt"
+            page.write_text("immutable page α\n", encoding="utf-8")
+            wire = "".join(encode([(page, "text/plain", "page.txt")], {"page": 3}))
+            (tmp_path / "received").mkdir()
+            future = pool.submit(source_snapshot, tmp_path / "received", slot="book")
+            action = notices.get(timeout=2)["action_id"]
+            manager.fetch(action, "editor_source", 0)
+            manager.upload_reply(action, "editor_source", offset=0, text=wire, eof=True)
+            manager.acknowledge(action, "editor_source", "delivered")
+            assert future.result(timeout=2)["metadata"] == {"page": 3}
+            assert (tmp_path / "received" / "page.txt").read_bytes() == page.read_bytes()
+    finally:
+        manager.close()
+        broker.close()

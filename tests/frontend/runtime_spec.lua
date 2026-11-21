@@ -321,6 +321,7 @@ local function test_editor_open_anchors_to_requesting_client_in_project_tab()
   local notebook_buf = vim.api.nvim_get_current_buf()
   vim.api.nvim_buf_set_lines(notebook_buf, 0, -1, false, { '╭──', '1', '╰──' })
   local session = jusi.connect({ buf = notebook_buf, transport = FakeTransport.new() })
+  session.controller.on_failure = require('jusi.diagnostics').record
   local client_buf = vim.api.nvim_create_buf(false, true)
   local client = { client_id = 'cli_open_position', runtime_id = 'run_open_position', cell_id = session.model:cell_at_row(1).id }
   session.controller.clients[client.client_id] = client
@@ -433,7 +434,173 @@ local function test_editor_open_anchors_to_requesting_client_in_project_tab()
   vim.api.nvim_set_current_win(original)
 end
 
+local function test_document_actions_use_session_destination_and_trace_failures()
+  local original_notify = vim.notify
+  vim.notify = function() end
+  local original = vim.api.nvim_get_current_win()
+  vim.cmd('tabnew')
+  local notebook_buf = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_lines(notebook_buf, 0, -1, false, { '╭──', '%%read road', '╰──' })
+  local root = vim.fn.tempname(); vim.fn.mkdir(root, '', 448)
+  local shared = { directory = root, token = string.rep('a', 64) }
+  local session = jusi.connect({ buf = notebook_buf, transport = FakeTransport.new(), service = { shared_artifacts = shared } })
+  local client = { client_id = 'cli_document', runtime_id = 'run_document', cell_id = session.model:cell_at_row(1).id }
+  session.controller.clients[client.client_id] = client
+  local source = vim.api.nvim_create_buf(false, true)
+  session.interactive.surfaces.srf_document = { buf = source, client = client }
+  local source_win = vim.api.nvim_open_win(source, false, { split = 'right', win = 0 })
+  local host_before = package.loaded.jusi_neovim
+  local opened, reject = {}, false
+  package.loaded.jusi_neovim = {
+    provider_for = function(mime) return mime == 'application/pdf' and 'pdf' or nil end,
+    find_document = function(identity)
+      for _, buf in ipairs(opened) do
+        if vim.api.nvim_buf_is_valid(buf) and vim.b[buf].identity == identity then return buf end
+      end
+    end,
+    open = function(_, path, opts)
+      assert(vim.api.nvim_get_current_win() ~= original, 'Document escaped its source tab')
+      assert(vim.fn.filereadable(path) == 1)
+      local buf = vim.api.nvim_create_buf(false, true)
+      vim.b[buf].jusi_provider_id, vim.b[buf].identity = 'pdf', opts.document_id
+      vim.api.nvim_set_current_buf(buf); table.insert(opened, buf)
+      vim.schedule(function() opts.on_ready(reject and 'Fixture reader rejected document' or nil, buf) end)
+      return buf
+    end,
+  }
+  local pending, outcome, reply, seq
+  seq = 0
+  session.controller.transport.request = function(_, method, path, payload, _, callback)
+    if method == 'GET' then pending = callback
+    elseif path:match('/reply$') then
+      reply = (reply or '') .. payload.text
+      callback({ next_offset = payload.offset + #payload.text, eof = payload.eof })
+    else
+      outcome = payload.outcome
+      callback({ ok = true, delivery = { action_id = payload.action_id, outcome = outcome, reason = '' } })
+    end
+  end
+  local function deliver(kind, text, extra)
+    seq = seq + 1; pending, outcome, reply = nil, nil, nil
+    local action = { action = kind, action_id = 'act_document_' .. seq, client_id = client.client_id,
+      runtime_id = client.runtime_id, cell_id = client.cell_id, notebook_id = session.model.notebook_id,
+      editor_id = session.controller.editor_id, trace_id = 'trace_document_' .. seq }
+    session.controller.on_editor_action(action)
+    assert(pending, 'Document did not capture its source')
+    pending({ ok = true, action = action, remaining_ms = 29000, offset = 0, next_offset = #text, eof = true,
+      content = vim.tbl_extend('force', { action = kind, text = text, slot = 'book', provider = '', lifetime = 'independent' }, extra or {}) })
+    assert(vim.wait(1000, function() return outcome ~= nil end, 10))
+    return action
+  end
+  local function header(identity)
+    return { version = 1, metadata = { document_id = identity },
+      files = { { name = 'document.pdf', media_type = 'application/pdf', size = 4 } } }
+  end
+  local function stage(id)
+    local directory = root .. '/' .. vim.fn.sha256(client.client_id) .. '/' .. id
+    vim.fn.mkdir(directory, 'p', 448)
+    local file = assert(io.open(directory .. '/document.pdf', 'wb')); file:write('book'); file:close()
+  end
+  local ok, failure = xpcall(function()
+    for index, hidden in ipairs({ false, true }) do
+      if hidden then
+        for _, win in ipairs(vim.fn.win_findbuf(source)) do vim.api.nvim_win_close(win, true) end
+      end
+      local manifest = vim.json.encode(header('shared-book-' .. index))
+      deliver('offer_document', manifest, { shared_token = shared.token })
+      equal(outcome, 'delivered'); equal(vim.json.decode(reply).transport, 'shared')
+      local id = string.rep(tostring(index), 32); stage(id)
+      deliver('open_shared_document', manifest, { shared_token = shared.token, artifact_id = id })
+      equal(outcome, 'delivered', 'Shared document received no source window')
+      local count = #opened
+      deliver('offer_document', manifest, { shared_token = shared.token })
+      equal(vim.json.decode(reply).transport, 'reused'); equal(#opened, count)
+    end
+    -- HTTP fallback uses the same production session placement.
+    deliver('offer_document', vim.json.encode(header('http-book')), { shared_token = '' })
+    equal(vim.json.decode(reply).transport, 'http')
+    local page = vim.fn.tempname(); vim.fn.writefile({ 'book' }, page, 'b')
+    local wire = require('jusi.artifacts').encode({ metadata = { document_id = 'http-book' },
+      files = { { name = 'document.pdf', path = page, media_type = 'application/pdf', size = 4 } } })
+    local f = assert(io.open(wire, 'rb')); local text = f:read('*a'); f:close(); os.remove(wire); os.remove(page)
+    deliver('open_document', text); equal(outcome, 'delivered')
+    local owned_id = string.rep('c', 32)
+    stage(owned_id)
+    local owned_manifest = vim.json.encode(header('client-book'))
+    deliver('open_shared_document', owned_manifest, { shared_token = shared.token, artifact_id = owned_id, lifetime = 'client' })
+    equal(outcome, 'delivered')
+    local owner = client
+    local owned = opened[#opened]
+    client = { client_id = 'cli_other_document', runtime_id = owner.runtime_id, cell_id = owner.cell_id }
+    session.controller.clients[client.client_id] = client
+    local other_source = vim.api.nvim_create_buf(false, true)
+    session.interactive.surfaces.srf_other_document = { buf = other_source, client = client }
+    deliver('offer_document', owned_manifest, { shared_token = shared.token })
+    equal(vim.json.decode(reply).transport, 'shared', 'Independent offer reused a client-owned buffer')
+    stage(owned_id)
+    deliver('open_shared_document', owned_manifest, { shared_token = shared.token, artifact_id = owned_id })
+    equal(outcome, 'delivered')
+    local independent = opened[#opened]
+    assert(independent ~= owned)
+    session.controller.on_client_closed(owner, owner)
+    assert(not vim.api.nvim_buf_is_valid(owned) and vim.api.nvim_buf_is_valid(independent))
+    -- A provider readiness failure must use the same trace as its action.
+    reject = true
+    local id = string.rep('f', 32); stage(id)
+    local action = deliver('open_shared_document', vim.json.encode(header('rejected-book')), { shared_token = shared.token, artifact_id = id })
+    equal(outcome, 'failed')
+    local failures = require('jusi.diagnostics').find(action.trace_id)
+    equal(#failures, 1); equal(failures[1].layer, 'frontend_presentation')
+    equal(failures[1].details.action_id, action.action_id)
+    assert(failures[1].message:find('Fixture reader rejected document', 1, true))
+    equal(session.controller.kernel_state, 'off') -- presentation never changes kernel truth
+    assert(session.controller.clients[client.client_id] == client)
+  end, debug.traceback)
+  for _, buf in ipairs(opened) do if vim.api.nvim_buf_is_valid(buf) then vim.api.nvim_buf_delete(buf, { force = true }) end end
+  package.loaded.jusi_neovim = host_before
+  -- This test supplies a shared filesystem descriptor, not an owned process.
+  session.service = nil
+  jusi._destroy_session(notebook_buf)
+  vim.fn.delete(root, 'rf')
+  vim.cmd('tabclose!')
+  vim.api.nvim_set_current_win(original)
+  vim.notify = original_notify
+  assert(ok, failure)
+end
+
+local function test_mirrored_notebook_commands()
+  vim.cmd.tabnew()
+  local buf, left = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
+  vim.api.nvim_buf_set_lines(buf, 0, -1, false, { '╭──', 'first()', '╰──', '╭──', 'second()', '╰──' })
+  local right = vim.api.nvim_open_win(buf, true, { split = 'right', win = left })
+  local transport = FakeTransport.new()
+  local session = jusi.connect({ buf = buf, transport = transport })
+  jusi.start_kernel(buf)
+  session.editing.cellmode:set(true)
+  vim.api.nvim_win_set_cursor(left, { 2, 1 })
+  vim.api.nvim_win_set_cursor(right, { 5, 2 })
+  for _, win in ipairs({ left, right, left }) do
+    vim.api.nvim_set_current_win(win)
+    vim.cmd('JusiExecute')
+    local expected = win == left and 'first()' or 'second()'
+    equal(transport.requests[#transport.requests].payload.code, expected, 'Execution used another pane')
+  end
+  local cells = session.model:ordered_cells()
+  for index, cell in ipairs(cells) do
+    local id = 'cli_pane_' .. index
+    session.controller.clients[id] = { client_id = id, cell_id = cell.id, notebook_id = session.model.notebook_id }
+  end
+  vim.api.nvim_set_current_win(right)
+  vim.api.nvim_feedkeys('Q', 'xt', false)
+  equal(transport.requests[#transport.requests].payload.client_id, 'cli_pane_2', 'Q selected another pane')
+  jusi._destroy_session(buf)
+  vim.cmd('tabclose!')
+  vim.api.nvim_buf_delete(buf, { force = true })
+end
+
 function M.run()
+  test_mirrored_notebook_commands()
+  test_document_actions_use_session_destination_and_trace_failures()
   test_explicit_command_workflow()
   test_client_commands_use_focused_projection_identity()
   test_vipynb_filetype_and_legacy_connection_guard()

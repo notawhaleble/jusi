@@ -11,6 +11,7 @@ local function terminal_text(buf)
 end
 
 function M.run()
+  local original_document_host = package.loaded.jusi_neovim
   local source_window = vim.api.nvim_get_current_win()
   local gutter_options = { number = true, relativenumber = true, signcolumn = "yes", foldcolumn = "1" }
   local saved_gutters = {}
@@ -50,6 +51,20 @@ function M.run()
       return session.controller.kernel_state == "on"
     end, "terminal fixture kernel did not start")
 
+    -- A worker can explicitly close its client after successful application exit.
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { '%%terminal_fixture --close-on-success' })
+    local one_shot_cell = session.model:cell_at_row(1).id
+    jusi.execute(buf, 1)
+    wait_for(10000, function()
+      local mark = session.marks.records[one_shot_cell]
+      return mark and mark.state == 'done' and next(session.controller.clients) == nil
+        and next(session.interactive.surfaces) == nil
+    end, 'successful one-shot client did not finish the cell without followup')
+    assert(session.controller.kernel_state == 'on')
+    assert(not vim.iter(notifications):any(function(message)
+      return message:find('channel_closed', 1, true) ~= nil
+    end), vim.inspect(notifications))
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { '%%terminal_fixture' })
     jusi.execute(buf, 1)
     wait_for(10000, function()
       return next(session.interactive.surfaces) ~= nil
@@ -285,20 +300,50 @@ function M.run()
     assert(session.controller.surfaces[first_surface_id] ~= nil)
     assert(session.controller.kernel_state == "on")
 
-    -- Tab cleanup ends the exact client even during active worker work, removes
-    -- the temporary notebook mirror, and retains the source and project view.
+    -- A client-owned Markdown overlay must select its hidden terminal client
+    -- for cleanup, including active worker work, while retaining the book view.
     for _, win in ipairs(vim.fn.win_findbuf(record.buf)) do vim.api.nvim_win_close(win, true) end
     vim.cmd.tabnew()
     local cleanup_tab, project_win = vim.api.nvim_get_current_tabpage(), vim.api.nvim_get_current_win()
     local mirror_win = vim.api.nvim_open_win(buf, true, { split = 'left' })
     vim.api.nvim_open_win(record.buf, true, { split = 'below' })
-    vim.cmd.JusiCloseTab()
+    package.loaded.jusi_neovim = {
+      provider_for = function(mime) return mime == 'text/markdown' and 'markdown' or nil end,
+      find_document = function() end,
+      open = function(_, path, opts)
+        local page = vim.api.nvim_create_buf(false, true)
+        vim.bo[page].bufhidden = 'hide'
+        vim.api.nvim_buf_set_lines(page, 0, -1, false, vim.fn.readfile(path))
+        vim.api.nvim_set_current_buf(page)
+        opts.on_ready(nil, page)
+        return page
+      end,
+    }
+    local explanation_path = vim.fn.tempname()
+    vim.fn.writefile({ '# Explanation', '', 'Client-owned document.' }, explanation_path)
+    local artifact = require('jusi.artifacts').encode({ metadata = { document_id = 'cleanup-explanation' },
+      files = { { path = explanation_path, name = 'explanation.md', media_type = 'text/markdown',
+        size = vim.fn.getfsize(explanation_path) } } })
+    local action = { action = 'open_document', client_id = first_client_id, cell_id = record.client.cell_id }
+    local opened = session.apply_editor_action({ action = 'open_document', text = '', provider = '',
+      slot = 'explanation', lifetime = 'client' }, action, artifact, session.capture_editor_destination(action))
+    local ready = false
+    opened.start(function(success) assert(success); ready = true end)
+    assert(ready)
+    os.remove(explanation_path); os.remove(artifact)
+    package.loaded.jusi_neovim = original_document_host
+    local explanation = session.url_slots[first_client_id].explanation.buf
+    assert(#vim.fn.win_findbuf(record.buf) == 0)
+    vim.api.nvim_set_current_win(project_win)
+    vim.api.nvim_feedkeys('\\Q', 'xt', false)
     wait_for(5000, function()
       return next(session.controller.clients) == nil
         and next(session.controller.surfaces) == nil
         and next(session.interactive.surfaces) == nil
         and not vim.api.nvim_win_is_valid(mirror_win)
-    end, "tab cleanup did not retire the terminal surface and notebook mirror")
+    end, "tab cleanup did not retire the overlaid terminal client and notebook mirror")
+    assert(not vim.api.nvim_buf_is_valid(explanation), 'client close retained its explanation')
+    assert(session.marks.records[record.client.cell_id].state ~= 'followup', 'closed client retained followup state')
     assert(vim.api.nvim_win_is_valid(source_window) and vim.api.nvim_win_get_buf(source_window) == buf)
     assert(vim.api.nvim_win_is_valid(project_win) and #vim.api.nvim_tabpage_list_wins(cleanup_tab) == 1)
     vim.api.nvim_set_current_tabpage(cleanup_tab); vim.cmd('tabclose!')
@@ -366,6 +411,7 @@ function M.run()
       return service.state == "stopped" and jusi._sessions[buf] == nil
     end, "terminal fixture service did not stop")
   end, debug.traceback)
+  package.loaded.jusi_neovim = original_document_host
   if buf and jusi._sessions[buf] then
     jusi._destroy_session(buf)
   elseif service and service.state ~= "stopped" then

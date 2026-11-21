@@ -47,6 +47,7 @@ function Mode:set(enabled)
       ['<C-P>'] = function() self:history_relative(-1) end,
       ['<C-N>'] = function() self:history_relative(1) end,
     }
+    actions['<C-J>'] = actions['<CR>']
     for key, callback in pairs(actions) do self:map(key, callback) end
   end
   self:refresh_marks()
@@ -77,7 +78,8 @@ function Mode:submit_and_edit()
   if not snapshot or not snapshot.valid then return end
   local model, buf = self.editor.model, self.editor.model.buf
   local body = model:body(cell)
-  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  local win = vim.api.nvim_get_current_win()
+  local row = vim.api.nvim_win_get_cursor(win)[1] - 1
   if row < snapshot.body_start_row or row >= snapshot.body_end_row then return end
   return require('jusi').submit(buf, row, function(response, failure)
     -- Requests can finish after further typing, navigation, deletion or restart.
@@ -89,7 +91,7 @@ function Mode:submit_and_edit()
     if not current or not current.valid then return end
     local first = current.body_start_row
     if (body[1] or ''):match('^%s*%%%%[%a][%w_-]*') then first = first + 1 end
-    local editing_here = vim.api.nvim_get_current_buf() == buf
+    local editing_here = vim.api.nvim_get_current_win() == win and vim.api.nvim_get_current_buf() == buf
       and model:cell_at_row(vim.api.nvim_win_get_cursor(0)[1] - 1) == cell
     vim.api.nvim_buf_set_lines(buf, first, current.body_end_row, false, { '' })
     model:flush()

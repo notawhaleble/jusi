@@ -1,0 +1,9 @@
+{
+  "action": "open_shared_document",
+  "text": "",
+  "slot": "book",
+  "provider": "pdf",
+  "lifetime": "independent",
+  "shared_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "artifact_id": "../another-client"
+}

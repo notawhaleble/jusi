@@ -14,6 +14,7 @@ local detail_fields = {
   "teardown_completed", "side_effects_may_have_occurred", "kernel_state",
   "code_bytes", "code_line_count", "adapter_modules", "attestation_count",
   "entry_point", "distribution", "earliest_cursor", "latest_cursor",
+  "action_id", "action",
 }
 
 local function bounded(value, depth, budget)

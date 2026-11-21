@@ -121,3 +121,9 @@ Stream failures are closed JSON controls with operation `attach`, `resize`, or
 `protocol_violation`, or `channel_closed`. They describe this attachment only;
 they do not alter kernel state. The first protocol version permits one active
 input attachment per surface, so a competing attach fails with `busy`.
+
+Document actions accept optional `placement: "default" | "tab"`; omitted placement
+retains existing behavior. Artifact basenames are flat UTF-8 names of at most 255
+bytes. The private `terminal_surface.create` request accepts optional boolean
+`close_on_success` (default false), explicitly closing its client after an observed
+zero application exit code. See ADR 0056.

@@ -56,7 +56,13 @@
             "copy",
             "open",
             "show_diff",
-            "open_url"
+            "open_url",
+            "close_url",
+            "open_document",
+            "close_document",
+            "source_snapshot",
+            "offer_document",
+            "open_shared_document"
           ]
         }
       },
@@ -258,8 +264,172 @@
           }
         },
         {
-          "if": {"properties": {"action": {"properties": {"action": {"const": "open_url"}}}}},
-          "then": {"properties": {"content": {"properties": {"action": {"const": "open_url"}}}}}
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "open_url"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "open_url"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "close_url"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "close_url"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "open_document"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "open_document"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "close_document"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "close_document"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "source_snapshot"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "source_snapshot"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "offer_document"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "offer_document"
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "action": {
+                "properties": {
+                  "action": {
+                    "const": "open_shared_document"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "content": {
+                "properties": {
+                  "action": {
+                    "const": "open_shared_document"
+                  }
+                }
+              }
+            }
+          }
         }
       ],
       "dependentRequired": {
@@ -406,11 +576,130 @@
           }
         }
       ]
+    },
+    "reply_chunk": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "kind",
+        "request_id",
+        "text",
+        "eof"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "kind": {
+          "const": "application.editor_reply_chunk"
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536,
+          "pattern": "^[^\\u0000]*$",
+          "description": "At most 65536 UTF-8 bytes per chunk."
+        },
+        "eof": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "eof": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "upload_reply": {
+      "type": "object",
+      "required": [
+        "editor_id",
+        "offset",
+        "text",
+        "eof"
+      ],
+      "properties": {
+        "editor_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 377487360
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 65536,
+          "pattern": "^[^\\u0000]*$"
+        },
+        "eof": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "eof": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "document_offer_reply": {
+      "type": "object",
+      "required": [
+        "transport"
+      ],
+      "properties": {
+        "transport": {
+          "enum": [
+            "reused",
+            "shared",
+            "http"
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "oneOf": [
-    {"$ref": "attention.schema.json#/$defs/application"},
-    {"$ref": "attention.schema.json#/$defs/result"},
+    {
+      "$ref": "attention.schema.json#/$defs/application"
+    },
+    {
+      "$ref": "attention.schema.json#/$defs/result"
+    },
     {
       "$ref": "#/$defs/request"
     },
@@ -422,6 +711,9 @@
     },
     {
       "$ref": "#/$defs/chunk"
+    },
+    {
+      "$ref": "#/$defs/reply_chunk"
     }
   ]
 }

@@ -104,7 +104,7 @@ local function validate_client(client)
   for _, field in ipairs({ "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "created_at" }) do
     if not nonempty_string(client[field]) then return false, "invalid client identity" end
   end
-  local allowed_capabilities = set({ "execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention" })
+  local allowed_capabilities = set({ "execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention", "source_context" })
   if type(client.capabilities) ~= "table" then return false, "invalid client capabilities" end
   local seen = {}
   for _, capability in ipairs(client.capabilities) do
@@ -168,7 +168,12 @@ end
 
 local function validate_terminal_surface_request(request)
   if type(request) ~= "table" then return false, "core request must be an object" end
-  local ok, err = exact_fields(request, { "request_id", "kind", "argv", "cwd", "environment_overrides", "capabilities" })
+  local fields = { "request_id", "kind", "argv", "cwd", "environment_overrides", "capabilities" }
+  if request.close_on_success ~= nil then
+    if type(request.close_on_success) ~= 'boolean' then return false, 'invalid close_on_success' end
+    table.insert(fields, 'close_on_success')
+  end
+  local ok, err = exact_fields(request, fields)
   if not ok then return false, err end
   if not bounded_string(request.request_id, 3, 128) or request.kind ~= "terminal_surface.create" then
     return false, "invalid core request identity or kind"
@@ -324,6 +329,11 @@ function M.validate_command(command, expected_kind)
   for _, field in ipairs(fields) do
     allowed[field] = true
   end
+  if expected_kind == 'execute' or expected_kind == 'followup' then
+    allowed.source_context = true
+    if command.source_context ~= nil and (type(command.source_context) ~= 'string' or #command.source_context > 128
+        or not command.source_context:match('^[A-Za-z0-9_-]+$')) then return false, 'invalid source context' end
+  end
   if expected_kind == "execute" then
     allowed.bootstrap = true
     if command.bootstrap ~= nil and type(command.bootstrap) ~= "boolean" then return false, "invalid bootstrap flag" end
@@ -345,7 +355,7 @@ function M.validate_command(command, expected_kind)
   end
   if expected_kind == "editor_action" then
     allowed.selection = true
-    if not set({ "copy", "open", "show_diff", "open_url" })[command.action] or type(command.selection) ~= "table"
+    if not set({ "copy", "open", "show_diff", "open_url", "close_url" })[command.action] or type(command.selection) ~= "table"
         or (#command.selection > 0) then return false, "invalid editor action selection" end
   end
   if expected_kind == "ack_editor_action" and command.outcome ~= "delivered" and command.outcome ~= "failed" then
@@ -612,7 +622,7 @@ function M.validate_plugin_catalog(catalog)
   local top = { protocol_version = true, catalog_version = true, discovery_id = true, plugins = true }
   for field, _ in pairs(catalog) do if not top[field] then return false, "unknown plugin catalog field: " .. field end end
   local ids = {}
-  local capabilities = set({ "execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention" })
+  local capabilities = set({ "execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention", "source_context" })
   local interactions = set({ "noninteractive", "request_response", "terminal_interactive" })
   local plugin_fields = set({ "plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction" })
   local family_by_id = {}
@@ -700,7 +710,14 @@ function M.validate_plugin_worker_message(message)
       local ok = exact_fields(message.payload, { "target_request_id" })
       if not ok or not nonempty_string(message.payload.target_request_id) then return false, "invalid interrupt target" end
     end
-    return exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "payload" })
+    local fields = { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "payload" }
+    if message.source_context ~= nil then
+      if (message.operation ~= "execute" and message.operation ~= "followup")
+          or not bounded_string(message.source_context, 1, 128)
+          or not message.source_context:match("^[A-Za-z0-9_-]+$") then return false, "invalid worker source context" end
+      table.insert(fields, "source_context")
+    end
+    return exact_fields(message, fields)
   elseif kind == "worker.result" then
     if type(message.result) ~= "table" then return false, "worker result must be an object" end
     local result_ok, result_error = exact_fields(message, { "protocol_version", "kind", "plugin_worker_id", "request_id", "trace_id", "operation", "result", "core_requests" })
@@ -783,16 +800,51 @@ function M.validate_completion(result, cursor_pos)
   return true
 end
 
+function M.validate_document_offer_reply(value)
+  return type(value) == 'table' and vim.tbl_count(value) == 1
+    and (value.transport == 'reused' or value.transport == 'shared' or value.transport == 'http')
+end
+
 function M.validate_editor_action(result, action)
-  if type(result) ~= "table" or result.action ~= action or not set({ "copy", "open", "show_diff", "open_url" })[action] then
+  if type(result) ~= "table" or result.action ~= action or not set({ "copy", "open", "show_diff", "open_url", "close_url", "open_document", "offer_document", "open_shared_document", "close_document", "source_snapshot" })[action] then
     return false, "editor action does not match request"
   end
   local fields = action == "copy" and { "action", "text", "regtype" } or { "action", "text", "name", "filetype" }
-  if action == "open_url" then fields = { "action", "text", "url" } end
+  if action == "open_url" then
+    fields = { "action", "text", "url" }
+    if result.slot ~= nil then table.insert(fields, "slot") end
+  end
+  if action == "close_url" then fields = { "action", "text", "slot" } end
+  if action == "open_document" or action == "offer_document" or action == "open_shared_document" then
+    fields = { "action", "text", "slot", "provider", "lifetime" }
+    if result.placement ~= nil then table.insert(fields, 'placement') end
+    if action ~= 'open_document' then table.insert(fields, 'shared_token') end
+    if action == 'open_shared_document' then table.insert(fields, 'artifact_id') end
+  end
+  if action == "close_document" then fields = { "action", "text", "slot" } end
+  if action == "source_snapshot" then fields = { "action", "text", "slot", "context_id" } end
   if action == "show_diff" then fields = { "action", "text", "before_bytes", "before_name", "after_name", "filetype" } end
   local ok, err = exact_fields(result, fields)
   if not ok then return false, err end
   if type(result.text) ~= "string" or result.text:find("%z") then return false, "invalid editor text" end
+  if result.slot ~= nil and (type(result.slot) ~= "string" or #result.slot < 1 or #result.slot > 64
+      or not result.slot:match("^[A-Za-z0-9_-]+$")) then return false, "invalid URL slot" end
+  if action == "open_document" or action == "offer_document" or action == "open_shared_document" then
+    if result.placement ~= nil and result.placement ~= 'default' and result.placement ~= 'tab' then return false, 'invalid document placement' end
+    if action ~= 'open_document' and (type(result.shared_token) ~= 'string'
+      or (result.shared_token ~= '' and (#result.shared_token ~= 64 or not result.shared_token:match('^[0-9a-f]+$')))) then return false, 'invalid shared artifact session' end
+    if action == 'open_shared_document' and (result.shared_token == '' or type(result.artifact_id) ~= 'string'
+      or #result.artifact_id ~= 32 or not result.artifact_id:match('^[0-9a-f]+$')) then return false, 'invalid shared artifact identity' end
+    return type(result.provider) == 'string' and #result.provider <= 64
+      and (result.provider == '' or result.provider:match('^[A-Za-z0-9_-]+$') ~= nil)
+      and (result.lifetime == 'client' or result.lifetime == 'independent'), 'invalid document presentation'
+  end
+  if action == "close_document" then return result.text == '', 'invalid document close' end
+  if action == "source_snapshot" then
+    return result.text == '' and type(result.context_id) == 'string' and #result.context_id <= 128
+      and (result.context_id == '' or result.context_id:match('^[A-Za-z0-9_-]+$') ~= nil), 'invalid source context'
+  end
+  if action == "close_url" then return result.text == "", "URL close text must be empty" end
   if action == "open_url" then
     return result.text == "" and type(result.url) == "string" and vim.fn.strchars(result.url) <= 8192
       and result.url:match("^https?://.+$") ~= nil and not result.url:find("[%s%c]"), "invalid HTTP(S) URL"
@@ -821,7 +873,7 @@ function M.validate_editor_action_metadata(value)
   local ok, err = exact_fields(value, fields)
   if not ok then return false, err end
   for _, key in ipairs(fields) do if not bounded_string(value[key], 1, 128) then return false, "invalid editor action identity" end end
-  if value.action ~= "copy" and value.action ~= "open" and value.action ~= "show_diff" and value.action ~= "open_url" then return false, "invalid editor action type" end
+  if value.action ~= "copy" and value.action ~= "open" and value.action ~= "show_diff" and value.action ~= "open_url" and value.action ~= "close_url" and value.action ~= "open_document" and value.action ~= "offer_document" and value.action ~= "open_shared_document" and value.action ~= "close_document" and value.action ~= "source_snapshot" then return false, "invalid editor action type" end
   return true
 end
 
@@ -841,7 +893,7 @@ function M.validate_application_action(value)
     if not ok or type(value.content) ~= "table" then return false, "invalid application action request" end
     if value.kind == "application.editor_action_begin" and value.content.text ~= "" then return false, "invalid stream header" end
     return M.validate_editor_action(value.content, value.content.action)
-  elseif value.kind == "application.editor_action_chunk" then
+  elseif value.kind == "application.editor_action_chunk" or value.kind == "application.editor_reply_chunk" then
     return exact_fields(value, { "protocol_version", "kind", "request_id", "text", "eof" })
       and type(value.text) == "string" and #value.text <= 65536 and not value.text:find("%z")
       and type(value.eof) == "boolean" and (value.eof or #value.text > 0)
@@ -912,6 +964,14 @@ end
 function M.validate_attention_ack(value)
   return type(value) == "table" and exact_fields(value, { "ok", "attention_id", "dismissed" })
     and value.ok == true and value.dismissed == true and bounded_string(value.attention_id, 3, 128), "invalid attention acknowledgment"
+end
+
+function M.validate_editor_reply(value)
+  if type(value) ~= 'table' or not exact_fields(value, { 'editor_id', 'offset', 'text', 'eof' }) then return false end
+  return bounded_string(value.editor_id, 1, 128) and type(value.offset) == 'number'
+    and value.offset >= 0 and value.offset <= 360 * 1024 * 1024 and value.offset % 1 == 0
+    and type(value.text) == 'string' and #value.text <= 65536 and not value.text:find('%z')
+    and type(value.eof) == 'boolean' and (value.eof or #value.text > 0)
 end
 
 return M

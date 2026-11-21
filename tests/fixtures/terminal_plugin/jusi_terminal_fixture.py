@@ -113,6 +113,10 @@ class FixtureWorker:
             raise ValueError(f"unsupported fixture operation: {operation}")
         self.selection = payload.get("body", "")
         self.publish("initial submission", self.selection)
+        if payload.get("line") == "--close-on-success":
+            return WorkerResult({"accepted": True}, (terminal_surface(
+                "one_shot_fixture", (sys.executable, "-c", "pass"), close_on_success=True,
+            ),))
         return WorkerResult(
             {"accepted": True},
             (terminal_surface(

@@ -26,6 +26,8 @@ local function start_service()
     error("service launcher did not complete")
   end
   assert(failure == nil, vim.inspect(failure))
+  assert(service.shared_artifacts and service.shared_artifacts.token == service.ready.shared_artifacts,
+    'Local service did not prove shared staging access')
   return service
 end
 
@@ -261,6 +263,7 @@ local function run_scenario()
   end
   assert(stop_result ~= nil, "local service did not stop")
   assert(stop_failure == nil, vim.inspect(stop_failure))
+  assert(vim.fn.isdirectory(service.artifact_candidate.directory) == 0, 'Service retained shared staging')
   return result
 end
 

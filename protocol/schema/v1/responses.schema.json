@@ -4,145 +4,356 @@
   "title": "Jusi Protocol v1 HTTP Responses",
   "$defs": {
     "editor_action": {
-  "oneOf": [
-{
-  "type": "object",
-  "required": [
-    "action",
-    "text",
-    "url"
-  ],
-  "properties": {
-    "action": {
-      "const": "open_url"
-    },
-    "text": {
-      "const": ""
-    },
-    "url": {
-      "type": "string",
-      "maxLength": 8192,
-      "pattern": "^https?://[^\\s\\u0000-\\u0020\\u007f]+$"
-    }
-  },
-  "additionalProperties": false
-},
-    {
-      "type": "object",
-      "required": [
-        "action",
-        "text",
-        "regtype"
-      ],
-      "properties": {
-        "action": {
-          "const": "copy"
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "url"
+          ],
+          "properties": {
+            "action": {
+              "const": "open_url"
+            },
+            "text": {
+              "const": ""
+            },
+            "url": {
+              "type": "string",
+              "maxLength": 8192,
+              "pattern": "^https?://[^\\s\\u0000-\\u0020\\u007f]+$"
+            },
+            "slot": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          },
+          "additionalProperties": false
         },
-        "text": {
-          "type": "string",
-          "pattern": "^[^\\u0000]*$"
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "slot"
+          ],
+          "properties": {
+            "action": {
+              "const": "close_url"
+            },
+            "text": {
+              "const": ""
+            },
+            "slot": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          },
+          "additionalProperties": false
         },
-        "regtype": {
-          "enum": [
-            "v",
-            "V"
-          ]
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "regtype"
+          ],
+          "properties": {
+            "action": {
+              "const": "copy"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
+            },
+            "regtype": {
+              "enum": [
+                "v",
+                "V"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "name",
+            "filetype"
+          ],
+          "properties": {
+            "action": {
+              "const": "open"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
+              "not": {
+                "enum": [
+                  ".",
+                  ".."
+                ]
+              }
+            },
+            "filetype": {
+              "type": "string",
+              "pattern": "^([a-z][a-z0-9_]{0,63}|)$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "before_bytes",
+            "before_name",
+            "after_name",
+            "filetype"
+          ],
+          "properties": {
+            "action": {
+              "const": "show_diff"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
+            },
+            "before_bytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991,
+              "description": "UTF-8 byte boundary in concatenated before+after text; validate against complete assembled content before display."
+            },
+            "before_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
+              "not": {
+                "enum": [
+                  ".",
+                  ".."
+                ]
+              }
+            },
+            "after_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
+              "not": {
+                "enum": [
+                  ".",
+                  ".."
+                ]
+              }
+            },
+            "filetype": {
+              "type": "string",
+              "pattern": "^([a-z][a-z0-9_]{0,63}|)$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "slot",
+            "provider",
+            "lifetime"
+          ],
+          "properties": {
+            "action": {
+              "const": "open_document"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
+            },
+            "slot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "provider": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{0,64}$"
+            },
+            "lifetime": {
+              "enum": [
+                "client",
+                "independent"
+              ]
+            },
+            "placement": {
+              "enum": [
+                "default",
+                "tab"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "slot"
+          ],
+          "properties": {
+            "action": {
+              "const": "close_document"
+            },
+            "text": {
+              "const": ""
+            },
+            "slot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "slot",
+            "context_id"
+          ],
+          "properties": {
+            "action": {
+              "const": "source_snapshot"
+            },
+            "text": {
+              "const": ""
+            },
+            "slot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "context_id": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{0,128}$"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "slot",
+            "provider",
+            "lifetime",
+            "shared_token"
+          ],
+          "properties": {
+            "action": {
+              "const": "offer_document"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
+            },
+            "slot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "provider": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{0,64}$"
+            },
+            "lifetime": {
+              "enum": [
+                "client",
+                "independent"
+              ]
+            },
+            "shared_token": {
+              "type": "string",
+              "pattern": "^([0-9a-f]{64}|)$"
+            },
+            "placement": {
+              "enum": [
+                "default",
+                "tab"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "text",
+            "slot",
+            "provider",
+            "lifetime",
+            "shared_token",
+            "artifact_id"
+          ],
+          "properties": {
+            "action": {
+              "const": "open_shared_document"
+            },
+            "text": {
+              "type": "string",
+              "pattern": "^[^\\u0000]*$"
+            },
+            "slot": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "provider": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{0,64}$"
+            },
+            "lifetime": {
+              "enum": [
+                "client",
+                "independent"
+              ]
+            },
+            "shared_token": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "artifact_id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "placement": {
+              "enum": [
+                "default",
+                "tab"
+              ]
+            }
+          },
+          "additionalProperties": false
         }
-      },
-      "additionalProperties": false
+      ]
     },
-    {
-      "type": "object",
-      "required": [
-        "action",
-        "text",
-        "name",
-        "filetype"
-      ],
-      "properties": {
-        "action": {
-          "const": "open"
-        },
-        "text": {
-          "type": "string",
-          "pattern": "^[^\\u0000]*$"
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
-          "not": {
-            "enum": [
-              ".",
-              ".."
-            ]
-          }
-        },
-        "filetype": {
-          "type": "string",
-          "pattern": "^([a-z][a-z0-9_]{0,63}|)$"
-        }
-      },
-      "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "required": [
-        "action",
-        "text",
-        "before_bytes",
-        "before_name",
-        "after_name",
-        "filetype"
-      ],
-      "properties": {
-        "action": {
-          "const": "show_diff"
-        },
-        "text": {
-          "type": "string",
-          "pattern": "^[^\\u0000]*$"
-        },
-        "before_bytes": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991,
-          "description": "UTF-8 byte boundary in concatenated before+after text; validate against complete assembled content before display."
-        },
-        "before_name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
-          "not": {
-            "enum": [
-              ".",
-              ".."
-            ]
-          }
-        },
-        "after_name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]+$",
-          "not": {
-            "enum": [
-              ".",
-              ".."
-            ]
-          }
-        },
-        "filetype": {
-          "type": "string",
-          "pattern": "^([a-z][a-z0-9_]{0,63}|)$"
-        }
-      },
-      "additionalProperties": false
-    }
-  ]
-},
     "completion": {
       "type": "object",
       "required": [
@@ -241,67 +452,218 @@
     },
     "execution": {
       "type": "object",
-      "required": ["execution_id", "kernel_id", "notebook_id", "cell_id", "client_id", "outcome", "started_at", "completed_at"],
+      "required": [
+        "execution_id",
+        "kernel_id",
+        "notebook_id",
+        "cell_id",
+        "client_id",
+        "outcome",
+        "started_at",
+        "completed_at"
+      ],
       "properties": {
-        "execution_id": {"type": "string", "minLength": 3},
-        "kernel_id": {"type": "string", "minLength": 3},
-        "notebook_id": {"type": "string", "minLength": 1},
-        "cell_id": {"type": "string", "minLength": 1},
-        "client_id": {"type": ["string", "null"]},
-        "outcome": {"enum": ["running"]},
-        "started_at": {"type": "string", "format": "date-time"},
-        "completed_at": {"type": "null"}
+        "execution_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "kernel_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "notebook_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cell_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "client_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outcome": {
+          "enum": [
+            "running"
+          ]
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "null"
+        }
       },
       "additionalProperties": false
     },
     "surface": {
       "type": "object",
-      "required": ["surface_id", "client_id", "runtime_id", "kind", "capabilities", "transport", "created_at"],
+      "required": [
+        "surface_id",
+        "client_id",
+        "runtime_id",
+        "kind",
+        "capabilities",
+        "transport",
+        "created_at"
+      ],
       "properties": {
-        "surface_id": {"type": "string", "minLength": 3},
-        "client_id": {"type": "string", "minLength": 3},
-        "runtime_id": {"type": "string", "minLength": 3},
-        "kind": {"const": "terminal"},
+        "surface_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "kind": {
+          "const": "terminal"
+        },
         "capabilities": {
           "type": "array",
           "uniqueItems": true,
-          "items": {"enum": ["input", "resize", "signal"]},
+          "items": {
+            "enum": [
+              "input",
+              "resize",
+              "signal"
+            ]
+          },
           "allOf": [
-            {"contains": {"const": "input"}},
-            {"contains": {"const": "resize"}}
+            {
+              "contains": {
+                "const": "input"
+              }
+            },
+            {
+              "contains": {
+                "const": "resize"
+              }
+            }
           ]
         },
         "transport": {
           "type": "object",
-          "required": ["kind", "endpoint", "subprotocol"],
+          "required": [
+            "kind",
+            "endpoint",
+            "subprotocol"
+          ],
           "properties": {
-            "kind": {"const": "websocket"},
-            "endpoint": {"type": "string", "pattern": "^/", "minLength": 1},
-            "subprotocol": {"const": "jusi.terminal.v1"}
+            "kind": {
+              "const": "websocket"
+            },
+            "endpoint": {
+              "type": "string",
+              "pattern": "^/",
+              "minLength": 1
+            },
+            "subprotocol": {
+              "const": "jusi.terminal.v1"
+            }
           },
           "additionalProperties": false
         },
-        "created_at": {"type": "string", "format": "date-time"}
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
       "additionalProperties": false
     },
     "client": {
       "type": "object",
-      "required": ["client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "capabilities", "interaction", "created_at"],
+      "required": [
+        "client_id",
+        "runtime_id",
+        "kernel_id",
+        "notebook_id",
+        "cell_id",
+        "execution_id",
+        "plugin_worker_id",
+        "plugin_id",
+        "plugin_version",
+        "family_id",
+        "capabilities",
+        "interaction",
+        "created_at"
+      ],
       "properties": {
-        "client_id": {"type": "string", "minLength": 3},
-        "runtime_id": {"type": "string", "minLength": 3},
-        "kernel_id": {"type": "string", "minLength": 3},
-        "notebook_id": {"type": "string", "minLength": 1},
-        "cell_id": {"type": "string", "minLength": 1},
-        "execution_id": {"type": "string", "minLength": 3},
-        "plugin_worker_id": {"type": "string", "minLength": 3},
-        "plugin_id": {"type": "string", "minLength": 3},
-        "plugin_version": {"type": "string", "minLength": 1},
-        "family_id": {"type": "string", "minLength": 1},
-        "capabilities": {"type": "array", "uniqueItems": true, "items": {"enum": ["execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention"]}},
-        "interaction": {"enum": ["noninteractive", "request_response", "terminal_interactive"]},
-        "created_at": {"type": "string", "format": "date-time"}
+        "client_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "runtime_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "kernel_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "notebook_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cell_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "execution_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "plugin_worker_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "plugin_id": {
+          "type": "string",
+          "minLength": 3
+        },
+        "plugin_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "family_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "execute",
+              "bootstrap",
+              "followup",
+              "complete",
+              "interrupt",
+              "editor_actions",
+              "attention",
+              "source_context"
+            ]
+          }
+        },
+        "interaction": {
+          "enum": [
+            "noninteractive",
+            "request_response",
+            "terminal_interactive"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
       "additionalProperties": false
     }
@@ -309,50 +671,175 @@
   "allOf": [
     {
       "if": {
-        "required": ["status"],
-        "properties": {"status": {"const": "ready"}}
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "const": "ready"
+          }
+        }
       },
       "then": {
-        "required": ["supervisor_id", "earliest_event_sequence", "event_sequence", "kernel", "runtime", "executions", "clients", "surfaces"]
+        "required": [
+          "supervisor_id",
+          "earliest_event_sequence",
+          "event_sequence",
+          "kernel",
+          "runtime",
+          "executions",
+          "clients",
+          "surfaces"
+        ]
       }
     }
   ],
   "oneOf": [
     {
       "type": "object",
-      "required": ["ok"],
+      "required": [
+        "ok"
+      ],
       "properties": {
-        "ok": {"const": true},
-        "operation": {"type": "object"},
-        "kernel": {"type": ["object", "null"]},
+        "ok": {
+          "const": true
+        },
+        "operation": {
+          "type": "object"
+        },
+        "kernel": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
         "runtime": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
-            "runtime_id": {"type": "string", "minLength": 3},
-            "notebook_id": {"type": "string", "minLength": 1},
-            "discovery_id": {"type": "string", "minLength": 3},
-            "kernel_id": {"type": "string", "minLength": 3},
-            "plugin_catalog": {"$ref": "plugin-catalog.schema.json"},
-            "palette": {"type": "object", "additionalProperties": {
-              "type": "object", "required": ["entries"], "additionalProperties": false,
-              "properties": {"entries": {"type": "array", "uniqueItems": true,
-                "items": {"type": "string", "minLength": 1, "pattern": "^\\S+$"}}}
-            }}
+            "runtime_id": {
+              "type": "string",
+              "minLength": 3
+            },
+            "notebook_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "discovery_id": {
+              "type": "string",
+              "minLength": 3
+            },
+            "kernel_id": {
+              "type": "string",
+              "minLength": 3
+            },
+            "plugin_catalog": {
+              "$ref": "plugin-catalog.schema.json"
+            },
+            "palette": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": [
+                  "entries"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "entries": {
+                    "type": "array",
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "pattern": "^\\S+$"
+                    }
+                  }
+                }
+              }
+            }
           },
-          "required": ["runtime_id", "notebook_id", "discovery_id", "kernel_id", "plugin_catalog"],
+          "required": [
+            "runtime_id",
+            "notebook_id",
+            "discovery_id",
+            "kernel_id",
+            "plugin_catalog"
+          ],
           "additionalProperties": false
         },
-        "attention": {"type": "array", "maxItems": 256, "items": {"allOf": [{"$ref": "attention.schema.json#/$defs/record"}, {"properties": {"state": {"const": "pending"}}}]}},
-        "editor_actions": {"type": "array", "maxItems": 32, "items": {"$ref": "editor-actions.schema.json#/$defs/metadata"}},
-        "client_operations": {"type": "array", "maxItems": 1, "items": {
-          "type": "object", "required": ["operation_id", "client_id", "kind"],
-          "properties": {"operation_id": {"type": "string", "minLength": 1},
-                         "client_id": {"type": "string", "minLength": 1},
-                         "kind": {"enum": ["followup", "complete", "editor_action"]}},
-          "additionalProperties": false
-        }},
-        "clients": {"type": "array", "items": {"$ref": "#/$defs/client"}},
-        "pending_input": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/input_request"}]},
+        "attention": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "allOf": [
+              {
+                "$ref": "attention.schema.json#/$defs/record"
+              },
+              {
+                "properties": {
+                  "state": {
+                    "const": "pending"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "editor_actions": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "editor-actions.schema.json#/$defs/metadata"
+          }
+        },
+        "client_operations": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "operation_id",
+              "client_id",
+              "kind"
+            ],
+            "properties": {
+              "operation_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "client_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "followup",
+                  "complete",
+                  "editor_action"
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "clients": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/client"
+          }
+        },
+        "pending_input": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/input_request"
+            }
+          ]
+        },
         "input_reply": {
           "type": "object",
           "required": [
@@ -371,28 +858,78 @@
           },
           "additionalProperties": false
         },
-        "executions": {"type": "array", "maxItems": 1, "items": {"$ref": "#/$defs/execution"}},
-        "surfaces": {"type": "array", "items": {"$ref": "#/$defs/surface"}},
-        "execution": {"type": "object"},
-        "client": {"$ref": "#/$defs/client", "description": "Existing client returned by an idempotent bootstrap."},
-        "editor_action": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/editor_action"}]},
-        "completion": {"$ref": "#/$defs/completion"},
-        "result": {"type": "object"},
-        "cleanup": {"type": "object"},
-        "status": {"type": "string"},
-        "supervisor_id": {"type": "string"},
-        "earliest_event_sequence": {"type": "integer", "minimum": 1},
-        "event_sequence": {"type": "integer", "minimum": 0},
-        "failure": {"$ref": "common.schema.json#/$defs/failure"}
+        "executions": {
+          "type": "array",
+          "maxItems": 1,
+          "items": {
+            "$ref": "#/$defs/execution"
+          }
+        },
+        "surfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/surface"
+          }
+        },
+        "execution": {
+          "type": "object"
+        },
+        "client": {
+          "$ref": "#/$defs/client",
+          "description": "Existing client returned by an idempotent bootstrap."
+        },
+        "editor_action": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/editor_action"
+            }
+          ]
+        },
+        "completion": {
+          "$ref": "#/$defs/completion"
+        },
+        "result": {
+          "type": "object"
+        },
+        "cleanup": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        },
+        "supervisor_id": {
+          "type": "string"
+        },
+        "earliest_event_sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failure": {
+          "$ref": "common.schema.json#/$defs/failure"
+        }
       },
       "additionalProperties": true
     },
     {
       "type": "object",
-      "required": ["ok", "failure"],
+      "required": [
+        "ok",
+        "failure"
+      ],
       "properties": {
-        "ok": {"const": false},
-        "failure": {"$ref": "common.schema.json#/$defs/failure"}
+        "ok": {
+          "const": false
+        },
+        "failure": {
+          "$ref": "common.schema.json#/$defs/failure"
+        }
       },
       "additionalProperties": false
     }

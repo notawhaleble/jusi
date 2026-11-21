@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jusi.dev/protocol/v1/artifacts.schema.json",
+  "title": "Finite artifact stream records v1",
+  "description": "UTF-8 JSON lines, each at most 65536 bytes. Header, ordered data records, then end. Data checksum is SHA-256 of ASCII base64. Offsets count decoded bytes; file totals must match. Aggregate at most 256 MiB.",
+  "$defs": {
+    "manifest": {
+      "type": "object",
+      "required": [
+        "version",
+        "metadata",
+        "files"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "metadata": {
+          "type": "object",
+          "description": "At most 16384 UTF-8 JSON bytes"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "media_type",
+              "size"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 255,
+                "pattern": "^(?!\\.{1,2}$)[^/\\\\:\\u0000-\\u001f\\u007f]+$",
+                "description": "Flat UTF-8 filename, at most 255 encoded bytes; separators, colon, controls, dot and dot-dot are forbidden."
+              },
+              "media_type": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9.+-]+/[A-Za-z0-9.+-]+$"
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 268435456
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "block": {
+      "type": "object",
+      "required": [
+        "index",
+        "offset",
+        "data",
+        "sha256"
+      ],
+      "properties": {
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 268435456
+        },
+        "data": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 32768,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "end": {
+      "type": "object",
+      "required": [
+        "end"
+      ],
+      "properties": {
+        "end": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/manifest"
+    },
+    {
+      "$ref": "#/$defs/block"
+    },
+    {
+      "$ref": "#/$defs/end"
+    }
+  ]
+}

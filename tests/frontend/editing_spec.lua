@@ -35,6 +35,16 @@ function M.run()
   assert(editor:indent(5) == 0, "first body line inherited previous cell indentation")
   assert(editor:indent(7) == 4)
   assert(editor:indent(8) == 0, "closer must stay unindented")
+  local installed = editor.families.sql
+  editor.families.sql = { syntax = 'jusi_absent_syntax', indent = 'jusi_absent_indent' }
+  local notifications, notify = {}, vim.notify
+  vim.notify = function(message) table.insert(notifications, message) end
+  local ok, failure = pcall(function() editor:refresh() end)
+  vim.notify = notify
+  assert(ok, failure)
+  assert(#notifications == 0, 'Missing editing profiles emitted a notification')
+  assert(has_group(cells[3].id, 9, "PreProc") and not has_group(cells[3].id, 10, "Statement"))
+  editor.families.sql = installed
   -- Provider-specific catalog information is selected only by exact handoff.
   editor:event({ kind = "execution.started", payload = { cell_id = cells[3].id, execution_id = "exe_sql" } })
   editor:event({ kind = "client.created", payload = { cell_id = cells[3].id, execution_id = "exe_sql",

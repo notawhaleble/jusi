@@ -106,6 +106,7 @@ class PluginWorkerManager:
         trace_id: str,
         timeout: float | None,
         request_id: str | None = None,
+        source_context: str | None = None,
     ) -> PluginWorkerOperationResult:
         with self._lock:
             owned = self._workers.get(plugin_worker_id)
@@ -122,9 +123,11 @@ class PluginWorkerManager:
                     reason="unsupported",
                 )
             handle = owned.handle
+            context = source_context if "source_context" in owned.resource.capabilities else None
         try:
             return handle.request(operation, payload, trace_id=trace_id, timeout=timeout,
-                                  **({"request_id": request_id} if request_id else {}))
+                                  **({"request_id": request_id} if request_id else {}),
+                                  **({"source_context": context} if context else {}))
         except PluginOperationError:
             raise
         except PluginWorkerError:

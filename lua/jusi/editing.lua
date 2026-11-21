@@ -15,7 +15,7 @@ function Editing:request(request)
   if self.closed or not self.job then return nil end
   local ok, result = pcall(vim.rpcrequest, self.job, "nvim_exec_lua", "return require('jusi.editing_worker').run(...)", { request })
   if not ok then
-    if not self.warned.worker then vim.notify("Jusi cell editing: " .. tostring(result), vim.log.levels.WARN); self.warned.worker = true end
+    if not self.worker_failure_reported then vim.notify("Jusi cell editing: " .. tostring(result), vim.log.levels.WARN); self.worker_failure_reported = true end
     return nil
   end
   return result
@@ -90,6 +90,7 @@ function Editing:client(client)
   end
 end
 function Editing:retire(id)
+  require("jusi.source_context").close(self, id)
   self.history:changed({ id })
   self.overrides[id], self.cache[id] = nil, nil
   local ns = self.namespaces[id]
@@ -156,13 +157,6 @@ function Editing:refresh()
             end_col = #ctx.header, hl_group = "PreProc", priority = 100,
           }) end
           self.cache[id] = key
-          for _, kind in ipairs({ "syntax", "indent" }) do
-            local name = ctx[kind]
-            if not result[kind .. "_found"] and not self.warned[kind .. name] then
-              self.warned[kind .. name] = true
-              vim.notify("Jusi: unavailable " .. kind .. " profile " .. name, vim.log.levels.WARN)
-            end
-          end
         end
       end
     end
@@ -205,6 +199,7 @@ function M.indent()
   return editing and editing:indent(vim.v.lnum) or 0
 end
 function Editing:close()
+  require("jusi.source_context").close(self)
   if self.closed then return end
   self.closed = true
   self.cellmode:close()
@@ -223,7 +218,7 @@ function Editing:close()
 end
 function M.new(model, controller)
   local self = setmetatable({ model = model, controller = controller, families = {}, providers = {}, overrides = {},
-    submissions = {}, namespaces = {}, cache = {}, warned = {}, saved = {}, indentkeys = {} }, Editing)
+    submissions = {}, namespaces = {}, cache = {}, saved = {}, indentkeys = {} }, Editing)
   self.history = require("jusi.history").new(model)
   self.job = vim.fn.jobstart({ vim.v.progpath, "--headless", "--embed", "-u", "NONE", "-i", "NONE", "-n" }, { rpc = true })
   assert(self.job > 0, "could not start local cell editing worker")

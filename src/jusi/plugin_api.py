@@ -33,6 +33,7 @@ def terminal_surface(
     cwd: str | None = None,
     environment_overrides: dict[str, str] | None = None,
     signal: bool = False,
+    close_on_success: bool = False,
 ) -> TerminalSurfaceRequest:
     capabilities = ("input", "resize", "signal") if signal else ("input", "resize")
     return TerminalSurfaceRequest(
@@ -41,6 +42,7 @@ def terminal_surface(
         cwd=cwd,
         environment_overrides=dict(environment_overrides or {}),
         capabilities=capabilities,
+        close_on_success=close_on_success,
     )
 
 
@@ -93,9 +95,17 @@ def copy_text(text: str, *, linewise: bool = False) -> WorkerResult:
     return _editor_result({"action": "copy", "text": text, "regtype": "V" if linewise else "v"}, "copy")
 
 
-def open_url(url: str) -> WorkerResult:
-    """Open a browser-reachable HTTP(S) URL in the owning editor."""
-    return _editor_result({"action": "open_url", "text": "", "url": url}, "open_url")
+def open_url(url: str, *, slot: str | None = None) -> WorkerResult:
+    """Open an HTTP(S) URL; a slot replaces only this client's previous page."""
+    content = {"action": "open_url", "text": "", "url": url}
+    if slot is not None:
+        content["slot"] = slot
+    return _editor_result(content, "open_url")
+
+
+def close_url(*, slot: str) -> WorkerResult:
+    """Close this client's named URL slot, including a hidden page; absent is OK."""
+    return _editor_result({"action": "close_url", "text": "", "slot": slot}, "close_url")
 
 
 def open_text(text: str, *, name: str = "export.txt", filetype: str = "") -> WorkerResult:

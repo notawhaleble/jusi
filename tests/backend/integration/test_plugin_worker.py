@@ -85,6 +85,7 @@ def test_worker_sdk_returns_typed_private_terminal_surface_request(tmp_path: Pat
                         cwd="/target/work",
                         environment_overrides={"TERM": "xterm-256color"},
                         signal=True,
+                        close_on_success=True,
                     ),),
                 )
 
@@ -99,6 +100,7 @@ def test_worker_sdk_returns_typed_private_terminal_surface_request(tmp_path: Pat
     assert request.argv == ("visidata", "--play", "/private/query.vd")
     assert request.cwd == "/target/work"
     assert request.capabilities == ("input", "resize", "signal")
+    assert request.close_on_success is True
     assert worker.stop(trace_id="trace_stop_surface", timeout=2) == "stopped"
 
 
@@ -325,5 +327,34 @@ def test_editor_result_stream_exceeds_control_frame_without_killing_worker(tmp_p
         for _ in range(2):
             result = worker.request("editor_action", {}, trace_id="trace_export", timeout=5)
             assert result.result["text"] == "α" * 700000
+    finally:
+        worker.stop(trace_id="trace_stop", timeout=2)
+
+
+@pytest.mark.parametrize("context_handler", [True, False])
+def test_source_context_handler_compatibility(tmp_path, context_handler):
+    from jusi.application.ports import PluginOperationError
+
+    source = """
+class Worker:
+    def handle(self, operation, payload):
+        return {"payload": payload}
+"""
+    if context_handler:
+        source += """
+    def handle_with_context(self, operation, payload, *, source_context):
+        return {"context": source_context, "payload": payload}
+"""
+    entry_point = write_worker(tmp_path, source + "\ndef create_worker(context): return Worker()\n")
+    worker = factory(tmp_path).start(spec(entry_point), timeout=2)
+    try:
+        opts = {"source_context": "ctx_1", "trace_id": "trace_context", "timeout": 2}
+        payload = {"source_context": "provider-owned"}
+        if context_handler:
+            assert worker.request("execute", payload, **opts).result == {"context": "ctx_1", "payload": payload}
+        else:
+            with pytest.raises(PluginOperationError, match="handle_with_context"):
+                worker.request("execute", payload, **opts)
+            assert worker.request("followup", {}, **opts).result == {"payload": {"source_context": "ctx_1"}}
     finally:
         worker.stop(trace_id="trace_stop", timeout=2)

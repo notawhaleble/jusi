@@ -89,8 +89,7 @@ function M.run(request)
         end
       end
     end
-    return { spans = spans, indentkeys = vim.bo.indentkeys, syntax_found = request.syntax == "" or available("syntax", request.syntax),
-      indent_found = request.indent == "" or available("indent", request.indent) }
+    return { spans = spans, indentkeys = vim.bo.indentkeys }
   end)
 end
 return M

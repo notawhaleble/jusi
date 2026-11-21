@@ -90,6 +90,10 @@ class TerminalSurfaceManager:
         self._surfaces: dict[str, _OwnedSurface] = {}
         self._known_surface_ids: set[str] = set()
         self._on_fatal = on_fatal
+        self._on_success: Callable[[SurfaceResource], None] | None = None
+
+    def set_success_handler(self, handler: Callable[[SurfaceResource], None]) -> None:
+        self._on_success = handler
 
     def set_fatal_handler(
         self, handler: Callable[[SurfaceResource, TerminalSurfaceError], None],
@@ -261,6 +265,15 @@ class TerminalSurfaceManager:
                 if owned.stop_reader.is_set():
                     return
                 if not owned.handle.running:
+                    diagnostics = getattr(owned.handle, "diagnostics", None)
+                    if (owned.request.close_on_success and diagnostics is not None
+                            and diagnostics.exit_code == 0 and self._on_success is not None):
+                        with owned.lock:
+                            if owned.closing or owned.fatal_reported:
+                                return
+                            owned.fatal_reported = True
+                        self._on_success(owned.resource)
+                        return
                     self._notify_failure(owned, "channel_closed", "Target terminal process exited")
                     self._report_fatal(owned, TerminalSurfaceError(
                         "Target terminal process exited",

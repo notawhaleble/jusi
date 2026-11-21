@@ -1,0 +1,71 @@
+{
+  "open": {
+    "action": "open_document",
+    "text": "",
+    "slot": "book",
+    "provider": "pdf",
+    "lifetime": "independent",
+    "placement": "tab"
+  },
+  "snapshot": {
+    "action": "source_snapshot",
+    "text": "",
+    "slot": "book",
+    "context_id": "ctx_first"
+  },
+  "close": {
+    "action": "close_document",
+    "text": "",
+    "slot": "explanation"
+  },
+  "followup": {
+    "protocol_version": 1,
+    "kind": "followup",
+    "command_id": "cmd_1",
+    "trace_id": "trace_1",
+    "client_id": "cli_1",
+    "body": "literal α",
+    "source_context": "ctx_1"
+  },
+  "assertions": {
+    "remote_paths": false,
+    "independent_book_survives": true,
+    "managed_explanation_closes": true,
+    "snapshot_before_navigation": true,
+    "reuse_before_transfer": true,
+    "shared_requires_owned_launch_handshake": true,
+    "shared_adoption_survives_service_close": true,
+    "failed_handshake_uses_http": true
+  },
+  "offer": {
+    "action": "offer_document",
+    "text": "",
+    "slot": "book",
+    "provider": "pdf",
+    "lifetime": "independent",
+    "shared_token": "",
+    "placement": "tab"
+  },
+  "shared_open": {
+    "action": "open_shared_document",
+    "text": "",
+    "slot": "book",
+    "provider": "pdf",
+    "lifetime": "independent",
+    "shared_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "artifact_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "placement": "tab"
+  },
+  "worker_request": {
+    "protocol_version": 1,
+    "kind": "worker.request",
+    "plugin_worker_id": "pwrk_fixture_1",
+    "request_id": "wreq_fixture_1",
+    "trace_id": "trace_fixture_1",
+    "operation": "execute",
+    "payload": {
+      "source_context": "provider-owned"
+    },
+    "source_context": "ctx_1"
+  }
+}

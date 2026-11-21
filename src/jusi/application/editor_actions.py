@@ -26,6 +26,8 @@ class _Action:
     result: dict[str, str] | None = None
     fetched: bool = False
     complete: bool = False
+    reply: TextSnapshot | None = None
+    reply_complete: bool = False
 
 
 class EditorActionManager:
@@ -149,6 +151,8 @@ class EditorActionManager:
     def _submit(self, client_id: str, snapshot: TextSnapshot) -> dict[str, str]:
         content = snapshot.content
         validate_editor_action(content, content.get("action"))
+        if content["action"] in {"offer_document", "open_shared_document"} and snapshot.size > 65536:
+            raise EditorActionError("Document manifest exceeds 64 KiB", "capacity_exceeded")
         with self._lock:
             self._prune()
             client = self._clients.get(client_id)
@@ -157,6 +161,8 @@ class EditorActionManager:
                 raise EditorActionError("Action client is closed")
             if "editor_actions" not in self._capabilities.get(client_id, ()):
                 raise EditorActionError("Client cannot submit editor actions", "unsupported")
+            if content["action"] == "source_snapshot" and "source_context" not in self._capabilities.get(client_id, ()):
+                raise EditorActionError("Client cannot capture source context", "unsupported")
             if not editor_id or not self._connections.get(editor_id):
                 raise EditorActionError("Owning editor is not connected", "unreachable")
             pending = [a for a in self._actions.values() if a.result is None]
@@ -169,11 +175,18 @@ class EditorActionManager:
             # Register the waiter before publishing; fast acknowledgments are safe.
             self._publish(dict(metadata))
         while True:
-            action.event.wait(max(0, action.deadline - time.monotonic()))
+            cancelled = getattr(snapshot, "cancelled", None)
+            remaining = max(0, action.deadline - time.monotonic())
+            action.event.wait(min(0.1, remaining) if cancelled is not None else remaining)
             with self._lock:
+                if cancelled is not None and cancelled.is_set() and action.result is None:
+                    self._finish(action, "cancelled", "source_capture_cancelled")
                 self._expire(action)
                 if action.result is not None:
-                    return dict(action.result)
+                    result = dict(action.result)
+                    if action.reply is not None:
+                        result["_reply"], action.reply = action.reply, None
+                    return result
 
     def pending(self) -> list[dict[str, str]]:
         with self._lock:
@@ -202,12 +215,48 @@ class EditorActionManager:
                 result.update(offset=offset, next_offset=next_offset, eof=next_offset == action.content.size)
             return result
 
+    def upload_reply(self, action_id, editor_id, *, offset, text, eof):
+        if (type(offset) is not int or offset < 0 or not isinstance(text, str) or "\x00" in text
+                or len(text.encode("utf-8")) > 65536 or type(eof) is not bool or (not text and not eof)):
+            raise EditorActionError("Invalid reply chunk", "invalid_request")
+        with self._lock:
+            action = self._select(action_id, editor_id)
+            self._expire(action)
+            if action.result is not None or action.metadata["action"] not in {"source_snapshot", "offer_document"} or not action.complete:
+                raise EditorActionError("Action cannot receive source context")
+            if not self._connections.get(editor_id):
+                raise EditorActionError("Editor is disconnected", "unreachable")
+            if action.reply is None:
+                action.reply = TextSnapshot({"action": "source_snapshot"})
+            reply = action.reply
+            # A repeated HTTP chunk is safe only if its exact bytes match.
+            data = text.encode("utf-8")
+            if offset < reply.size:
+                reply.stream.seek(offset)
+                if reply.stream.read(len(data)) != data:
+                    raise EditorActionError("Reply replay differs")
+            elif offset == reply.size and not action.reply_complete:
+                limit = 65536 if action.metadata["action"] == "offer_document" else 360 * 1024 * 1024
+                if reply.size + len(data) > limit:
+                    raise EditorActionError("Source artifact exceeds transfer limit", "capacity_exceeded")
+                reply.stream.seek(0, 2); reply.append(text)
+            elif offset != reply.size or text:
+                raise EditorActionError("Reply offset mismatch")
+            if eof:
+                if offset + len(data) != reply.size:
+                    raise EditorActionError("Reply completion offset mismatch")
+                action.reply_complete = True
+            action.deadline = time.monotonic() + self._timeout
+            return {"next_offset": offset + len(data), "eof": eof}
+
     def acknowledge(self, action_id: str, editor_id: str, outcome: str) -> dict[str, str]:
         if outcome not in {"delivered", "failed"}:
             raise EditorActionError("Invalid delivery outcome", "invalid_request")
         with self._lock:
             action = self._select(action_id, editor_id)
             self._expire(action)
+            if outcome == "delivered" and action.metadata["action"] in {"source_snapshot", "offer_document"} and not action.reply_complete:
+                raise EditorActionError("Source context reply is incomplete")
             if outcome == "delivered" and not action.complete:
                 raise EditorActionError("Action content was not fetched")
             if action.result is not None:
@@ -246,6 +295,8 @@ class EditorActionManager:
     def _finish(self, action: _Action, outcome: str, reason: str) -> None:
         action.result = {"action_id": action.metadata["action_id"], "outcome": outcome, "reason": reason}
         action.content.close()
+        if outcome != "delivered" and action.reply is not None:
+            action.reply.close(); action.reply = None
         action.event.set()
 
     def _expire(self, action: _Action) -> None:

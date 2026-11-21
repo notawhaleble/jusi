@@ -187,6 +187,13 @@ calling the blocking delivery helper; success means editor acknowledgment.
 escape command, or shared frontend filesystem is involved. Writeback and
 application-originated interruptible work publication remain separate contracts.
 
+Applications can also deliver finite binary documents with `open_document` and
+request immutable reader artifacts with `source_snapshot`. The latter requires
+`source_context` in addition to `editor_actions`; selected-source identities
+travel separately from literal execute/followup bodies. See
+[document artifacts](document-artifacts.md) for the public helpers, ownership,
+MIME provider selection, cancellation and remote transport limits.
+
 ## Attention
 
 Terminal applications can declare the `attention` capability to publish durable

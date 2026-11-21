@@ -3,43 +3,141 @@
   "$id": "https://jusi.dev/protocol/v1/commands.schema.json",
   "title": "Jusi Protocol v1 Commands",
   "oneOf": [
-    {"$ref": "#/$defs/dismiss_attention"},
-    {"$ref": "#/$defs/start_kernel"},
-    {"$ref": "#/$defs/execute"},
-    {"$ref": "#/$defs/interrupt"},
-    {"$ref": "#/$defs/submit_input"},
-    {"$ref": "#/$defs/stop_kernel"},
-    {"$ref": "#/$defs/complete"},
-    {"$ref": "#/$defs/followup"},
-    {"$ref": "#/$defs/interrupt_client"},
-    {"$ref": "#/$defs/editor_action"},
-    {"$ref": "#/$defs/ack_editor_action"},
-    {"$ref": "#/$defs/close_client"},
-    {"$ref": "#/$defs/restart_notebook"}
+    {
+      "$ref": "#/$defs/dismiss_attention"
+    },
+    {
+      "$ref": "#/$defs/start_kernel"
+    },
+    {
+      "$ref": "#/$defs/execute"
+    },
+    {
+      "$ref": "#/$defs/interrupt"
+    },
+    {
+      "$ref": "#/$defs/submit_input"
+    },
+    {
+      "$ref": "#/$defs/stop_kernel"
+    },
+    {
+      "$ref": "#/$defs/complete"
+    },
+    {
+      "$ref": "#/$defs/followup"
+    },
+    {
+      "$ref": "#/$defs/interrupt_client"
+    },
+    {
+      "$ref": "#/$defs/editor_action"
+    },
+    {
+      "$ref": "#/$defs/ack_editor_action"
+    },
+    {
+      "$ref": "#/$defs/close_client"
+    },
+    {
+      "$ref": "#/$defs/restart_notebook"
+    }
   ],
   "$defs": {
-    "dismiss_attention": {"allOf": [{"$ref": "#/$defs/base"}, {"type": "object", "required": ["attention_id", "editor_id", "revision"], "properties": {"kind": {"const": "dismiss_attention"}, "attention_id": {"type": "string", "minLength": 3, "maxLength": 128}, "editor_id": {"type": "string", "minLength": 3, "maxLength": 128}, "revision": {"type": "integer", "minimum": 1, "maximum": 9007199254740991}}}], "unevaluatedProperties": false},
+    "dismiss_attention": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "required": [
+            "attention_id",
+            "editor_id",
+            "revision"
+          ],
+          "properties": {
+            "kind": {
+              "const": "dismiss_attention"
+            },
+            "attention_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "editor_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
     "base": {
       "type": "object",
-      "required": ["protocol_version", "command_id", "trace_id", "kind"],
+      "required": [
+        "protocol_version",
+        "command_id",
+        "trace_id",
+        "kind"
+      ],
       "properties": {
-        "protocol_version": {"const": 1},
-        "command_id": {"type": "string", "minLength": 3, "maxLength": 128},
-        "trace_id": {"type": "string", "minLength": 3, "maxLength": 128},
-        "kind": {"type": "string"},
-        "idempotency_key": {"type": "string", "minLength": 1, "maxLength": 256}
+        "protocol_version": {
+          "const": 1
+        },
+        "command_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "trace_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "kind": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
       }
     },
     "start_kernel": {
       "allOf": [
-        {"$ref": "#/$defs/base"},
+        {
+          "$ref": "#/$defs/base"
+        },
         {
           "type": "object",
-          "required": ["kind", "notebook_id", "kernel_name"],
+          "required": [
+            "kind",
+            "notebook_id",
+            "kernel_name"
+          ],
           "properties": {
-            "kind": {"const": "start_kernel"},
-            "notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
-            "kernel_name": {"type": "string", "minLength": 1, "maxLength": 128}
+            "kind": {
+              "const": "start_kernel"
+            },
+            "notebook_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kernel_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
           },
           "unevaluatedProperties": false
         }
@@ -47,17 +145,48 @@
     },
     "execute": {
       "allOf": [
-        {"$ref": "#/$defs/base"},
+        {
+          "$ref": "#/$defs/base"
+        },
         {
           "type": "object",
-          "required": ["kind", "kernel_id", "notebook_id", "cell_id", "code"],
+          "required": [
+            "kind",
+            "kernel_id",
+            "notebook_id",
+            "cell_id",
+            "code"
+          ],
           "properties": {
-            "kind": {"const": "execute"},
-            "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128},
-            "notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
-            "cell_id": {"type": "string", "minLength": 1, "maxLength": 128},
-            "code": {"type": "string"},
-            "bootstrap": {"type": "boolean", "description": "Initialize the declared plugin using only its magic header; never submit cell content."}
+            "kind": {
+              "const": "execute"
+            },
+            "kernel_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "notebook_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "cell_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "code": {
+              "type": "string"
+            },
+            "bootstrap": {
+              "type": "boolean",
+              "description": "Initialize the declared plugin using only its magic header; never submit cell content."
+            },
+            "source_context": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
+            }
           },
           "unevaluatedProperties": false
         }
@@ -103,14 +232,30 @@
     },
     "interrupt": {
       "allOf": [
-        {"$ref": "#/$defs/base"},
+        {
+          "$ref": "#/$defs/base"
+        },
         {
           "type": "object",
-          "required": ["kind", "kernel_id", "execution_id"],
+          "required": [
+            "kind",
+            "kernel_id",
+            "execution_id"
+          ],
           "properties": {
-            "kind": {"const": "interrupt"},
-            "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128},
-            "execution_id": {"type": "string", "minLength": 3, "maxLength": 128}
+            "kind": {
+              "const": "interrupt"
+            },
+            "kernel_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "execution_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            }
           },
           "unevaluatedProperties": false
         }
@@ -118,13 +263,24 @@
     },
     "stop_kernel": {
       "allOf": [
-        {"$ref": "#/$defs/base"},
+        {
+          "$ref": "#/$defs/base"
+        },
         {
           "type": "object",
-          "required": ["kind", "kernel_id"],
+          "required": [
+            "kind",
+            "kernel_id"
+          ],
           "properties": {
-            "kind": {"const": "stop_kernel"},
-            "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128}
+            "kind": {
+              "const": "stop_kernel"
+            },
+            "kernel_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            }
           },
           "unevaluatedProperties": false
         }
@@ -199,6 +355,10 @@
             },
             "body": {
               "type": "string"
+            },
+            "source_context": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,128}$"
             }
           }
         }
@@ -206,118 +366,130 @@
       "unevaluatedProperties": false
     },
     "interrupt_client": {
-  "allOf": [
-    {
-      "$ref": "#/$defs/base"
-    },
-    {
-      "type": "object",
-      "required": [
-        "kind",
-        "client_id",
-        "operation_id"
-      ],
-      "properties": {
-        "kind": {
-          "const": "interrupt_client"
-        },
-        "client_id": {
-          "type": "string",
-          "minLength": 3,
-          "maxLength": 128
-        },
-        "operation_id": {
-          "type": "string",
-          "minLength": 1
-        }
-      }
-    }
-  ],
-  "unevaluatedProperties": false
-},
-    "editor_action": {
-  "allOf": [
-    {
-      "$ref": "#/$defs/base"
-    },
-    {
-      "type": "object",
-      "required": [
-        "kind",
-        "client_id",
-        "action",
-        "selection"
-      ],
-      "properties": {
-        "kind": {
-          "const": "editor_action"
-        },
-        "client_id": {
-          "type": "string",
-          "minLength": 3,
-          "maxLength": 128
-        },
-        "action": {
-          "enum": [
-            "copy",
-            "open",
-            "show_diff",
-            "open_url"
-          ]
-        },
-        "selection": {
-          "type": "object"
-        }
-      }
-    }
-  ],
-  "unevaluatedProperties": false
-},
-    "ack_editor_action": {
-  "allOf": [
-    {
-      "$ref": "#/$defs/base"
-    },
-    {
-      "type": "object",
-      "required": [
-        "kind",
-        "action_id",
-        "editor_id",
-        "outcome"
-      ],
-      "properties": {
-        "kind": {
-          "const": "ack_editor_action"
-        },
-        "action_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "editor_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "outcome": {
-          "enum": [
-            "delivered",
-            "failed"
-          ]
-        }
-      }
-    }
-  ],
-  "unevaluatedProperties": false
-},
-    "close_client": {
       "allOf": [
-        {"$ref": "#/$defs/base"},
+        {
+          "$ref": "#/$defs/base"
+        },
         {
           "type": "object",
-          "required": ["kind", "client_id"],
+          "required": [
+            "kind",
+            "client_id",
+            "operation_id"
+          ],
           "properties": {
-            "kind": {"const": "close_client"},
-            "client_id": {"type": "string", "minLength": 3, "maxLength": 128}
+            "kind": {
+              "const": "interrupt_client"
+            },
+            "client_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "operation_id": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "editor_action": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "client_id",
+            "action",
+            "selection"
+          ],
+          "properties": {
+            "kind": {
+              "const": "editor_action"
+            },
+            "client_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "action": {
+              "enum": [
+                "copy",
+                "open",
+                "show_diff",
+                "open_url",
+                "close_url"
+              ]
+            },
+            "selection": {
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "ack_editor_action": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "action_id",
+            "editor_id",
+            "outcome"
+          ],
+          "properties": {
+            "kind": {
+              "const": "ack_editor_action"
+            },
+            "action_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "editor_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outcome": {
+              "enum": [
+                "delivered",
+                "failed"
+              ]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "close_client": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/base"
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "client_id"
+          ],
+          "properties": {
+            "kind": {
+              "const": "close_client"
+            },
+            "client_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            }
           },
           "unevaluatedProperties": false
         }
@@ -325,17 +497,48 @@
     },
     "restart_notebook": {
       "allOf": [
-        {"$ref": "#/$defs/base"},
+        {
+          "$ref": "#/$defs/base"
+        },
         {
           "type": "object",
-          "required": ["kind", "runtime_id", "kernel_id", "notebook_id", "next_notebook_id", "kernel_name"],
+          "required": [
+            "kind",
+            "runtime_id",
+            "kernel_id",
+            "notebook_id",
+            "next_notebook_id",
+            "kernel_name"
+          ],
           "properties": {
-            "kind": {"const": "restart_notebook"},
-            "runtime_id": {"type": "string", "minLength": 3, "maxLength": 128},
-            "kernel_id": {"type": "string", "minLength": 3, "maxLength": 128},
-            "notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
-            "next_notebook_id": {"type": "string", "minLength": 1, "maxLength": 128},
-            "kernel_name": {"type": "string", "minLength": 1, "maxLength": 128}
+            "kind": {
+              "const": "restart_notebook"
+            },
+            "runtime_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "kernel_id": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 128
+            },
+            "notebook_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "next_notebook_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "kernel_name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
           },
           "unevaluatedProperties": false
         }

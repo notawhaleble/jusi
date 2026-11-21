@@ -98,7 +98,7 @@ def _validate_client(client: object, context: str = "client") -> dict[str, Any]:
         context,
     )
     capabilities = client["capabilities"]
-    allowed_capabilities = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention"}
+    allowed_capabilities = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention", "source_context"}
     if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) or any(
         capability not in allowed_capabilities for capability in capabilities
     ):
@@ -379,6 +379,10 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
     if idempotency_key is not None and (not isinstance(idempotency_key, str) or not idempotency_key):
         raise ProtocolValidationError("idempotency_key must be a non-empty string when provided")
     allowed = {"protocol_version", "command_id", "trace_id", "kind", "idempotency_key", *COMMAND_FIELDS[expected_kind]}
+    if expected_kind in {"execute", "followup"}:
+        allowed.add("source_context")
+        if "source_context" in data and (not isinstance(data["source_context"], str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", data["source_context"]) is None):
+            raise ProtocolValidationError("Invalid source context identity")
     if expected_kind == "execute":
         allowed.add("bootstrap")
         if "bootstrap" in data and not isinstance(data["bootstrap"], bool):
@@ -396,8 +400,8 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
         raise ProtocolValidationError("Invalid attention revision")
     if expected_kind == "editor_action":
         allowed.add("selection")
-        if data["action"] not in {"copy", "open", "show_diff", "open_url"} or not isinstance(data.get("selection"), dict):
-            raise ProtocolValidationError("editor_action requires copy/open/show_diff/open_url and an object selection")
+        if data["action"] not in {"copy", "open", "show_diff", "open_url", "close_url"} or not isinstance(data.get("selection"), dict):
+            raise ProtocolValidationError("editor_action requires copy/open/show_diff/open_url/close_url and an object selection")
     if expected_kind == "ack_editor_action" and data["outcome"] not in {"delivered", "failed"}:
         raise ProtocolValidationError("Editor acknowledgment outcome is invalid")
     unknown = sorted(set(data) - allowed)
@@ -582,7 +586,7 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
     if not isinstance(data["plugins"], list):
         raise ProtocolValidationError("plugins must be an array")
     plugin_ids: set[str] = set()
-    capabilities = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention"}
+    capabilities = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention", "source_context"}
     interactions = {"noninteractive", "request_response", "terminal_interactive"}
     fields = {"plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"}
     family_by_id: dict[str, tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
@@ -696,7 +700,12 @@ def validate_plugin_worker_message(data: object) -> dict[str, Any]:
     if data.get("operation") not in WORKER_OPERATIONS:
         raise ProtocolValidationError("Plugin worker operation is unsupported")
     if kind == "worker.request":
-        if set(data) != common_fields | {"payload"} or not isinstance(data.get("payload"), dict):
+        if "source_context" in data:
+            context = data["source_context"]
+            if (data["operation"] not in {"execute", "followup"} or not isinstance(context, str)
+                    or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", context) is None):
+                raise ProtocolValidationError("Invalid worker source context")
+        if set(data) - {"source_context"} != common_fields | {"payload"} or not isinstance(data.get("payload"), dict):
             raise ProtocolValidationError("Plugin worker request fields are invalid")
         if data["operation"] == "interrupt":
             if set(data["payload"]) != {"target_request_id"}:
@@ -707,8 +716,10 @@ def validate_plugin_worker_message(data: object) -> dict[str, Any]:
             raise ProtocolValidationError("Plugin worker result fields are invalid")
         request_ids: set[str] = set()
         for request in data["core_requests"]:
-            if not isinstance(request, dict) or set(request) != {"request_id", "kind", "argv", "cwd", "environment_overrides", "capabilities"}:
+            if not isinstance(request, dict) or set(request) - {"close_on_success"} != {"request_id", "kind", "argv", "cwd", "environment_overrides", "capabilities"}:
                 raise ProtocolValidationError("Plugin worker core request fields are invalid")
+            if type(request.get("close_on_success", False)) is not bool:
+                raise ProtocolValidationError("Terminal close_on_success must be a boolean")
             if not _bounded_string(request["request_id"], 3, 128) or request["request_id"] in request_ids:
                 raise ProtocolValidationError("Plugin worker core request identity is invalid")
             request_ids.add(request["request_id"])
@@ -811,13 +822,30 @@ def validate_completion(result: object, cursor_pos: int) -> dict[str, Any]:
     return result
 
 
+def validate_document_offer_reply(value):
+    if not isinstance(value, dict) or set(value) != {"transport"} or value["transport"] not in {"reused", "shared", "http"}:
+        raise ProtocolValidationError("Invalid document offer response")
+    return value
+
+
 def validate_editor_action(result: object, action: str) -> dict[str, Any]:
     """Content is transferred, never a target-side filesystem path or command."""
-    if not isinstance(result, dict) or result.get("action") != action or action not in {"copy", "open", "show_diff", "open_url"}:
+    if not isinstance(result, dict) or result.get("action") != action or action not in {"copy", "open", "show_diff", "open_url", "close_url", "open_document", "offer_document", "open_shared_document", "close_document", "source_snapshot"}:
         raise ProtocolValidationError("Editor action does not match the requested action")
     fields = {"action", "text", "regtype"} if action == "copy" else {"action", "text", "name", "filetype"}
     if action == "open_url":
-        fields = {"action", "text", "url"}
+        fields = {"action", "text", "url"} | ({"slot"} if "slot" in result else set())
+    if action == "close_url":
+        fields = {"action", "text", "slot"}
+    if action in {"open_document", "offer_document", "open_shared_document"}:
+        fields = {"action", "text", "slot", "provider", "lifetime"}
+        if "placement" in result: fields.add("placement")
+        if action != "open_document": fields.add("shared_token")
+        if action == "open_shared_document": fields.add("artifact_id")
+    if action == "close_document":
+        fields = {"action", "text", "slot"}
+    if action == "source_snapshot":
+        fields = {"action", "text", "slot", "context_id"}
     if action == "show_diff":
         fields = {"action", "text", "before_bytes", "before_name", "after_name", "filetype"}
     if set(result) != fields:
@@ -825,6 +853,31 @@ def validate_editor_action(result: object, action: str) -> dict[str, Any]:
     text = result["text"]
     if not isinstance(text, str) or "\x00" in text:
         raise ProtocolValidationError("Editor text must be UTF-8 without NUL")
+    if "slot" in result:
+        slot = result["slot"]
+        if not isinstance(slot, str) or re.fullmatch(r"[A-Za-z0-9_-]{1,64}", slot) is None:
+            raise ProtocolValidationError("URL slot must be 1-64 ASCII letters, digits, underscores or hyphens")
+    if action in {"open_document", "offer_document", "open_shared_document", "close_document", "source_snapshot"}:
+        if action in {"open_document", "offer_document", "open_shared_document"}:
+            if result.get("placement", "default") not in ("default", "tab"):
+                raise ProtocolValidationError("Invalid document placement")
+            if action != "open_document":
+                token = result["shared_token"]
+                if not isinstance(token, str) or re.fullmatch(r"(?:[0-9a-f]{64}|)", token) is None:
+                    raise ProtocolValidationError("Invalid shared artifact session")
+            if action == "open_shared_document" and (not result["shared_token"] or not isinstance(result["artifact_id"], str) or re.fullmatch(r"[0-9a-f]{32}", result["artifact_id"]) is None):
+                raise ProtocolValidationError("Invalid shared artifact identity")
+            if result["lifetime"] not in {"client", "independent"} or not isinstance(result["provider"], str) or re.fullmatch(r"[A-Za-z0-9_-]{0,64}", result["provider"]) is None:
+                raise ProtocolValidationError("Invalid document presentation")
+        elif text != "":
+            raise ProtocolValidationError("Document control text must be empty")
+        if action == "source_snapshot" and (not isinstance(result["context_id"], str) or re.fullmatch(r"[A-Za-z0-9_-]{0,128}", result["context_id"]) is None):
+            raise ProtocolValidationError("Invalid source context identity")
+        return result
+    if action == "close_url":
+        if text != "":
+            raise ProtocolValidationError("URL close text must be empty")
+        return result
     if action == "open_url":
         url = result["url"]
         if text != "" or not isinstance(url, str) or len(url) > 8192 or re.fullmatch(r"https?://[^\s\x00-\x20\x7f]+", url) is None:
@@ -849,7 +902,7 @@ def validate_editor_action(result: object, action: str) -> dict[str, Any]:
 
 def validate_editor_action_metadata(value: object) -> dict[str, str]:
     fields = {"action_id", "client_id", "runtime_id", "notebook_id", "cell_id", "editor_id", "trace_id", "action"}
-    if not isinstance(value, dict) or set(value) != fields or value["action"] not in {"copy", "open", "show_diff", "open_url"}:
+    if not isinstance(value, dict) or set(value) != fields or value["action"] not in {"copy", "open", "show_diff", "open_url", "close_url", "open_document", "offer_document", "open_shared_document", "close_document", "source_snapshot"}:
         raise ProtocolValidationError("Invalid editor action metadata")
     for key in fields:
         if not _bounded_string(value[key], 1, 128):
@@ -877,7 +930,7 @@ def validate_application_action(value: object) -> dict[str, Any]:
         validate_editor_action(value["content"], value["content"].get("action"))
         if value["kind"] == "application.editor_action_begin" and value["content"]["text"] != "":
             raise ProtocolValidationError("Stream header must have empty text")
-    elif value.get("kind") == "application.editor_action_chunk":
+    elif value.get("kind") in {"application.editor_action_chunk", "application.editor_reply_chunk"}:
         if (set(value) != base | {"text", "eof"} or not isinstance(value["text"], str)
                 or "\x00" in value["text"] or len(value["text"].encode("utf-8")) > 65536
                 or type(value["eof"]) is not bool or (not value["eof"] and not value["text"])):
@@ -965,4 +1018,14 @@ def validate_attention_ack(value: object) -> dict:
             or value["ok"] is not True or value["dismissed"] is not True
             or not _bounded_string(value["attention_id"], 3, 128)):
         raise ProtocolValidationError("Invalid attention acknowledgment")
+    return value
+
+
+def validate_editor_reply(value):
+    if (not isinstance(value, dict) or set(value) != {"editor_id", "offset", "text", "eof"}
+            or not _bounded_string(value["editor_id"], 1, 128)
+            or type(value["offset"]) is not int or not 0 <= value["offset"] <= 360 * 1024 * 1024
+            or not isinstance(value["text"], str) or "\x00" in value["text"] or len(value["text"].encode()) > 65536
+            or type(value["eof"]) is not bool or (not value["text"] and not value["eof"])):
+        raise ProtocolValidationError("Invalid editor artifact reply")
     return value

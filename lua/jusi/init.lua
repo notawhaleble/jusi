@@ -65,8 +65,8 @@ local function cell_from_context(session, context_buf, row)
   end
   local cursor_row = row
   if cursor_row == nil then
-    local window = vim.fn.bufwinid(context_buf)
-    if window == -1 then
+    local window = presentation_window.find(context_buf, vim.api.nvim_get_current_tabpage())
+    if not window then
       return nil
     end
     cursor_row = vim.api.nvim_win_get_cursor(window)[1] - 1
@@ -128,29 +128,71 @@ local function bind_cell_lifecycle(session)
   controller.on_state_changed = require("jusi.statusline").redraw
   local presentation, interactive = session.presentation, session.interactive
   interactive.editor_id = controller.editor_id
+  -- Slots are scoped to this notebook session and the verified source client.
+  -- They are navigation exports, never backend surfaces or buffer identities.
+  local url_slots = {}
+  session.url_slots = url_slots
+  local function managed_open(action)
+    return action == "open_url" or action == "open_document"
+      or action == "offer_document" or action == "open_shared_document"
+  end
   local function capture_destination(action)
-    if action.action ~= "open" and action.action ~= "open_url" then return nil end
+    if action.action ~= "open" and not managed_open(action.action) then return nil end
     local current = vim.api.nvim_get_current_win()
     local windows = require("jusi.presentation.window")
     for surface_id, record in pairs(interactive.surfaces) do
       if record.client.client_id == action.client_id and record.buf and vim.api.nvim_buf_is_valid(record.buf) then
         local win = vim.api.nvim_win_get_buf(current) == record.buf and current or windows.find(record.buf)
         if win then return { win = win, buf = record.buf, surface_id = surface_id } end
+        -- A managed page can occupy the terminal's window. It remains a
+        -- verified destination for that client while its terminal is hidden.
+        for _, page in pairs(url_slots[action.client_id] or {}) do
+          if page.lifetime ~= "independent" and not page.closed and vim.api.nvim_buf_is_valid(page.buf) then
+            win = vim.api.nvim_win_get_buf(current) == page.buf and current or windows.find(page.buf)
+            if win then return { win = win, buf = record.buf, displayed_buf = page.buf, surface_id = surface_id } end
+          end
+        end
+        -- Managed URL content may arrive while every projection is hidden.
+        -- Keep the verified source identity; decide placement after fetching
+        -- the content (only then do we know whether this is a managed open).
+        if managed_open(action.action) then return { buf = record.buf, surface_id = surface_id } end
       end
     end
     return false -- A notebook window is not the source of an application open.
   end
-  local delivery = require("jusi.editor_delivery").new(controller, function(content, action, source_path, destination)
+  local function apply_editor_action(content, action, source_path, destination)
     local win
-    if content.action == "open" or content.action == "open_url" then
-      if not destination then return nil end
+    if content.action == "open" or managed_open(content.action) then
+      if not destination then return nil, "Source client destination is unavailable" end
       local record = interactive.surfaces[destination.surface_id]
       win = destination.win
-      if not record or record.client.client_id ~= action.client_id or record.buf ~= destination.buf
-          or not vim.api.nvim_win_is_valid(win) or vim.api.nvim_win_get_buf(win) ~= destination.buf then return nil end
+      if not record or record.closed or record.client.client_id ~= action.client_id
+          or record.buf ~= destination.buf or not vim.api.nvim_buf_is_valid(record.buf) then return nil, "Source client surface is unavailable" end
+      if managed_open(content.action) and content.slot then
+        local windows = require("jusi.presentation.window")
+        -- Placement is independent of replacement ownership. Find the live
+        -- source/page across all tabs, including moves during content fetch.
+        win = windows.find(record.buf)
+        local slot = content.action == "open_url" and ("url:" .. content.slot) or content.slot
+        local page = (url_slots[action.client_id] or {})[slot]
+        if not win and page and page.lifetime ~= "independent" and not page.closed and vim.api.nvim_buf_is_valid(page.buf) then
+          win = windows.find(page.buf)
+        end
+        if not win then
+          win = windows.show(record.buf, { anchor_buf = model.buf, height = interactive.height })
+        end
+      elseif not win or not vim.api.nvim_win_is_valid(win)
+          or vim.api.nvim_win_get_buf(win) ~= (destination.displayed_buf or destination.buf) then return nil, "Source client window is unavailable" end
     end
-    return require("jusi.editor_actions").apply(content, { win = win, source_path = source_path })
-  end, capture_destination)
+    url_slots[action.client_id] = url_slots[action.client_id] or {}
+    return require("jusi.editor_actions").apply(content, { win = win, source_buf = destination and destination.buf,
+      source_path = source_path, editing = session.editing, cell_id = action.cell_id, client_id = action.client_id,
+      shared_artifacts = session.service and session.service.shared_artifacts,
+      url_slots = url_slots[action.client_id] })
+  end
+  session.apply_editor_action = apply_editor_action
+  session.capture_editor_destination = capture_destination
+  local delivery = require("jusi.editor_delivery").new(controller, apply_editor_action, capture_destination)
   controller.on_editor_action = function(action) delivery:request(action) end
   session.editor_delivery = delivery
   session.attention = require("jusi.attention").attach(session)
@@ -163,7 +205,10 @@ local function bind_cell_lifecycle(session)
   lifecycle.on_park_changed = function(id) marks:render(id) end
   local editing = require("jusi.editing").new(model, controller)
   session.editing = editing
-  controller.on_submission = function(command, id) editing.history:submit(command, id) end
+  controller.on_submission = function(command, id)
+    require("jusi.source_context").submit(editing, command, id)
+    editing.history:submit(command, id)
+  end
   controller.on_submission_result = function(command, response, failure) editing.history:result(command, response, failure) end
   local marks_changed = model.on_cells_changed
   model.on_cells_changed = function(ids) marks_changed(ids); editing:changed(ids, true) end
@@ -185,8 +230,17 @@ local function bind_cell_lifecycle(session)
       end
     end
   end
-  controller.on_client_created = function(client)
+  controller.on_client_closed = function(client, payload)
+    -- Independent exports survive; owned document views end with the client.
+    local client_id = payload.client_id or (client and client.client_id)
+    delivery:close_client(client_id)
+    if client then require('jusi.source_context').close(session.editing, client.cell_id, client_id) end
+    require('jusi.presentation.documents').close_owned(url_slots[client_id])
+    url_slots[client_id] = nil
+  end
+  controller.on_client_created = function(client, event)
     if client.notebook_id == model.notebook_id then
+      require("jusi.source_context").bind_client(editing, client, event and event.trace_id)
       if presentation.retired_executions[client.execution_id] then lifecycle:close_client(client.client_id)
       else lifecycle:accepts(client.cell_id) end
     end
@@ -202,6 +256,11 @@ local function bind_cell_lifecycle(session)
     interactive:close_surface(payload.surface_id or (surface and surface.surface_id))
   end
   controller.on_resynchronized = function(snapshot)
+    for client_id in pairs(url_slots) do
+      if not controller.clients[client_id] then
+        require("jusi.presentation.documents").close_owned(url_slots[client_id]); url_slots[client_id] = nil
+      end
+    end
     marks:resync(snapshot)
     if snapshot.reason == "supervisor_replaced" then editing.overrides = {}; editing.submissions = {}; editing.history.pending = {} end
     editing:catalog(); editing.cache = {}; editing:schedule()
@@ -222,6 +281,7 @@ local function retire_session(session)
   if sessions[session.buf] ~= session then return end
   require("jusi.statusline").retain(session)
   starts[session.buf] = nil
+  for _, slots in pairs(session.url_slots or {}) do require("jusi.presentation.documents").close_owned(slots) end
   if session.editor_delivery then session.editor_delivery:close() end
   if session.attention then session.attention:close() end
   if session.lifecycle then session.lifecycle:detach() end
@@ -235,6 +295,7 @@ local function retire_session(session)
 end
 
 local function replace_frontend_runtime(session, notebook_id)
+  for _, slots in pairs(session.url_slots or {}) do require("jusi.presentation.documents").close_owned(slots) end
   if session.editor_delivery then session.editor_delivery:close() end
   if session.attention then session.attention:close() end
   if session.lifecycle then session.lifecycle:detach() end
@@ -578,7 +639,17 @@ function M.editor_action(action, opts)
   return session.controller:editor_action(cell.id, action, opts.selection, function(response, failure)
     if failure then notify(failure_text(failure), vim.log.levels.ERROR); return end
     if not response then return end
-    local delivered, err = require("jusi.editor_actions").apply(response.editor_action, { register = opts.register, win = win })
+    local client_id = response.client.client_id
+    session.url_slots[client_id] = session.url_slots[client_id] or {}
+    local delivered, err
+    if response.editor_action.action == "open_url" and response.editor_action.slot then
+      local source = { action = "open_url", client_id = client_id }
+      delivered, err = session.apply_editor_action(response.editor_action, source, nil,
+        session.capture_editor_destination(source))
+    else
+      delivered, err = require("jusi.editor_actions").apply(response.editor_action,
+        { register = opts.register, win = win, url_slots = session.url_slots[client_id] })
+    end
     if not delivered then notify(err, vim.log.levels.ERROR) end
   end)
 end
@@ -684,17 +755,39 @@ function M.close(buf, row)
 end
 
 function M.close_tab(buf)
-  local context = buf or vim.api.nvim_get_current_buf()
-  local session = current_session(context)
-  if not session then
-    local mode = require('jusi.cellmode').get(context)
-    if not mode then notify('current buffer is not a Jusi notebook or output', vim.log.levels.WARN); return end
-    return require('jusi.tab_cleanup').close({ buf = mode.editor.model.buf })
+  local targets, seen = {}, {}
+  local function collect(context)
+    local session = current_session(context)
+    if not session then
+      for _, candidate in pairs(sessions) do
+        if require('jusi.client_views').contains(candidate, context) then session = candidate; break end
+      end
+    end
+    local mode = not session and require('jusi.cellmode').get(context)
+    local target = session or (mode and { buf = mode.editor.model.buf })
+    if target and not seen[target.buf] then
+      seen[target.buf] = true
+      targets[#targets+1] = { session = target, connected = session ~= nil }
+    end
   end
-  return require('jusi.tab_cleanup').close(session, {
-    is_current = function() return sessions[session.buf] == session end,
-    on_error = function(message) notify(message, vim.log.levels.ERROR) end,
-  })
+  if buf then collect(buf)
+  else
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      collect(vim.api.nvim_win_get_buf(win))
+    end
+  end
+  if #targets == 0 then
+    notify('current tab has no Jusi notebook or output', vim.log.levels.WARN)
+    return
+  end
+  for _, target in ipairs(targets) do
+    local session = target.session
+    require('jusi.tab_cleanup').close(session, {
+      is_current = target.connected and function() return sessions[session.buf] == session end or nil,
+      on_error = function(message) notify(message, vim.log.levels.ERROR) end,
+    })
+  end
+  return true
 end
 
 local function focus_notebook_cell(session, cell)
@@ -1099,6 +1192,7 @@ function M.setup(options)
     config.targets = vim.deepcopy(opts.targets)
   end
   create_commands()
+  require("jusi.mappings").setup()
   require("jusi.attention").setup(opts.attention)
   require("jusi.focus").setup()
   require("jusi.statusline").setup()

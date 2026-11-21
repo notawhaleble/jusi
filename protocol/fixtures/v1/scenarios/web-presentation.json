@@ -31,5 +31,24 @@
     }
   ],
   "expected_fallback": "Figure",
-  "expected_web_media": "image/svg+xml"
+  "expected_web_media": "image/svg+xml",
+  "managed_actions": [
+    {
+      "action": "open_url",
+      "text": "",
+      "url": "https://example.com/one",
+      "slot": "page"
+    },
+    {
+      "action": "open_url",
+      "text": "",
+      "url": "https://example.com/two",
+      "slot": "page"
+    },
+    {
+      "action": "close_url",
+      "text": "",
+      "slot": "page"
+    }
+  ]
 }

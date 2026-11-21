@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "kind": "followup",
+  "command_id": "cmd_1",
+  "trace_id": "trace_1",
+  "client_id": "cli_1",
+  "body": "literal \u03b1",
+  "source_context": "ctx_1"
+}

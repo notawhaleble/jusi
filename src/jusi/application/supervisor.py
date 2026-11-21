@@ -73,6 +73,7 @@ class Supervisor:
         self.editor_actions = EditorActionManager(self._publish_editor_action, publish_attention=self._publish_attention)
         if terminal_surfaces is not None:
             terminal_surfaces.set_fatal_handler(self.terminal_surface_failed)
+            terminal_surfaces.set_success_handler(self.terminal_surface_succeeded)
         self._operation_lock = threading.RLock()
         self._state_lock = threading.RLock()
         self._current_kernel: KernelResource | None = None
@@ -198,6 +199,17 @@ class Supervisor:
         if self._terminal_surfaces is None:
             raise TerminalSurfaceError("Terminal surfaces are not configured", reason="not_found")
         self._terminal_surfaces.resize(surface_id, attachment_id, rows=rows, cols=cols)
+
+    def terminal_surface_succeeded(self, surface: SurfaceResource) -> None:
+        """Honor the worker's explicit opt-in close after a successful application exit."""
+        with self._state_lock:
+            if self._surfaces.get(surface.surface_id) != surface or surface.client_id not in self._clients:
+                return
+        try:
+            self.close_client(client_id=surface.client_id, trace_id=new_id("trace"))
+        except SupervisorError:
+            # close_client already records typed cleanup failures.
+            pass
 
     def terminal_surface_failed(
         self, surface: SurfaceResource, error: TerminalSurfaceError,
@@ -416,6 +428,7 @@ class Supervisor:
         code: str,
         trace_id: str,
         bootstrap: bool = False,
+        source_context: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         control_timeout = 10.0 if timeout is None else timeout
@@ -774,10 +787,17 @@ class Supervisor:
                         worker.plugin_worker_id,
                         "execute",
                         handoff.payload,
+                        source_context=source_context,
                         trace_id=trace_id,
                         timeout=control_timeout,
                     )
                 except (PluginWorkerSelectionError, PluginWorkerError) as exc:
+                    if isinstance(exc, PluginOperationError):
+                        # Initial construction has no published client to own the surviving worker.
+                        try:
+                            self._plugin_workers.stop(worker.plugin_worker_id, trace_id=trace_id, timeout=control_timeout)
+                        except PluginWorkerError as cleanup_error:
+                            exc.details["cleanup_error"] = str(cleanup_error)
                     failure = self._plugin_worker_failure(
                         exc,
                         trace_id=trace_id,
@@ -1175,13 +1195,14 @@ class Supervisor:
                 self._operation_lock.release()
 
     def followup(
-        self, *, client_id: str, body: str, trace_id: str, timeout: float | None = None,
+        self, *, client_id: str, body: str, trace_id: str, timeout: float | None = None, source_context: str | None = None,
     ) -> dict[str, Any]:
-        return self._client_operation(client_id=client_id, payload={"body": body},
+        return self._client_operation(client_id=client_id, payload={"body": body}, source_context=source_context,
                                       kind="followup", trace_id=trace_id, timeout=timeout)
 
     def _client_operation(
         self, *, client_id: str, payload: dict[str, Any], kind: str, trace_id: str, timeout: float | None,
+        source_context: str | None = None,
     ) -> dict[str, Any]:
         """Route an operation to an existing client without a kernel execution."""
         client_ref = ResourceRef("client", client_id)
@@ -1215,7 +1236,7 @@ class Supervisor:
                 }
             assert self._plugin_workers is not None
             result = self._plugin_workers.request(
-                client.plugin_worker_id, kind, payload,
+                client.plugin_worker_id, kind, payload, source_context=source_context,
                 trace_id=trace_id, timeout=timeout, request_id=operation.operation_id,
             )
             if result.core_requests:

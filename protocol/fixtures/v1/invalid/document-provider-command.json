@@ -1,0 +1,7 @@
+{
+  "action": "open_document",
+  "text": "",
+  "slot": "book",
+  "provider": "pdf | quit",
+  "lifetime": "independent"
+}

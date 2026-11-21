@@ -157,6 +157,7 @@ class ExecutionsHandler(BaseHandler):
                 cell_id=command["cell_id"],
                 code=command["code"],
                 bootstrap=command.get("bootstrap", False),
+                source_context=command.get("source_context"),
                 trace_id=command["trace_id"],
             )
         except SupervisorError as exc:
@@ -283,7 +284,7 @@ class ClientFollowupHandler(BaseHandler):
             result = await asyncio.to_thread(
                 self.supervisor.followup,
                 client_id=client_id,
-                body=command["body"],
+                body=command["body"], source_context=command.get("source_context"),
                 trace_id=command["trace_id"],
             )
         except SupervisorError as exc:
@@ -435,6 +436,20 @@ class EditorActionDeliveryHandler(BaseHandler):
             self.action_error(action_id, exc)
             return
         self.write_json(200, {"ok": True, "delivery": result})
+
+
+class EditorActionReplyHandler(EditorActionDeliveryHandler):
+    def post(self, action_id):
+        try:
+            value = json.loads(self.request.body)
+            from jusi.protocol import validate_editor_reply
+            validate_editor_reply(value)
+            result = self.supervisor.editor_actions.upload_reply(action_id, value["editor_id"],
+                offset=value["offset"], text=value["text"], eof=value["eof"])
+        except (ValueError, KeyError, TypeError) as exc:
+            self.action_error(action_id, EditorActionError(str(exc), getattr(exc, "reason", "invalid_request")))
+            return
+        self.write_json(200, {"ok": True, **result})
 
 
 class AttentionHandler(EditorActionDeliveryHandler):
@@ -701,6 +716,7 @@ def make_application(supervisor: Supervisor) -> tornado.web.Application:
         [
             (r"/v1/health", HealthHandler, handler_args),
             (r"/v1/events", EventsHandler, handler_args),
+            (r"/v1/editor-actions/([^/]+)/reply", EditorActionReplyHandler, {"supervisor": supervisor}),
             (r"/v1/editor-actions/([^/]+)", EditorActionDeliveryHandler, handler_args),
             (r"/v1/attention/([^/]+)", AttentionHandler, handler_args),
             (r"/v1/surfaces/([^/]+)/terminal", TerminalSurfaceHandler, handler_args),

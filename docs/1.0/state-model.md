@@ -135,10 +135,12 @@ A backend-visible output or interaction resource associated with an execution or
   individual operation results or frontend buffer/window lifetime
 
 A successful exact-plugin handoff creates the client. It remains a valid target
-for its declared sequence of operations until explicit user close, demonstrated
+for its declared sequence of operations until explicit user or plugin-requested close, demonstrated
 fatal client/worker loss, or owning-runtime cleanup. Ordinary SQL statements,
 shell commands, follow-ups, completions, action results, and recoverable plugin
-errors do not implicitly close it.
+errors do not implicitly close it. A worker may explicitly request close after
+a successful terminal application exit using `close_on_success` (ADR 0056);
+ordinary result payloads never select client lifetime.
 
 A Neovim terminal buffer is a frontend projection of a client, not the client identity.
 

@@ -84,12 +84,14 @@
         "interrupt"
       ]
     },
+    "source_context": {"type": "string", "minLength": 1, "maxLength": 128, "not": {"pattern": "[^A-Za-z0-9_-]" }},
     "payload": {
       "type": "object"
     }
   },
   "additionalProperties": false,
   "allOf": [
+    {"if": {"required": ["source_context"]}, "then": {"properties": {"operation": {"enum": ["execute", "followup"]}}}},
     {
       "if": {
         "properties": {
@@ -160,6 +162,7 @@
       "properties": {
         "request_id": {"type": "string", "minLength": 3, "maxLength": 128},
         "kind": {"const": "terminal_surface.create"},
+        "close_on_success": {"type": "boolean", "default": false},
         "argv": {
           "type": "array",
           "minItems": 1,

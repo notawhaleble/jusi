@@ -45,6 +45,21 @@ def _failure(request: dict[str, Any], exc: BaseException) -> dict[str, Any]:
     }
 
 
+def _handle_operation(worker, message):
+    operation, payload = message["operation"], message["payload"]
+    context = message.get("source_context")
+    if operation in {"execute", "followup"}:
+        handler = getattr(worker, "handle_with_context", None)
+        if handler is not None:
+            return handler(operation, payload, source_context=context)
+    if context is not None:
+        # Compatibility with two-argument handlers from the initial source-context API.
+        if "source_context" in payload:
+            raise OperationRejected("Source context needs handle_with_context for this payload", reason="conflict")
+        payload = {**payload, "source_context": context}
+    return worker.handle(operation, payload)
+
+
 def run(args: argparse.Namespace) -> int:
     control_input = os.fdopen(os.dup(sys.stdin.fileno()), "rb", buffering=0)
     control_output = os.fdopen(os.dup(sys.stdout.fileno()), "wb", buffering=0)
@@ -113,7 +128,7 @@ def run(args: argparse.Namespace) -> int:
 
     def handle(message: dict[str, Any]) -> None:
         try:
-            handled = worker.handle(message["operation"], message["payload"])
+            handled = _handle_operation(worker, message)
             if isinstance(handled, WorkerResult):
                 result = handled.result
                 core_requests = [request.to_dict() for request in handled.core_requests]

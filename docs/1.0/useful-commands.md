@@ -122,10 +122,10 @@ the terminal. See the [palette guide](usage.md#palette-and-focus) for the underl
 
 ## Clean up the current notebook view
 
-After a temporary JShell or other `:J` workflow, press `\Q` from the notebook
-or an output in Normal mode (including notebook cell mode). The built-in
-`:JusiCloseTab` command closes this notebook's outputs visible in the current
-tab and removes its extra notebook windows. It retains the last notebook view
+After a temporary JShell or other `:J` workflow, press `\Q` from any window
+in the current tab in Normal mode (including notebook cell mode). The built-in
+`:JusiCloseTab` command closes outputs for all notebooks visible in the current
+tab and removes their extra notebook windows. It retains the last notebook view
 across all tabs and keeps the kernel running. No optional helper setup is needed.
 
 Clients visible in another tab remain usable there; only their windows in the

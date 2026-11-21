@@ -1,0 +1,8 @@
+{
+  "action": "offer_document",
+  "text": "",
+  "slot": "book",
+  "provider": "pdf",
+  "lifetime": "independent",
+  "shared_token": ""
+}
