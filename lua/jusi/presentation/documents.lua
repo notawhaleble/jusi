@@ -167,6 +167,11 @@ function M.apply(content, opts)
         })
         if content.lifetime == 'client' and content.placement ~= 'tab' then
           vim.b[buf].jusi_overlay_source = opts.source_buf
+          -- BufEnter precedes assignment of the overlay owner. Check focus
+          -- after nvim_win_call restores the actual current window.
+          vim.schedule(function()
+            if vim.api.nvim_get_current_buf() == buf then require('jusi.attention').visit_current() end
+          end)
         end
       end)
       if placeholder and vim.api.nvim_buf_is_valid(placeholder) then

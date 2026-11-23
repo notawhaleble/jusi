@@ -85,6 +85,9 @@ function Manager:receive(item)
       announce(self, item)
     end
   end
+  if item.state == 'pending' and item.kind == 'notice' and vim.b.jusi_overlay_source then
+    self:visit(vim.api.nvim_get_current_buf())
+  end
   redraw()
 end
 function Manager:resync(items)
@@ -121,6 +124,7 @@ function Manager:dismiss(item)
 end
 function Manager:visit(buf)
   if focused == false then return end
+  buf = vim.b[buf].jusi_overlay_source or buf
   for _, item in pairs(self.items) do
     if client_buffer(self.session, item.client_id) == buf then self:dismiss(item) end
   end
@@ -214,6 +218,11 @@ function M.show(dismiss)
   else vim.ui.select(entries, { prompt = dismiss and 'Dismiss Jusi notices' or 'Jusi attention',
     format_item = function(entry) return label(entry.manager, entry.item) .. ': ' .. entry.item.message end }, select) end
 end
+function M.visit_current()
+  local buf = vim.api.nvim_get_current_buf()
+  for _, manager in pairs(managers) do manager:visit(buf) end
+end
+
 function M.setup(opts)
   opts = opts or {}
   assert(type(opts) == 'table', 'attention must be an options table')
@@ -230,12 +239,8 @@ function M.setup(opts)
   if started then return end
   started = true
   local group = vim.api.nvim_create_augroup('jusi_attention', { clear = true })
-  local function visit()
-    local buf = vim.api.nvim_get_current_buf()
-    for _, manager in pairs(managers) do manager:visit(buf) end
-  end
   vim.api.nvim_create_autocmd('FocusLost', { group = group, callback = function() focused = false end })
-  vim.api.nvim_create_autocmd('FocusGained', { group = group, callback = function() focused = true; visit() end })
-  vim.api.nvim_create_autocmd({ 'BufEnter', 'WinEnter', 'TermEnter' }, { group = group, callback = visit })
+  vim.api.nvim_create_autocmd('FocusGained', { group = group, callback = function() focused = true; M.visit_current() end })
+  vim.api.nvim_create_autocmd({ 'BufEnter', 'WinEnter', 'TermEnter' }, { group = group, callback = M.visit_current })
 end
 return M

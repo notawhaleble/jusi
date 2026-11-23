@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.8 — 2026-11-23
+
+- Focusing a client-owned document overlay dismisses completion notices for its client. Requests that require an answer remain pending.
+
 ## 1.0.7 — 2026-11-23
 
 - Answer kernel input in Neovim’s native prompt. Password requests use masked
