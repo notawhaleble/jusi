@@ -11,8 +11,9 @@ end
 function M.run()
   local scenario = read("scenarios/client-followup.json")
   assert(protocol.validate_command(read("valid/followup.json"), "followup"))
+  assert(protocol.validate_command(read(scenario.image_command_fixture), "followup"))
   for _, event in ipairs(scenario.events) do assert(protocol.validate_event(event)) end
-  for _, name in ipairs({ "followup-missing-client", "followup-nonstring-body" }) do
+  for _, name in ipairs({ "followup-missing-client", "followup-nonstring-body", "followup-image-count" }) do
     assert(not protocol.validate_command(read("invalid/" .. name .. ".json"), "followup"))
   end
   local buf = vim.api.nvim_create_buf(false, true)

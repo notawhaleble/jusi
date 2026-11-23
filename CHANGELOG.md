@@ -1,11 +1,19 @@
 # Changelog
 
-## 1.0.7 — unreleased
+## 1.0.7 — 2026-11-23
+
+- Answer kernel input in Neovim’s native prompt. Password requests use masked
+  entry and the cell keeps its source.
+- Support immediate and deferred Jupyter output clearing and updates to retained
+  displays by display ID.
+- Attach files to a single cell submission for plugins that accept their media
+  types. Failed submissions keep attachments available for retry.
+- Toggle focus between a cell and its visible document overlay. Ctrl-Q closes
+  the overlay and reveals its terminal.
 
 - Preserve notebook cursors during start and restart. Execute and close use the
   focused pane when multiple panes display the same notebook.
 - Silently fall back when optional plugin syntax or indentation files are absent.
-
 - Include client-owned document overlays in `\Q` tab cleanup, closing their
   clients and splits while preserving independent books and clients viewed in
   other tabs.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import queue
@@ -19,6 +20,7 @@ from jusi.application.ports import (
     KernelExecutionResult,
     KernelFactory,
     KernelOutput,
+    KernelClearOutput,
     PluginHandoff,
 )
 from jusi.domain.models import ProcessDiagnostics
@@ -298,7 +300,7 @@ class ManagedJupyterKernel:
 
     def bootstrap(
         self, magic_name: str, arguments: str, *, timeout: float | None,
-        on_output: Callable[[KernelOutput], None],
+        on_output: Callable[[KernelOutput | KernelClearOutput], None],
         on_input: Callable[[str, str, bool], None] | None = None,
     ) -> KernelExecutionResult:
         # Arguments are Python literals, never executable user source. The hook
@@ -312,7 +314,7 @@ class ManagedJupyterKernel:
         code: str,
         *,
         timeout: float | None,
-        on_output: Callable[[KernelOutput], None],
+        on_output: Callable[[KernelOutput | KernelClearOutput], None],
         on_input: Callable[[str, str, bool], None] | None = None,
     ) -> KernelExecutionResult:
         with self._lock:
@@ -332,20 +334,31 @@ class ManagedJupyterKernel:
             def output_hook(message: dict[str, Any]) -> None:
                 message_type = message.get("msg_type") or message.get("header", {}).get("msg_type", "")
                 content = message.get("content", {})
-                if message_type == "stream":
+                if message_type == "clear_output":
+                    on_output(KernelClearOutput(wait=content.get("wait") is True))
+                elif message_type == "stream":
                     name = str(content.get("name", "stdout"))
                     emit_output(
                         "stderr" if name == "stderr" else "stdout",
                         "text/x-ansi",
                         content.get("text", ""),
                     )
-                elif message_type in {"execute_result", "display_data"}:
+                elif message_type in {"execute_result", "display_data", "update_display_data"}:
                     output_kind = "result" if message_type == "execute_result" else "display"
+                    transient = content.get("transient", {})
+                    identity = transient.get("display_id") if isinstance(transient, dict) else None
+                    display_id = hashlib.sha256(identity.encode()).hexdigest() if isinstance(identity, str) and identity else None
+                    if message_type == "update_display_data":
+                        if display_id is None:
+                            return
+                        output_kind = "update"
                     data = content.get("data", {})
                     if isinstance(data, dict):
                         rich = any(mime in data for mime in ("text/html", "image/svg+xml", "image/png", "image/jpeg", "image/gif", "application/javascript", "text/javascript"))
                         for media_type, value in data.items():
                             if media_type == PLUGIN_HANDOFF_MIME:
+                                if output_kind == "update":
+                                    continue
                                 try:
                                     if _plugin_control_size(value) > MAX_PLUGIN_CONTROL_BYTES:
                                         raise ProtocolValidationError("Plugin handoff exceeds the size limit")
@@ -362,20 +375,32 @@ class ManagedJupyterKernel:
                                 except ProtocolValidationError as exc:
                                     handoff_errors.append(str(exc))
                                 continue
-                            if isinstance(value, str) and not rich:
+                            if isinstance(value, str) and not rich and not display_id:
                                 emit_output(output_kind, str(media_type), value)
-                        if rich:
+                        if rich or display_id:
                             bundle = {mime: value for mime, value in data.items()
                                       if mime != PLUGIN_HANDOFF_MIME and isinstance(value, str)}
+                            if display_id and not rich:
+                                # Group chunks and text representations into one replaceable display.
+                                text_parts = [value for mime, value in bundle.items() if mime.startswith("text/")]
+                                if text_parts:
+                                    bundle = {"text/plain": "".join(text_parts)}
+                            if not bundle:
+                                return
                             encoded = json.dumps(bundle, ensure_ascii=False)
                             if len(encoded.encode("utf-8")) > 16 * 1024 * 1024:
-                                emit_output(output_kind, "text/plain", bundle.get("text/plain", "[Rich output exceeds 16 MiB]"))
-                            else:
-                                chunks = list(_text_chunks(encoded))
-                                bundle_id = f"out_{uuid.uuid4().hex}"
-                                for index, chunk in enumerate(chunks):
-                                    on_output(KernelOutput(output_kind, "application/vnd.jusi.mime-bundle.v1+json",
-                                                           chunk, bundle_id, index == len(chunks) - 1))
+                                fallback = bundle.get("text/plain", "[Rich output exceeds 16 MiB]")
+                                if display_id is None:
+                                    emit_output(output_kind, "text/plain", fallback)
+                                    return
+                                encoded = json.dumps({"text/plain": fallback}, ensure_ascii=False)
+                                if len(encoded.encode("utf-8")) > 16 * 1024 * 1024:
+                                    encoded = '{"text/plain":"[Display exceeds 16 MiB]"}'
+                            chunks = list(_text_chunks(encoded))
+                            bundle_id = f"out_{uuid.uuid4().hex}"
+                            for index, chunk in enumerate(chunks):
+                                on_output(KernelOutput(output_kind, "application/vnd.jusi.mime-bundle.v1+json",
+                                                       chunk, bundle_id, index == len(chunks) - 1, display_id))
                 elif message_type == "error":
                     traceback = content.get("traceback", [])
                     text = "\n".join(str(line) for line in traceback) if isinstance(traceback, list) else str(traceback)

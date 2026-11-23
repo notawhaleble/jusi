@@ -1,0 +1,9 @@
+{
+  "protocol_version": 1,
+  "command_id": "cmd_followup",
+  "trace_id": "trace_followup",
+  "kind": "followup",
+  "client_id": "client_existing",
+  "body": "  literal body  \nα",
+  "attachment_count": 9
+}

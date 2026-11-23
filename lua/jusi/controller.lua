@@ -27,9 +27,10 @@ function Controller:_command(kind, fields)
   return command
 end
 
-function Controller:_request(method, path, command, callback)
+function Controller:_request(method, path, command, callback, files)
   local on_complete = callback or function() end
   return self.transport:request(method, path, command, {
+    attachments = files,
     operation = command.kind,
     trace_id = command.trace_id,
     timeout_ms = (command.kind == "execute" or command.kind == "followup") and 0 or nil,
@@ -349,7 +350,7 @@ function Controller:_on_event(event)
     if self.pending_input and self.pending_input.input_request_id == event.payload.input_request_id then
       self.pending_input = nil
     end
-  elseif event.kind == "execution.output" then
+  elseif event.kind == "execution.output" or event.kind == "execution.output_cleared" then
     local execution = self.executions[event.payload.execution_id]
     if execution and self.on_output then
       self.on_output(execution.cell_id, event.payload, event)
@@ -557,6 +558,8 @@ function Controller:execute(cell_id, callback, bootstrap)
     end
     return nil
   end
+  local files = self.cell_attachments and self.cell_attachments(cell_id)
+  if bootstrap == true then files = nil end -- Explicit initialization never sends the draft.
   if bootstrap == nil then bootstrap = self:empty_plugin_cell(cell_id) end
   self.bootstrap_pending = self.bootstrap_pending or {}
   if bootstrap and self.bootstrap_pending[cell_id] then
@@ -573,12 +576,14 @@ function Controller:execute(cell_id, callback, bootstrap)
     bootstrap = bootstrap or nil,
   })
   if bootstrap then self.bootstrap_pending[cell_id] = command.trace_id end
+  if files then command.attachment_count = #files end
   if self.on_submission then self.on_submission(command, cell_id) end
   return self:_request("POST", "/v1/kernels/" .. self.kernel_id .. "/executions", command, function(response, failure)
     if self.bootstrap_pending[cell_id] == command.trace_id then self.bootstrap_pending[cell_id] = nil end
+    if files and self.attachments_submitted then self.attachments_submitted(cell_id, files, response, failure) end
     if self.on_submission_result then self.on_submission_result(command, response, failure) end
     if callback then callback(response, failure) end
-  end)
+  end, files)
 end
 
 function Controller:complete(context, callback)
@@ -660,15 +665,18 @@ function Controller:followup(cell_id, callback)
     }) end
     return nil
   end
+  local files = self.cell_attachments and self.cell_attachments(cell_id)
   local submissions = self.followup_submissions
   submissions[client.client_id] = true
   local command = self:_command("followup", { client_id = client.client_id, body = table.concat(body, "\n") })
+  if files then command.attachment_count = #files end
   if self.on_submission then self.on_submission(command, cell_id) end
   return self:_request("POST", "/v1/clients/" .. client.client_id .. "/followups", command, function(response, failure)
+    if files and self.attachments_submitted then self.attachments_submitted(cell_id, files, response, failure) end
     if self.on_submission_result then self.on_submission_result(command, response, failure) end
     submissions[client.client_id] = nil
     if callback then callback(response, failure) end
-  end)
+  end, files)
 end
 
 function Controller:submit_input(request, value, callback)

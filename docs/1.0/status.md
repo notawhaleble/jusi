@@ -1,8 +1,17 @@
 # Jusi 1.0 Status
 
-Updated: 2026-11-21
+Updated: 2026-11-23
 
 ## Current Facts
+
+- Managed IPython executions support immediate and deferred output clearing and
+  targeted updates to retained displays. See [ADR 0058](adr/0058-jupyter-output-mutations.md).
+
+- Cell attachments are single-use. The service transports typed files and
+  enforces provider MIME capabilities. A successful operation clears the entries
+  it received. Failure, cancellation and files added during submission are
+  covered by the frontend regression. The real ACP fixture verified explicit
+  reattachment. See [ADR 0057](adr/0057-transient-cell-image-input.md).
 
 - Jupyter stdin opens a native Neovim prompt on arrival. Password requests use masked entry. See [ADR 0023](adr/0023-kernel-input-is-an-execution-reply.md).
 
@@ -28,7 +37,7 @@ Updated: 2026-11-21
   `JusiTrace`. Production session-wiring regressions cover placement and provider
   failure; see [Incident 0032](incidents/0032-shared-document-destination-and-missing-trace.md).
 
-- The unpublished 1.0.7 patch adds generic application document artifacts and
+- The 1.0.7 patch adds generic application document artifacts and
   opt-in source context, with MIME provider selection, owned Markdown-style
   overlays and immutable reader snapshots. There are no reading-provider
   branches or plugin-to-Neovim RPC. Existing remote rich MIME output is unchanged.
@@ -45,8 +54,7 @@ Updated: 2026-11-21
   the two opt-in real-PDF benchmark cases also passed. Real PDF/DjVu integration
   and built-wheel imports passed.
   Wheel and sdist build as 1.0.7. Two-machine
-  deployment and an authenticated assistant session remain unverified; no
-  release or tag was published.
+  deployment and an authenticated assistant session remain unverified.
 
 - Generic URL actions support client-scoped navigation slots across all tabs, including opens with both terminal and page hidden. Application and worker-result opens share source placement; failed deletion preserves retryable slot ownership. Terminal clients, repurposed windows and other clients' pages remain isolated. See [ADR 0053](adr/0053-client-scoped-url-slots.md) and [Incident 0031](incidents/0031-hidden-managed-url-replacement.md).
 

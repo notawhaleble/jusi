@@ -74,6 +74,7 @@ def test_python_consumes_shared_event_fixtures() -> None:
         "kernel.state_changed",
         "execution.started",
         "execution.output",
+        "execution.output_cleared",
         "execution.completed",
         "client.created",
         "client.closed",

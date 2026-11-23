@@ -12,6 +12,14 @@ local function remove(surface)
   end
   surface.closed = true
 end
+local function close_slot(slots, slot)
+  local surface = slots[slot]
+  if surface and surface.lifetime == 'client' then
+    surface:close()
+    slots[slot] = nil
+  end
+end
+
 function M.close_owned(slots)
   for _, surface in pairs(slots or {}) do
     if surface.lifetime == 'client' and not surface.closed then
@@ -27,7 +35,7 @@ function M.apply(content, opts)
   local slots = assert(opts.url_slots, 'Document actions require a client owner')
   local old = slots[content.slot]
   if content.action == 'close_document' then
-    if old and old.lifetime == 'client' then old:close(); slots[content.slot] = nil end
+    close_slot(slots, content.slot)
     return true
   end
   local host = require('jusi_neovim')
@@ -146,12 +154,20 @@ function M.apply(content, opts)
               lifetime = content.lifetime, close = content.lifetime == 'client' and remove or nil }
             if content.lifetime == 'independent' then vim.b[ready_buf].jusi_independent_document_id = document_id end
             slots[content.slot] = surface
+            if surface.source_buf and content.placement ~= 'tab' then
+              vim.keymap.set('n', '<C-q>', function()
+                if slots[content.slot] == surface then close_slot(slots, content.slot) end
+              end, { buffer = ready_buf, silent = true, desc = 'Dismiss document and return to client' })
+            end
             vim.api.nvim_create_autocmd('BufWipeout', { buffer = ready_buf, once = true, callback = function()
               surface.closed = true; artifact.release()
             end })
             done(true)
           end,
         })
+        if content.lifetime == 'client' and content.placement ~= 'tab' then
+          vim.b[buf].jusi_overlay_source = opts.source_buf
+        end
       end)
       if placeholder and vim.api.nvim_buf_is_valid(placeholder) then
         vim.api.nvim_buf_delete(placeholder, { force = true })

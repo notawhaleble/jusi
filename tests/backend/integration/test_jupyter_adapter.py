@@ -584,3 +584,27 @@ def test_liveness_check_uses_owned_process_with_inherited_running_event_loop():
         process.wait(timeout=3)
         process.stdin.close()
         kernel._close_resources()
+
+
+def test_real_kernel_clear_and_display_update_order():
+    from jusi.application.ports import KernelClearOutput
+
+    kernel = jupyter_kernel.ManagedJupyterKernelFactory().start("python3", timeout=8)
+    outputs = []
+    try:
+        result = kernel.execute(
+            "from IPython.display import clear_output, display, update_display\n"
+            "clear_output(wait=False)\n"
+            "display({'text/plain': 'one'}, raw=True, display_id='figure')\n"
+            "update_display({'text/plain': 'two'}, raw=True, display_id='figure')\n"
+            "clear_output(wait=True)",
+            timeout=5, on_output=outputs.append,
+        )
+        assert result.outcome == "succeeded"
+        clear, initial, update, deferred = outputs
+        assert clear == KernelClearOutput(False) and deferred == KernelClearOutput(True)
+        assert (initial.output_kind, update.output_kind) == ("display", "update")
+        assert initial.display_id and initial.display_id == update.display_id
+        assert initial.bundle_id != update.bundle_id
+    finally:
+        kernel.stop(timeout=5)

@@ -183,6 +183,7 @@
               "type": "boolean",
               "description": "Initialize the declared plugin using only its magic header; never submit cell content."
             },
+            "attachment_count": {"type": "integer", "minimum": 1, "maximum": 8},
             "source_context": {
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{1,128}$"
@@ -356,6 +357,7 @@
             "body": {
               "type": "string"
             },
+            "attachment_count": {"type": "integer", "minimum": 1, "maximum": 8},
             "source_context": {
               "type": "string",
               "pattern": "^[A-Za-z0-9_-]{1,128}$"

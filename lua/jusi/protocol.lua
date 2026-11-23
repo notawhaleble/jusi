@@ -33,7 +33,7 @@ local command_fields = {
 }
 local layers = set({ "protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker" })
 local operations = set({ "attention", "dismiss_attention", "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "ack_editor_action", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events" })
-local event_kinds = set({ "client.attention_changed", "editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
+local event_kinds = set({ "client.attention_changed", "editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.output_cleared", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred" })
 local resource_kinds = set({ "supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell" })
 local failure_reasons = set({ "invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error" })
 local failure_scopes = set({ "request", "transport", "execution", "cell", "client", "plugin_discovery", "plugin_worker", "kernel", "supervisor" })
@@ -97,6 +97,10 @@ local function uint64_bytes_to_decimal(bytes)
   return table.concat(decimal)
 end
 
+local function input_capability(value)
+  return type(value) == 'string' and #value <= 128 and value:match('^input:[a-z0-9][a-z0-9.+%-]*/[a-z0-9][a-z0-9.+%-]*$')
+end
+
 local function validate_client(client)
   local fields = { "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id", "execution_id", "plugin_worker_id", "plugin_id", "plugin_version", "family_id", "capabilities", "interaction", "created_at" }
   local ok, err = exact_fields(client, fields)
@@ -108,7 +112,7 @@ local function validate_client(client)
   if type(client.capabilities) ~= "table" then return false, "invalid client capabilities" end
   local seen = {}
   for _, capability in ipairs(client.capabilities) do
-    if not allowed_capabilities[capability] or seen[capability] then return false, "invalid client capabilities" end
+    if (not allowed_capabilities[capability] and not input_capability(capability)) or seen[capability] then return false, "invalid client capabilities" end
     seen[capability] = true
   end
   if not ({ noninteractive = true, request_response = true, terminal_interactive = true })[client.interaction] then return false, "invalid client interaction" end
@@ -254,10 +258,19 @@ local function validate_event_payload(event)
     end
     if not ok then return false, err end
     if event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "input event resource mismatch" end
-  elseif kind == "execution.output" then
-    ok, err = exact_fields(payload, { "execution_id", "client_id", "output_kind", "media_type", "data" }, { "bundle_id", "bundle_end" })
+  elseif kind == "execution.output_cleared" then
+    ok, err = exact_fields(payload, { "execution_id", "wait" })
     if not ok then return false, err end
-    if not nonempty_string(payload.execution_id) or (not null(payload.client_id) and not bounded_string(payload.client_id, 3, 128)) or not nonempty_string(payload.media_type) or type(payload.data) ~= "string" or not ({ stdout = true, stderr = true, result = true, display = true })[payload.output_kind] then return false, "invalid execution output payload" end
+    if not nonempty_string(payload.execution_id) or type(payload.wait) ~= "boolean"
+        or event.resource.kind ~= "execution" or event.resource.id ~= payload.execution_id then return false, "invalid output clear" end
+  elseif kind == "execution.output" then
+    ok, err = exact_fields(payload, { "execution_id", "client_id", "output_kind", "media_type", "data" }, { "bundle_id", "bundle_end", "display_id" })
+    if not ok then return false, err end
+    if not nonempty_string(payload.execution_id) or (not null(payload.client_id) and not bounded_string(payload.client_id, 3, 128)) or not nonempty_string(payload.media_type) or type(payload.data) ~= "string" or not ({ stdout = true, stderr = true, result = true, display = true, update = true })[payload.output_kind] then return false, "invalid execution output payload" end
+    if payload.display_id ~= nil and (not bounded_string(payload.display_id, 1, 128)
+        or not ({ result = true, display = true, update = true })[payload.output_kind]
+        or payload.media_type ~= "application/vnd.jusi.mime-bundle.v1+json") then return false, "invalid display identity" end
+    if payload.output_kind == "update" and not payload.display_id then return false, "missing display identity" end
     if payload.media_type == "application/vnd.jusi.mime-bundle.v1+json" then
       if not bounded_string(payload.bundle_id, 1, 128) or type(payload.bundle_end) ~= "boolean" then return false, "invalid MIME bundle boundary" end
     elseif payload.bundle_id ~= nil or payload.bundle_end ~= nil then return false, "unexpected bundle boundary" end
@@ -330,7 +343,11 @@ function M.validate_command(command, expected_kind)
     allowed[field] = true
   end
   if expected_kind == 'execute' or expected_kind == 'followup' then
-    allowed.source_context = true
+    allowed.source_context, allowed.attachment_count = true, true
+    local count = command.attachment_count
+    if count ~= nil and (type(count) ~= 'number' or count % 1 ~= 0 or count < 1 or count > 8) then
+      return false, 'invalid image count'
+    end
     if command.source_context ~= nil and (type(command.source_context) ~= 'string' or #command.source_context > 128
         or not command.source_context:match('^[A-Za-z0-9_-]+$')) then return false, 'invalid source context' end
   end
@@ -653,7 +670,7 @@ function M.validate_plugin_catalog(catalog)
       family_claims[claim] = true
       for field, _ in pairs(family) do if field ~= "family_id" and field ~= "magic_name" and field ~= "capabilities" and field ~= "presentation" and field ~= "provider_presentation" then return false, "unknown family field" end end
       local seen = {}
-      for _, value in ipairs(family.capabilities) do if not capabilities[value] or seen[value] then return false, "invalid family capability" end seen[value] = true end
+      for _, value in ipairs(family.capabilities) do if (not capabilities[value] and not input_capability(value)) or seen[value] then return false, "invalid family capability" end seen[value] = true end
       for _, name in ipairs({ "presentation", "provider_presentation" }) do
         local profile = family[name]
         if profile ~= nil then

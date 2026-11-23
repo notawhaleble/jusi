@@ -233,6 +233,11 @@ local function bind_cell_lifecycle(session)
   lifecycle.on_park_changed = function(id) marks:render(id) end
   local editing = require("jusi.editing").new(model, controller)
   session.editing = editing
+  controller.cell_attachments = function(id)
+    local record = editing.attachments and editing.attachments[id]
+    return record and vim.list_extend({}, record.items)
+  end
+  controller.attachments_submitted = function(...) require('jusi.attachments').submitted(editing, ...) end
   controller.on_submission = function(command, id)
     require("jusi.source_context").submit(editing, command, id)
     editing.history:submit(command, id)
@@ -821,9 +826,9 @@ function M.close_tab(buf)
   return true
 end
 
-local function focus_notebook_cell(session, cell)
+local function focus_notebook_cell(session, cell, anchor_buf)
   local window = presentation_window.show(session.buf, {
-    anchor_buf = vim.api.nvim_get_current_buf(),
+    anchor_buf = anchor_buf or vim.api.nvim_get_current_buf(),
     enter = true,
     split = "above",
   })
@@ -859,6 +864,8 @@ end
 
 function M.toggle_focus(buf, row)
   local context_buf = buf or vim.api.nvim_get_current_buf()
+  local source = vim.b[context_buf].jusi_overlay_source
+  if source and vim.api.nvim_buf_is_valid(source) then context_buf = source end
   local role = vim.b[context_buf].jusi_role
   if not sessions[context_buf] and vim.bo[context_buf].filetype ~= "jusi"
       and not require("jusi.cellmode").get(context_buf)
@@ -890,13 +897,20 @@ function M.toggle_focus(buf, row)
     return nil
   end
   if context_buf ~= session.buf then
-    return focus_notebook_cell(session, cell)
+    return focus_notebook_cell(session, cell, source and session.buf)
   end
   local artifact_buf = session.interactive:buffer_for_cell(cell.id)
     or session.presentation:buffer_for_cell(cell.id)
   if not artifact_buf then
     notify("cell has no execution artifact", vim.log.levels.WARN)
     return nil
+  end
+  for _, win in ipairs(vim.api.nvim_list_wins()) do
+    local displayed = vim.api.nvim_win_get_buf(win)
+    if vim.b[displayed].jusi_overlay_source == artifact_buf then
+      vim.api.nvim_set_current_win(win)
+      return displayed
+    end
   end
   presentation_window.show(artifact_buf, {
     anchor_buf = session.buf,

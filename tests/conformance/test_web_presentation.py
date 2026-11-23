@@ -17,6 +17,8 @@ def read(name):
     ('open-url-slot', lambda v: validate_editor_action(v, 'open_url'), 'responses.schema.json#/$defs/editor_action', ['open-url-slot']),
     ('close-url', lambda v: validate_editor_action(v, 'close_url'), 'responses.schema.json#/$defs/editor_action',
      ['close-url-missing-slot', 'close-url-text', 'close-url-url']),
+    ('display-update', validate_event, 'events.schema.json', ['display-update-id']),
+    ('output-clear', validate_event, 'events.schema.json', ['output-clear-wait']),
     ('javascript-bundle', validate_event, 'events.schema.json', []),
     ('mime-bundle', validate_event, 'events.schema.json', ['mime-bundle-boundary', 'mime-bundle-media']),
 ])

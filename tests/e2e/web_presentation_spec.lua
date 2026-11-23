@@ -48,6 +48,22 @@ function M.run()
     assert(vim.base64.decode(encoded):find('element.textContent = "JavaScript from Jusi";', 1, true))
     assert(vim.api.nvim_get_current_win() == origin)
 
+    vim.api.nvim_buf_set_lines(buf, 1, -2, false, {
+      'from IPython.display import clear_output, display, update_display',
+      "display({'text/plain': 'discard'}, raw=True)",
+      "clear_output(wait=True)",
+      "display({'text/plain': 'before'}, raw=True, display_id='live')",
+      "display({'text/plain': ' fixed'}, raw=True)",
+      "update_display({'text/plain': 'after'}, raw=True, display_id='live')",
+    })
+    session.model:flush()
+    done, response, failure = nil, nil, nil
+    jusi.execute(buf, 1, function(r, f) done, response, failure = true, r, f end)
+    wait_for(function()
+      local rendered = session.presentation:buffer_for_cell(cell.id)
+      return done and rendered and vim.api.nvim_buf_get_lines(rendered, 0, 1, false)[1] == 'after fixed'
+    end, 'IPython clear and targeted display update through HTTP/SSE')
+    assert(not failure and response.execution.outcome == 'succeeded', vim.inspect(failure))
   end, debug.traceback)
   if buf and jusi._sessions[buf] then jusi._destroy_session(buf)
   elseif service then service:stop() end

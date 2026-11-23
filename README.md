@@ -4,7 +4,7 @@ Jusi brings Jupyter kernels and interactive tools into Neovim. Edit plain-text
 notebooks, execute cells, and work with their outputs in native splits. Notebook
 editing, navigation and history remain available without a running kernel.
 
-![Jusi 1.0 demo](docs/assets/jusi-1.0.gif)
+![Jusi 1.0.7 in Neovim showing parked output, VisiData and a kernel input prompt](docs/assets/jusi-1.0.gif)
 
 - Cell-local syntax, indentation and completion.
 - Interactive terminal clients, including bundled VisiData.
@@ -77,3 +77,18 @@ Jusi 1.0 requires Neovim; it does not support Vim or legacy Jusi notebook
 syntax. [Architecture](docs/1.0/architecture/overview.md),
 [design intent](docs/1.0/intent.md), and [implementation status](docs/1.0/status.md)
 are maintained separately from the user guides.
+
+### Single-use cell attachments
+
+Paste a screenshot or drop files onto a cell. The opener lists the files queued
+for the next submission. Each plugin declares the media types it accepts. Codex
+and ACP currently accept PNG. A cell accepts up to eight files totaling 16 MiB.
+
+A successful Jusi submission removes the files included in that request. Files
+added during the request stay queued. A failed or cancelled submission leaves
+its files available for retry. Reattach a file to send it again. To remove a
+queued item yourself, use `:JusiClearAttachments 2` for the second file or
+`:JusiClearAttachments` for all files. `:JusiClearImages` is an alias.
+
+Saving writes notebook text. Reloading, unloading, detaching the notebook,
+deleting the cell, or losing its boundaries releases pending files with a warning.

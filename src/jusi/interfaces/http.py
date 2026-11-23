@@ -3,6 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+from tempfile import TemporaryDirectory
+from pathlib import Path
+from urllib.parse import unquote
+
+from jusi.protocol import valid_input_capability
 import threading
 from typing import Any
 
@@ -39,8 +44,29 @@ class BaseHandler(tornado.web.RequestHandler):
 
     def parse_command(self, expected_kind: str) -> dict[str, Any] | None:
         try:
-            raw = json.loads(self.request.body.decode("utf-8"))
-            return validate_command(raw, expected_kind)
+            multipart = self.request.headers.get("Content-Type", "").startswith("multipart/form-data")
+            if multipart:
+                if expected_kind not in {"execute", "followup"} or set(self.request.files) != {"attachment"}:
+                    raise ProtocolValidationError("Unexpected attachment upload")
+                commands = self.request.body_arguments.get("command", [])
+                if len(commands) != 1:
+                    raise ProtocolValidationError("Expected one command")
+                raw = json.loads(commands[0])
+            else:
+                raw = json.loads(self.request.body.decode("utf-8"))
+            command = validate_command(raw, expected_kind)
+            files = self.request.files.get("attachment", [])
+            if len(files) != command.get("attachment_count", 0) or sum(len(f.body) for f in files) > 16 * 1024 * 1024:
+                raise ProtocolValidationError("Attachment count or size mismatch")
+            for file in files:
+                name = unquote(file.filename)
+                if not name or len(name.encode()) > 255 or any(ord(c) < 32 or c in "/\\" for c in name):
+                    raise ProtocolValidationError("Invalid attachment name")
+                if not valid_input_capability("input:" + file.content_type):
+                    raise ProtocolValidationError("Invalid attachment media type")
+                if file.content_type == "image/png" and not file.body.startswith(bytes.fromhex("89504e470d0a1a0a")):
+                    raise ProtocolValidationError("Expected PNG content")
+            return command
         except (UnicodeDecodeError, json.JSONDecodeError, ProtocolValidationError) as exc:
             trace_id = new_id("trace")
             if isinstance(locals().get("raw"), dict):
@@ -61,6 +87,18 @@ class BaseHandler(tornado.web.RequestHandler):
             self.supervisor.record_failure(failure)
             self.write_json(400, {"ok": False, "failure": failure.to_dict()})
             return None
+
+    async def submit_with_attachments(self, operation, **kwargs):
+        files = self.request.files.get("attachment", [])
+        if not files:
+            return await asyncio.to_thread(operation, **kwargs)
+        with TemporaryDirectory(prefix="jusi-input-") as directory:
+            paths = []
+            for index, file in enumerate(files):
+                path = Path(directory) / str(index)
+                path.write_bytes(file.body)
+                paths.append({"name": unquote(file.filename), "media_type": file.content_type, "path": str(path)})
+            return await asyncio.to_thread(operation, attachments=paths, **kwargs)
 
     def write_supervisor_error(self, exc: SupervisorError) -> None:
         self.write_json(exc.status_code, {"ok": False, "failure": exc.failure.to_dict()})
@@ -150,7 +188,7 @@ class ExecutionsHandler(BaseHandler):
             self.write_json(400, {"ok": False, "failure": failure.to_dict()})
             return
         try:
-            result = await asyncio.to_thread(
+            result = await self.submit_with_attachments(
                 self.supervisor.execute,
                 kernel_id=kernel_id,
                 notebook_id=command["notebook_id"],
@@ -281,7 +319,7 @@ class ClientFollowupHandler(BaseHandler):
             self.write_json(400, {"ok": False, "failure": failure.to_dict()})
             return
         try:
-            result = await asyncio.to_thread(
+            result = await self.submit_with_attachments(
                 self.supervisor.followup,
                 client_id=client_id,
                 body=command["body"], source_context=command.get("source_context"),

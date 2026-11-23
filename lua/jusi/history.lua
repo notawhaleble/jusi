@@ -223,7 +223,7 @@ end
 function History:result(command, response, failure)
   local pending = self.pending[command.trace_id]
   if not pending then return end
-  if command.kind == 'followup' and (response or failure and failure.layer == 'plugin_worker') then
+  if command.kind == 'followup' and (response or failure and failure.layer == 'plugin_worker' and not command.attachment_count) then
     self:accept(pending.id, pending.body)
   end
   if command.kind == 'followup' and (not failure or failure.layer ~= 'frontend_transport') then self.pending[command.trace_id] = nil end

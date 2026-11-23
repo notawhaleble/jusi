@@ -36,7 +36,7 @@ COMMAND_FIELDS: dict[str, tuple[str, ...]] = {
 }
 LAYERS = {"protocol", "frontend_transport", "service", "supervisor", "kernel", "execution", "client", "plugin_discovery", "plugin_worker"}
 OPERATIONS = {"attention", "dismiss_attention", "service_start", "start_kernel", "stop_kernel", "complete", "followup", "close_client", "ack_editor_action", "interrupt_client", "editor_action", "restart_notebook", "execute", "run_terminal_surface", "interrupt", "submit_input", "cleanup", "inspect", "connect_events"}
-EVENT_KINDS = {"client.attention_changed", "editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
+EVENT_KINDS = {"client.attention_changed", "editor_action.requested", "service.ready", "operation.started", "operation.completed", "kernel.state_changed", "execution.started", "execution.output", "execution.output_cleared", "execution.input_requested", "execution.input_replied", "execution.completed", "client.created", "client.closed", "surface.created", "surface.closed", "failure.occurred"}
 RESOURCE_KINDS = {"supervisor", "notebook_runtime", "kernel", "execution", "client", "surface", "plugin_discovery", "plugin_worker", "transport", "notebook", "cell"}
 OUTCOMES = {"pending", "running", "succeeded", "failed", "interrupted", "cancelled"}
 FAILURE_REASONS = {"invalid_request", "unsupported", "not_found", "conflict", "unreachable", "timeout", "cancelled", "spawn_failed", "readiness_failed", "process_exited", "process_signalled", "channel_closed", "protocol_violation", "kernel_died", "execution_error", "interrupted", "plugin_error", "cleanup_incomplete", "capacity_exceeded", "internal_error"}
@@ -80,6 +80,17 @@ def _validate_resource(resource: object, context: str = "resource") -> dict[str,
     return resource
 
 
+def valid_input_capability(value: object) -> bool:
+    return isinstance(value, str) and len(value) <= 128 and re.fullmatch("input:[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*", value) is not None
+
+
+def _valid_capabilities(values: object) -> bool:
+    supported = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention", "source_context"}
+    return (isinstance(values, list)
+            and all(isinstance(c, str) and (c in supported or valid_input_capability(c)) for c in values)
+            and len(values) == len(set(values)))
+
+
 def _validate_client(client: object, context: str = "client") -> dict[str, Any]:
     fields = {
         "client_id", "runtime_id", "kernel_id", "notebook_id", "cell_id",
@@ -97,11 +108,7 @@ def _validate_client(client: object, context: str = "client") -> dict[str, Any]:
         ),
         context,
     )
-    capabilities = client["capabilities"]
-    allowed_capabilities = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention", "source_context"}
-    if not isinstance(capabilities, list) or len(capabilities) != len(set(capabilities)) or any(
-        capability not in allowed_capabilities for capability in capabilities
-    ):
+    if not _valid_capabilities(client["capabilities"]):
         raise ProtocolValidationError(f"{context}.capabilities are invalid")
     if client["interaction"] not in {"noninteractive", "request_response", "terminal_interactive"}:
         raise ProtocolValidationError(f"{context}.interaction is invalid")
@@ -221,9 +228,20 @@ def _validate_event_payload(data: dict[str, Any]) -> None:
             _required_strings(payload, ("execution_id", "input_request_id"), "input reply")
         if data["resource"] != {"kind": "execution", "id": payload["execution_id"]}:
             raise ProtocolValidationError("input event resource mismatch")
+    elif kind == "execution.output_cleared":
+        _exact_fields(payload, {"execution_id", "wait"}, set(), "payload")
+        _required_strings(payload, ("execution_id",), "payload")
+        if type(payload["wait"]) is not bool or data["resource"] != {"kind": "execution", "id": payload["execution_id"]}:
+            raise ProtocolValidationError("Invalid output clear")
     elif kind == "execution.output":
         fields = {"execution_id", "client_id", "output_kind", "media_type", "data"}
-        _exact_fields(payload, fields, {"bundle_id", "bundle_end"}, "payload")
+        _exact_fields(payload, fields, {"bundle_id", "bundle_end", "display_id"}, "payload")
+        if "display_id" in payload and (not _bounded_string(payload["display_id"], 1, 128)
+                or payload["output_kind"] not in {"result", "display", "update"}
+                or payload["media_type"] != "application/vnd.jusi.mime-bundle.v1+json"):
+            raise ProtocolValidationError("Invalid display identity")
+        if payload["output_kind"] == "update" and "display_id" not in payload:
+            raise ProtocolValidationError("Missing display identity")
         if payload["media_type"] == "application/vnd.jusi.mime-bundle.v1+json":
             if not _bounded_string(payload.get("bundle_id"), 1, 128) or type(payload.get("bundle_end")) is not bool:
                 raise ProtocolValidationError("Invalid MIME bundle boundary")
@@ -232,7 +250,7 @@ def _validate_event_payload(data: dict[str, Any]) -> None:
         _required_strings(payload, ("execution_id", "media_type"), "payload")
         if payload["client_id"] is not None and not _bounded_string(payload["client_id"], 3, 128):
             raise ProtocolValidationError("execution output client identity is invalid")
-        if payload["output_kind"] not in {"stdout", "stderr", "result", "display"} or not isinstance(payload["data"], str):
+        if payload["output_kind"] not in {"stdout", "stderr", "result", "display", "update"} or not isinstance(payload["data"], str):
             raise ProtocolValidationError("execution output shape is invalid")
         if data["resource"] != {"kind": "execution", "id": payload["execution_id"]}:
             raise ProtocolValidationError("execution output resource mismatch")
@@ -380,7 +398,9 @@ def validate_command(data: object, expected_kind: str) -> dict[str, Any]:
         raise ProtocolValidationError("idempotency_key must be a non-empty string when provided")
     allowed = {"protocol_version", "command_id", "trace_id", "kind", "idempotency_key", *COMMAND_FIELDS[expected_kind]}
     if expected_kind in {"execute", "followup"}:
-        allowed.add("source_context")
+        allowed.update({"source_context", "attachment_count"})
+        if "attachment_count" in data and (type(data["attachment_count"]) is not int or not 1 <= data["attachment_count"] <= 8):
+            raise ProtocolValidationError("attachment_count must be between one and eight")
         if "source_context" in data and (not isinstance(data["source_context"], str) or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", data["source_context"]) is None):
             raise ProtocolValidationError("Invalid source context identity")
     if expected_kind == "execute":
@@ -586,7 +606,6 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
     if not isinstance(data["plugins"], list):
         raise ProtocolValidationError("plugins must be an array")
     plugin_ids: set[str] = set()
-    capabilities = {"execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention", "source_context"}
     interactions = {"noninteractive", "request_response", "terminal_interactive"}
     fields = {"plugin_id", "plugin_version", "distribution", "families", "kernel_extensions", "worker_entry_point", "media_types", "interaction"}
     family_by_id: dict[str, tuple[str, tuple[str, ...], tuple[tuple[str, str], ...]]] = {}
@@ -627,7 +646,7 @@ def validate_plugin_catalog(data: object) -> dict[str, Any]:
             if claim in family_claims or re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]*", family["magic_name"]) is None:
                 raise ProtocolValidationError("Plugin family claim is duplicate or invalid")
             family_claims.add(claim)
-            if not isinstance(family["capabilities"], list) or len(family["capabilities"]) != len(set(family["capabilities"])) or not set(family["capabilities"]) <= capabilities:
+            if not _valid_capabilities(family["capabilities"]):
                 raise ProtocolValidationError("Plugin family capabilities are invalid")
             for field in ("presentation", "provider_presentation"):
                 value = family.get(field)

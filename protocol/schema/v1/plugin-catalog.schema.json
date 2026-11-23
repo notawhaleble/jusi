@@ -76,15 +76,9 @@
                   "type": "array",
                   "uniqueItems": true,
                   "items": {
-                    "enum": [
-                      "execute",
-                      "bootstrap",
-                      "followup",
-                      "complete",
-                      "interrupt",
-                      "editor_actions",
-                      "attention",
-                      "source_context"
+                    "anyOf": [
+                      {"enum": ["execute", "bootstrap", "followup", "complete", "interrupt", "editor_actions", "attention", "source_context"]},
+                      {"type": "string", "maxLength": 128, "pattern": "^input:[a-z0-9][a-z0-9.+-]*/[a-z0-9][a-z0-9.+-]*$"}
                     ]
                   }
                 },

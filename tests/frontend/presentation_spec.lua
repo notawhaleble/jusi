@@ -16,10 +16,10 @@ local function execution(number)
   }
 end
 
-local function output(data, media_type)
+local function output(data, media_type, number)
   return {
-    execution_id = "exe_1",
-    client_id = "cli_1",
+    execution_id = "exe_" .. (number or "1"),
+    client_id = "cli_" .. (number or "1"),
     output_kind = "stdout",
     media_type = media_type or "text/plain",
     data = data,
@@ -54,12 +54,12 @@ local function test_new_execution_replaces_only_its_cells_surface()
   presentation:start_execution("cell_a", execution("1"))
   local old_a = assert(presentation:write("cell_a", output("old"))).buf
   presentation:start_execution("cell_b", execution("2"))
-  local buf_b = assert(presentation:write("cell_b", output("other"))).buf
+  local buf_b = assert(presentation:write("cell_b", output("other", nil, "2"))).buf
 
   presentation:start_execution("cell_a", execution("3"))
   assert(not vim.api.nvim_buf_is_valid(old_a), "replaced execution surface must be cleaned up")
   assert(vim.api.nvim_buf_is_valid(buf_b), "another cell's surface must survive")
-  local new_a = assert(presentation:write("cell_a", output("new"))).buf
+  local new_a = assert(presentation:write("cell_a", output("new", nil, "3"))).buf
   assert(new_a ~= old_a)
   presentation:close()
 end
@@ -240,7 +240,7 @@ local function test_close_removes_output_windows_only()
   -- Closing the only remaining window is forbidden by Neovim; still retire
   -- its output buffer without closing the editor or leaving stale output.
   presentation:start_execution("cell_a", execution("2"))
-  local last = assert(presentation:write("cell_a", output("last")))
+  local last = assert(presentation:write("cell_a", output("last", nil, "2")))
   for _, win in ipairs(vim.fn.win_findbuf(last.buf)) do vim.api.nvim_win_close(win, true) end
   vim.api.nvim_win_set_buf(notebook_win, last.buf)
   presentation:close_cell("cell_a")

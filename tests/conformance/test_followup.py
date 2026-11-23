@@ -12,8 +12,9 @@ def test_followup_shared_contract():
     scenario = json.loads((ROOT / "scenarios/client-followup.json").read_text())
     for body in ["", "  literal body  \nα"]:
         validate_command({**scenario["command"], "body": body}, "followup")
+    validate_command(json.loads((ROOT / scenario["image_command_fixture"]).read_text()), "followup")
     for event in scenario["events"]:
         validate_event(event)
-    for name in ["followup-missing-client", "followup-nonstring-body"]:
+    for name in ["followup-missing-client", "followup-nonstring-body", "followup-image-count"]:
         with pytest.raises(ProtocolValidationError):
             validate_command(json.loads((ROOT / f"invalid/{name}.json").read_text()), "followup")

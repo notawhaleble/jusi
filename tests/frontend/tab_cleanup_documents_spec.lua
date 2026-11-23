@@ -46,6 +46,9 @@ function M.run()
     counter = counter + 1
     local id, terminal = 'document-client-' .. counter, buffer()
     controller.clients[id] = { client_id = id, cell_id = cell.id }
+    vim.b[terminal].jusi_role = 'interactive_terminal'
+    vim.b[terminal].jusi_notebook_id = model.notebook_id
+    vim.b[terminal].jusi_cell_id = cell.id
     interactive.surfaces[id] = { buf = terminal, client = controller.clients[id] }
     session.url_slots[id] = { book = { buf = book, lifetime = 'independent', close = function() error('closed book') end } }
     local win = vim.api.nvim_open_win(terminal, false, { split = 'below', win = project_win })
@@ -74,6 +77,12 @@ function M.run()
   end
   local mirror = vim.api.nvim_open_win(notebook_buf, false, { split = 'left', win = project_win })
   local id, terminal, page, win = client()
+  vim.api.nvim_set_current_win(mirror)
+  local count = #vim.api.nvim_list_wins()
+  assert(jusi.toggle_focus(notebook_buf, 1) == page and vim.api.nvim_get_current_win() == win)
+  assert(jusi.toggle_focus() == notebook_buf and vim.api.nvim_get_current_win() == mirror)
+  assert(#vim.api.nvim_list_wins() == count)
+  vim.api.nvim_set_current_win(project_win)
   assert(#vim.fn.win_findbuf(terminal) == 0)
   vim.api.nvim_feedkeys('\\Q', 'xt', false)
   assert(pending[id] and vim.api.nvim_win_is_valid(mirror))
@@ -119,6 +128,12 @@ function M.run()
 
   -- Closing only the document still reveals the healthy terminal.
   id, terminal, page, win = client()
+  vim.api.nvim_set_current_win(win)
+  vim.api.nvim_feedkeys(vim.keycode('<C-q>'), 'mx', false)
+  assert(vim.api.nvim_get_current_win() == win and vim.api.nvim_get_current_buf() == terminal)
+  assert(not vim.api.nvim_buf_is_valid(page) and vim.fn.isdirectory(stages[page]) == 0)
+  assert(session.url_slots[id].explanation == nil)
+  -- The plugin may still send an explicit close before the next followup.
   documents.apply({ action = 'close_document', slot = 'explanation' }, { url_slots = session.url_slots[id] })
   assert(vim.api.nvim_win_get_buf(win) == terminal and controller.clients[id])
   jusi.close_tab(); resolve(id)

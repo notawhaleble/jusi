@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from hashlib import sha256
+from pathlib import Path
 
 from jusi.protocol import ProtocolValidationError, validate_plugin_catalog
 from jusi.application.ports import TerminalSurfaceRequest, PluginOperationError
@@ -127,3 +129,17 @@ def _editor_result(result: dict[str, Any], action: str) -> WorkerResult:
         return WorkerResult(validate_editor_action(result, action))
     except (ProtocolValidationError, UnicodeError) as exc:
         raise OperationRejected(str(exc), reason="invalid_request") from exc
+
+
+def retain_input_images(payload: dict[str, Any], directory: Path) -> list[str]:
+    """Copy request-scoped PNGs into a worker-owned private client directory."""
+    paths = []
+    for file in payload.get("attachments", ()):
+        if file["media_type"] != "image/png":
+            raise OperationRejected("Expected PNG input", reason="unsupported")
+        data = Path(file["path"]).read_bytes()
+        target = directory / (sha256(data).hexdigest() + ".png")
+        if not target.exists():
+            target.write_bytes(data)
+        paths.append(str(target))
+    return paths

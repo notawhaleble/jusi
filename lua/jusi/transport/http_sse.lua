@@ -63,7 +63,18 @@ function Transport:request(method, path, payload, options, callback)
     "--write-out",
     STATUS_MARKER .. "%{http_code}",
   }
-  if body then
+  if opts.attachments then
+    local boundary = 'jusi-' .. vim.fn.sha256(payload.command_id .. tostring(vim.uv.hrtime()))
+    local parts = { '--' .. boundary, 'Content-Disposition: form-data; name="command"', '', body }
+    for _, file in ipairs(opts.attachments) do
+      assert(not file.bytes:find(boundary, 1, true), 'Multipart boundary collision')
+      vim.list_extend(parts, { '--' .. boundary, 'Content-Disposition: form-data; name="attachment"; filename="' .. vim.uri_encode(file.name, 'rfc3986') .. '"',
+        'Content-Type: ' .. file.media_type, '', file.bytes })
+    end
+    table.insert(parts, '--' .. boundary .. '--')
+    body = table.concat(parts, '\r\n') .. '\r\n'
+    vim.list_extend(command, { '--header', 'Content-Type: multipart/form-data; boundary=' .. boundary, '--data-binary', '@-' })
+  elseif body then
     vim.list_extend(command, { "--header", "Content-Type: application/json", "--data-binary", "@-" })
   end
   table.insert(command, self.base_url .. path)

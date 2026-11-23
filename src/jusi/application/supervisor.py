@@ -18,6 +18,7 @@ from jusi.application.ports import (
     KernelFactory,
     KernelHandle,
     KernelOutput,
+    KernelClearOutput,
     PluginCatalogDiscovery,
     PluginCatalogDiscoveryError,
     PluginWorkerError,
@@ -428,6 +429,7 @@ class Supervisor:
         code: str,
         trace_id: str,
         bootstrap: bool = False,
+        attachments: list[dict[str, str]] | None = None,
         source_context: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
@@ -457,6 +459,11 @@ class Supervisor:
             runtime = self._current_runtime
             families = [family for plugin in (runtime.plugin_catalog["plugins"] if runtime else [])
                         for family in plugin["families"] if header and family["magic_name"] == header[0]]
+            required_inputs = {"input:" + file["media_type"] for file in attachments or ()}
+            if required_inputs and (not families or any(not required_inputs.issubset(f["capabilities"]) for f in families)):
+                raise self._request_failure(status_code=409, trace_id=trace_id, layer="supervisor", operation="execute",
+                    reason="unsupported", message="Cell provider does not accept this attachment type", retryable=False,
+                    scope="cell", resource=ResourceRef("cell", cell_id))
             if families and not content.strip() and all("bootstrap" in family["capabilities"] for family in families):
                 bootstrap = True
             if bootstrap:
@@ -469,6 +476,10 @@ class Supervisor:
                 with self._state_lock:
                     clients = [client for client in self._clients.values()
                                if client.kernel_id == kernel_id and client.cell_id == cell_id]
+                    if clients and attachments:
+                        raise self._request_failure(status_code=409, trace_id=trace_id, layer="supervisor",
+                            operation="execute", reason="conflict", message="Send images to the existing client as a followup",
+                            retryable=False, scope="cell", resource=ResourceRef("cell", cell_id))
                     if clients:
                         client = clients[0]
                         if (len(clients) != 1 or client.client_id in self._closing_clients
@@ -501,7 +512,14 @@ class Supervisor:
                 payload=execution.to_dict(),
             )
             try:
-                def publish_output(output: KernelOutput) -> None:
+                def publish_output(output: KernelOutput | KernelClearOutput) -> None:
+                    if isinstance(output, KernelClearOutput):
+                        self.events.append(
+                            trace_id=trace_id, layer="execution", operation="execute",
+                            kind="execution.output_cleared", resource=execution_ref,
+                            payload={"execution_id": execution.execution_id, "wait": output.wait},
+                        )
+                        return
                     self.events.append(
                         trace_id=trace_id,
                         layer="execution",
@@ -514,6 +532,7 @@ class Supervisor:
                             "output_kind": output.output_kind,
                             "media_type": output.media_type,
                             "data": output.data,
+                            **({"display_id": output.display_id} if output.display_id else {}),
                             **({"bundle_id": output.bundle_id, "bundle_end": output.bundle_end} if output.bundle_id else {}),
                         },
                     )
@@ -542,7 +561,7 @@ class Supervisor:
                     result = handle.bootstrap(*header, timeout=control_timeout, on_output=publish_output, on_input=publish_input)
                 else:
                     result = handle.execute(code, timeout=timeout, on_output=publish_output, on_input=publish_input)
-                if bootstrap and result.outcome == "succeeded" and (
+                if (bootstrap or attachments) and result.outcome == "succeeded" and (
                     len(result.handoffs) != 1 or result.handoffs[0].magic_name != header[0]
                 ):
                     raise KernelAdapterError("Bootstrap did not produce the requested plugin handoff",
@@ -783,10 +802,17 @@ class Supervisor:
                     raise SupervisorError(503, failure) from exc
 
                 try:
+                    payload = handoff.payload
+                    if any(c.startswith("input:") for c in worker.capabilities):
+                        payload = dict(payload)
+                        payload.pop("attachments", None)
+                        payload.pop("image_paths", None)
+                        if attachments:
+                            payload["attachments"] = attachments
                     worker_result = self._plugin_workers.request(
                         worker.plugin_worker_id,
                         "execute",
-                        handoff.payload,
+                        payload,
                         source_context=source_context,
                         trace_id=trace_id,
                         timeout=control_timeout,
@@ -1195,9 +1221,13 @@ class Supervisor:
                 self._operation_lock.release()
 
     def followup(
-        self, *, client_id: str, body: str, trace_id: str, timeout: float | None = None, source_context: str | None = None,
+        self, *, client_id: str, body: str, trace_id: str, timeout: float | None = None,
+        source_context: str | None = None, attachments: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
-        return self._client_operation(client_id=client_id, payload={"body": body}, source_context=source_context,
+        payload = {"body": body}
+        if attachments:
+            payload["attachments"] = attachments
+        return self._client_operation(client_id=client_id, payload=payload, source_context=source_context,
                                       kind="followup", trace_id=trace_id, timeout=timeout)
 
     def _client_operation(
@@ -1229,6 +1259,10 @@ class Supervisor:
                 if kernel is None or kernel.kernel_id != client.kernel_id or kernel.state != "on":
                     raise PluginWorkerSelectionError("Client kernel is no longer active", reason="conflict")
                 capability = "editor_actions" if kind == "editor_action" else kind
+                if kind == "followup" and any(
+                    "input:" + file["media_type"] not in client.capabilities for file in payload.get("attachments", ())
+                ):
+                    raise PluginWorkerSelectionError("Client does not accept this attachment type", reason="unsupported")
                 if capability not in client.capabilities:
                     raise PluginWorkerSelectionError(f"Client does not support {kind}", reason="unsupported")
                 self._client_operations[operation.operation_id] = {

@@ -38,6 +38,7 @@
         "kernel.state_changed",
         "execution.started",
         "execution.output",
+        "execution.output_cleared",
         "execution.input_requested",
         "execution.input_replied",
         "execution.completed",
@@ -264,6 +265,12 @@
       }
     },
     {
+      "if": {"properties": {"kind": {"const": "execution.output_cleared"}}},
+      "then": {"properties": {"payload": {"type": "object", "required": ["execution_id", "wait"],
+        "properties": {"execution_id": {"type": "string", "minLength": 1}, "wait": {"type": "boolean"}},
+        "additionalProperties": false}}}
+    },
+    {
       "if": {"properties": {"kind": {"const": "execution.output"}}},
       "then": {
         "properties": {
@@ -273,13 +280,16 @@
             "properties": {
               "execution_id": {"type": "string"},
               "client_id": {"type": ["string", "null"]},
-              "output_kind": {"enum": ["stdout", "stderr", "result", "display"]},
+              "output_kind": {"enum": ["stdout", "stderr", "result", "display", "update"]},
               "media_type": {"type": "string", "minLength": 1},
               "data": {"type": "string"},
+              "display_id": {"type": "string", "minLength": 1, "maxLength": 128},
               "bundle_id": {"type": "string", "minLength": 1, "maxLength": 128},
               "bundle_end": {"type": "boolean"}
             },
-            "allOf": [{"if": {"properties": {"media_type": {"const": "application/vnd.jusi.mime-bundle.v1+json"}}},
+            "allOf": [{"if": {"required": ["display_id"]}, "then": {"properties": {"output_kind": {"enum": ["display", "result", "update"]}, "media_type": {"const": "application/vnd.jusi.mime-bundle.v1+json"}}}},
+              {"if": {"properties": {"output_kind": {"const": "update"}}}, "then": {"required": ["display_id"]}},
+              {"if": {"properties": {"media_type": {"const": "application/vnd.jusi.mime-bundle.v1+json"}}},
               "then": {"required": ["bundle_id", "bundle_end"]},
               "else": {"not": {"anyOf": [{"required": ["bundle_id"]}, {"required": ["bundle_end"]}]}}}],
             "additionalProperties": false

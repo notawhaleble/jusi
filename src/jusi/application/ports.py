@@ -14,6 +14,12 @@ class KernelOutput:
     data: str
     bundle_id: str | None = None
     bundle_end: bool = False
+    display_id: str | None = None
+
+
+@dataclass(frozen=True)
+class KernelClearOutput:
+    wait: bool
 
 
 @dataclass(frozen=True)
@@ -80,13 +86,13 @@ class KernelHandle(Protocol):
         code: str,
         *,
         timeout: float | None,
-        on_output: Callable[[KernelOutput], None],
+        on_output: Callable[[KernelOutput | KernelClearOutput], None],
         on_input: Callable[[str, str, bool], None] | None = None,
     ) -> KernelExecutionResult: ...
 
     def bootstrap(
         self, magic_name: str, arguments: str, *, timeout: float | None,
-        on_output: Callable[[KernelOutput], None],
+        on_output: Callable[[KernelOutput | KernelClearOutput], None],
         on_input: Callable[[str, str, bool], None] | None = None,
     ) -> KernelExecutionResult: ...
 

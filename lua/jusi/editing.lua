@@ -90,6 +90,7 @@ function Editing:client(client)
   end
 end
 function Editing:retire(id)
+  require("jusi.attachments").clear(self, id, "cell removed or replaced")
   require("jusi.source_context").close(self, id)
   self.history:changed({ id })
   self.overrides[id], self.cache[id] = nil, nil
@@ -173,7 +174,10 @@ function Editing:changed(ids, structural, history_ids)
   -- Invalidate provider attribution even if a magic is edited away and back
   -- while the cell is offscreen.
   for _, id in ipairs(ids) do
-    if structural then self.cache[id] = nil end
+    if structural then
+      require("jusi.attachments").reconcile(self, id)
+      self.cache[id] = nil
+    end
     local cell = self.model:cell_by_id(id)
     if cell then self:context(cell) end
   end
@@ -199,6 +203,7 @@ function M.indent()
   return editing and editing:indent(vim.v.lnum) or 0
 end
 function Editing:close()
+  require("jusi.attachments").close(self)
   require("jusi.source_context").close(self)
   if self.closed then return end
   self.closed = true
@@ -243,6 +248,7 @@ function M.new(model, controller)
   self.detach_mappings = require("jusi.mappings").attach(model.buf)
   require("jusi.statusline").setup()
   for _, win in ipairs(vim.fn.win_findbuf(model.buf)) do require("jusi.statusline").refresh(win) end
+  require("jusi.attachments").attach(self)
   self:catalog()
   self:schedule()
   return self
