@@ -42,6 +42,28 @@ function M.run()
       return vim.api.nvim_buf_get_lines(output_buf, 0, 1, false)[1] == "2"
     end, "owned local result was not rendered")
 
+    -- A short output pane must show the stream even when the notebook keeps focus.
+    session.presentation.height = 5
+    vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "pip show jusi" })
+    session.model:flush()
+    local notebook_win = vim.api.nvim_get_current_win()
+    for _ = 1, 2 do
+      local completed
+      jusi.execute(buf, 1, function(response) completed = response end)
+      wait_for(12000, function()
+        local rendered = session.presentation:buffer_for_cell(cell_id)
+        local win = rendered and vim.fn.win_findbuf(rendered)[1]
+        if not completed or not win then return false end
+        return vim.api.nvim_win_call(win, function()
+          local top = vim.fn.line("w0")
+          local lines = vim.api.nvim_buf_get_lines(rendered, top - 1, vim.fn.line("w$"), false)
+          return lines[1] == "Name: jusi" and lines[2] and lines[2]:match("^Version:") ~= nil
+        end)
+      end, "pip package information was missing from the visible output pane")
+      assert(completed.execution.outcome == "succeeded")
+      assert(vim.api.nvim_get_current_win() == notebook_win)
+    end
+
     vim.api.nvim_buf_set_lines(buf, 1, 2, false, { "owned_restart_probe = 1" })
     local before_probe_sequence = session.controller.event_sequence
     jusi.execute(buf, 1)

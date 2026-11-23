@@ -38,12 +38,25 @@ function M.new(options)
   vim.bo[buf].bufhidden = "hide"
   vim.bo[buf].swapfile = false
   vim.api.nvim_buf_set_name(buf, string.format("jusi://output/%s/%s", opts.notebook_id or "notebook", opts.cell_id or "cell"))
-  local channel = vim.api.nvim_open_term(buf, {})
   vim.b[buf].jusi_role = "output"
   vim.b[buf].jusi_notebook_id = opts.notebook_id
   vim.b[buf].jusi_cell_id = opts.cell_id
   vim.b[buf].jusi_execution_id = opts.execution_id
   vim.b[buf].jusi_client_id = opts.client_id
+  local windows = require("jusi.presentation.window")
+  local ok, channel = pcall(function()
+    if opts.window then
+      -- Size the terminal in its output split before Neovim creates scrollback.
+      local win = windows.show(buf, opts.window)
+      return vim.api.nvim_win_call(win, function() return vim.api.nvim_open_term(buf, {}) end)
+    end
+    return vim.api.nvim_open_term(buf, {})
+  end)
+  if not ok then
+    windows.close_for_buffer(buf)
+    vim.api.nvim_buf_delete(buf, { force = true })
+    error(channel)
+  end
   require("jusi.focus").attach(buf)
   require("jusi.output_ids").attach(buf)
   return setmetatable({

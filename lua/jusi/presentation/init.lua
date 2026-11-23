@@ -260,7 +260,12 @@ function Presentation:write_text(cell_id, output, data, hidden)
   local surface = self.surfaces[cell_id]
   if not surface then
     local identity = self.pending[cell_id] or {}
+    local window
+    if not hidden and not self:buffer_for_cell(cell_id) then
+      window = { anchor_buf = self.notebook_buf, height = self.height, enter = false }
+    end
     local created, value = pcall(terminal.new, {
+      window = window,
       notebook_id = self.notebook_id,
       cell_id = cell_id,
       execution_id = identity.execution_id or output.execution_id,
@@ -274,17 +279,7 @@ function Presentation:write_text(cell_id, output, data, hidden)
       return nil, failure
     end
     surface = value
-    local current = self:buffer_for_cell(cell_id)
     self.surfaces[cell_id] = surface
-    -- Once rich output is displayed, keep later stream output in the retained
-    -- terminal without allocating another split or replacing the browser.
-    if not current and not hidden then
-      presentation_window.show(surface.buf, {
-        anchor_buf = self.notebook_buf,
-        height = self.height,
-        enter = false,
-      })
-    end
   end
   local ok, message = surface:write(data)
   if not ok then

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.9 — 2026-11-23
+
+- Fix blank output panes for plain cells by sizing the Neovim terminal to the
+  output split before sending output.
+
 ## 1.0.8 — 2026-11-23
 
 - Focusing a client-owned document overlay dismisses completion notices for its client. Requests that require an answer remain pending.

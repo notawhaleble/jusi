@@ -4,6 +4,9 @@ Updated: 2026-11-23
 
 ## Current Facts
 
+- Plain cell output opens at the dimensions of its Neovim split, keeping pip
+  package information visible on first execution. See [Incident 0036](incidents/0036-blank-output-viewport.md).
+
 - Managed IPython executions support immediate and deferred output clearing and
   targeted updates to retained displays. See [ADR 0058](adr/0058-jupyter-output-mutations.md).
 
