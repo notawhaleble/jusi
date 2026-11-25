@@ -250,7 +250,32 @@ local function test_close_removes_output_windows_only()
   vim.api.nvim_buf_delete(notebook_buf, { force = true })
 end
 
+local function test_terminal_gutters_stay_local_to_output()
+  vim.cmd("new")
+  local anchor = vim.api.nvim_get_current_win()
+  vim.cmd("set number relativenumber")
+  local terminal = require("jusi.presentation.terminal").new({
+    notebook_id = "nb_gutters", cell_id = "cell_gutters",
+    window = { anchor_buf = vim.api.nvim_get_current_buf(), enter = true },
+  })
+  local output_win = vim.api.nvim_get_current_win()
+  equal(vim.api.nvim_win_get_buf(output_win), terminal.buf)
+  equal({ vim.wo.number, vim.wo.relativenumber }, { false, false })
+
+  local path = vim.fn.fnameescape(vim.fn.tempname())
+  vim.cmd("split " .. path .. ".py")
+  equal({ vim.wo.number, vim.wo.relativenumber }, { true, true }, "file split from output")
+  vim.cmd("close")
+  equal(vim.api.nvim_get_current_win(), output_win)
+  vim.cmd("edit " .. path .. ".json")
+  equal({ vim.wo.number, vim.wo.relativenumber }, { true, true }, "file reusing output window")
+  terminal:close()
+  vim.api.nvim_win_close(output_win, true)
+  vim.api.nvim_win_close(anchor, true)
+end
+
 function M.run()
+  test_terminal_gutters_stay_local_to_output()
   test_close_removes_output_windows_only()
   test_input_echo_and_closed_execution_fencing()
   test_text_and_ansi_share_native_terminal_surface()

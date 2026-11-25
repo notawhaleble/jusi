@@ -35,13 +35,14 @@ function M.find(buf, tab)
 end
 
 local function prepare_terminal_window(win, buf)
+  if vim.api.nvim_win_get_buf(win) ~= buf then return end
   local role = vim.b[buf].jusi_role
   require("jusi.statusline").refresh(win)
   if role ~= "output" and role ~= "interactive_terminal" then return end
   -- A newly split window inherits notebook gutters. Clear them before a PTY
   -- is created, so the application's first draw uses its full text width.
   for name, value in pairs({ number = false, relativenumber = false, signcolumn = "no", foldcolumn = "0", statuscolumn = "" }) do
-    vim.api.nvim_set_option_value(name, value, { win = win })
+    vim.api.nvim_set_option_value(name, value, { win = win, scope = "local" })
   end
 end
 

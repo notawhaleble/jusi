@@ -1,8 +1,12 @@
 # Jusi 1.0 Status
 
-Updated: 2026-11-23
+Updated: 2026-11-25
 
 ## Current Facts
+
+- Terminal gutter settings are buffer-specific within each window. See [Incident 0038](incidents/0038-terminal-gutter-leak.md).
+
+- Direct frontend connections check notebook ownership before selecting a live kernel. See [Incident 0037](incidents/0037-foreign-kernel-connect.md).
 
 - Plain cell output opens at the dimensions of its Neovim split, keeping pip
   package information visible on first execution. See [Incident 0036](incidents/0036-blank-output-viewport.md).

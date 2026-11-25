@@ -99,7 +99,7 @@ function Controller:_accept_health_snapshot(response)
     for _, surface in ipairs(response.surfaces) do
       self.surfaces[surface.surface_id] = surface
     end
-    if kernel then
+    if kernel and kernel.notebook_id == self.notebook.notebook_id then
       self.kernel_id = kernel.kernel_id
       self.kernel_state = kernel.state
       if self.on_state_changed then self.on_state_changed() end
@@ -171,9 +171,10 @@ function Controller:connect(callback)
       end
       return
     end
-    if self.require_notebook_ownership and response and type(response.kernel) == "table"
+    if response and type(response.kernel) == "table"
         and response.kernel.state == "on" and response.kernel.notebook_id ~= self.notebook.notebook_id then
       local ownership_failure = self:_transport_failure("conflict", "target already runs another notebook")
+      self.last_transport_failure = ownership_failure
       self.transport_state = "disconnected"
       if self.on_state_changed then self.on_state_changed() end
       if self.on_failure then self.on_failure(ownership_failure) end
@@ -310,8 +311,8 @@ function Controller:_on_event(event)
   self.event_sequence = event.sequence
   self.transport_state = "connected"
   if self.on_state_changed then self.on_state_changed() end
-  if event.kind == "kernel.state_changed" then
-    self.kernel_id = event.payload.kernel_id
+  -- State events carry no notebook identity. Only update a selected kernel.
+  if event.kind == "kernel.state_changed" and event.payload.kernel_id == self.kernel_id then
     self.kernel_state = event.payload.state
     if self.on_state_changed then self.on_state_changed() end
     if self.kernel_state == "off" then self.pending_input = nil end
@@ -846,7 +847,6 @@ function M.new(options)
     on_surface_created = opts.on_surface_created,
     on_surface_closed = opts.on_surface_closed,
     on_failure = opts.on_failure,
-    require_notebook_ownership = opts.require_notebook_ownership == true,
     on_resynchronized = opts.on_resynchronized,
     last_transport_failure = nil,
     event_connection = nil,

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.10 — 2026-11-25
+
+- Check notebook ownership on direct connections so a reopened notebook cannot select or stop another notebook’s kernel. Document Docker recovery after an editor crash.
+- Keep terminal gutter settings local to Jusi output and interactive terminals so ordinary files respect Neovim line-number preferences.
+
 ## 1.0.9 — 2026-11-23
 
 - Fix blank output panes for plain cells by sizing the Neovim terminal to the

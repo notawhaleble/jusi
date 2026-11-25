@@ -490,7 +490,29 @@ local function test_expired_cursor_resynchronizes_but_replayable_cursor_does_not
   model:detach()
 end
 
+local function test_connect_cannot_select_another_notebooks_kernel()
+  local transport = FakeTransport.new()
+  local controller = controller_module.new({ notebook = { notebook_id = "nb_reopened" }, transport = transport })
+  transport.health.kernel = { kernel_id = "krn_foreign", notebook_id = "nb_original", state = "on" }
+  controller:connect()
+  equal(controller.last_transport_failure.reason, "conflict")
+  equal(transport.event_callbacks, nil)
+  controller:stop_kernel()
+  equal(#transport.requests, 1)
+
+  transport.health.kernel = nil
+  controller:connect()
+  transport.event_callbacks.on_event(event(1, "kernel.state_changed", {
+    kernel_id = "krn_foreign", previous_state = "off", state = "on",
+  }))
+  equal(controller.kernel_id, nil)
+  controller:stop_kernel()
+  equal(#transport.requests, 2)
+  controller:close()
+end
+
 function M.run()
+  test_connect_cannot_select_another_notebooks_kernel()
   test_fragmented_sse_parser()
   test_controller_tracks_durable_client_lifecycle()
   test_controller_accepts_authoritative_surface_snapshot()

@@ -185,6 +185,49 @@ cell delimiters and use:
 :JusiDisconnect
 ```
 
+### Recovering after a disconnect or editor crash
+
+If the notebook buffer and its Jusi session are still open, run
+`:JusiConnect` in that buffer. It reuses the session's target, inspects
+the supervisor and reconnects the event stream.
+
+After an editor restart, reopening a file creates fresh notebook and cell
+identities. Jusi currently has no command to reattach that file to its old
+live runtime. With a fresh buffer, `:JusiConnect [base_url]` takes a service
+URL. Omitting it uses the configured default URL. The filename does not
+select a Docker target.
+
+For an editor-owned local service, closing the owner pipe triggers shutdown.
+Reopen the notebook and use `:JusiStart local`. An independently launched
+service, including one in Docker, can survive the editor. For each remote
+notebook:
+
+1. Look up that notebook's intended alias and its `base_url` in your Jusi
+   `targets` configuration. Inspect that specific endpoint in a shell:
+
+   ```sh
+   curl -fsS "$base_url/v1/health" | jq '{supervisor_id, kernel}'
+   ```
+
+2. If the kernel is absent or off, use `:JusiStart <alias>` in the reopened
+   notebook. If a kernel is on and you need its in-memory work, leave the
+   service running. The health response identifies the kernel and owning
+   notebook by ID. It does not identify the notebook by filename.
+3. If you have verified the target and can discard its old runtime, stop
+   that exact kernel. Set `kernel_id` to the ID you inspected above:
+
+   ```sh
+   request_id=$(uuidgen)
+   jq -n --arg id "$kernel_id" --arg req "$request_id" \
+     '{protocol_version:1, kind:"stop_kernel", kernel_id:$id,
+       command_id:("cmd_"+$req), trace_id:("trace_"+$req), idempotency_key:$req}' |
+     curl -fsS -X DELETE -H 'Content-Type: application/json' --data-binary @- \
+       "$base_url/v1/kernels/$kernel_id"
+   ```
+
+   After the stop succeeds, run `:JusiStart <alias>` in that notebook.
+   Repeat with the second notebook's own alias and URL.
+
 Cell status appears after the opener through Neovim extmarks: green `✓`
 for done, red `✗` for error, orange `!` for interrupted, and blue `>` for a live
 followup client. Running work uses purple `*`, including while kernel input is

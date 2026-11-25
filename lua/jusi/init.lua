@@ -367,6 +367,10 @@ function M.connect(options)
   end
   local existing = sessions[buf]
   if existing then
+    if opts.base_url and opts.base_url ~= existing.base_url then
+      notify("buffer already uses " .. existing.base_url, vim.log.levels.ERROR)
+      return nil
+    end
     existing.controller:connect(function(connected, failure)
       if connected and existing.lifecycle then existing.lifecycle:reconcile() end
       if opts.on_connected then opts.on_connected(existing, failure) end
@@ -393,7 +397,6 @@ function M.connect(options)
     notebook = model,
     transport = transport,
     kernel_name = opts.kernel_name or config.kernel_name,
-    require_notebook_ownership = opts.target_alias ~= nil,
     on_failure = function(failure)
       notify(failure_text(failure), vim.log.levels.ERROR)
     end,
@@ -430,7 +433,9 @@ function M.connect(options)
   })
   controller:connect(function(connected, failure)
     if connected then
-      notify("event stream connected")
+      notify("event stream connected to " .. base_url)
+    elseif failure and failure.reason == "conflict" and not opts.target_alias and not session.service then
+      retire_session(session)
     end
     if opts.on_connected then opts.on_connected(session, failure) end
   end)
